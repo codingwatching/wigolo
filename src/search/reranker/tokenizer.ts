@@ -14,17 +14,23 @@ type EncodeOpts = {
   max_length: number;
   truncation: true;
   padding: 'max_length';
+  return_tensor?: true;
 };
 
 type EncodedTensor = { data: BigInt64Array; dims: number[] };
 
-type EncoderTokenizer = {
-  encode: (q: string, opts: EncodeOpts) => {
-    input_ids: EncodedTensor;
-    attention_mask: EncodedTensor;
-    token_type_ids?: EncodedTensor;
-  };
+type EncodedBatch = {
+  input_ids: EncodedTensor;
+  attention_mask: EncodedTensor;
+  token_type_ids?: EncodedTensor;
 };
+
+// PreTrainedTokenizer is callable. We accept either invocation form so unit
+// tests can stub a plain `encode` while the real Xenova tokenizer is invoked
+// directly as a function.
+type EncoderTokenizer =
+  | ((q: string, opts: EncodeOpts) => EncodedBatch)
+  | { encode: (q: string, opts: EncodeOpts) => EncodedBatch };
 
 let xenovaModule: typeof import('@xenova/transformers') | null = null;
 async function loadXenova() {
@@ -55,12 +61,17 @@ export function tokenizePair(
   doc: string,
   maxLength = 512,
 ): TokenizerPair {
-  const enc = tokenizer.encode(query, {
+  const opts: EncodeOpts = {
     text_pair: doc,
     max_length: maxLength,
     truncation: true,
     padding: 'max_length',
-  });
+    return_tensor: true,
+  };
+  const enc =
+    typeof tokenizer === 'function'
+      ? tokenizer(query, opts)
+      : tokenizer.encode(query, opts);
   const length = enc.input_ids.dims[1];
   const tokenTypeIds = enc.token_type_ids?.data ?? new BigInt64Array(length);
   return {

@@ -21,13 +21,11 @@ export function _resetOnnxSessionCache(): void {
   sessionCache.clear();
 }
 
-async function getSession(modelId: string): Promise<ort.InferenceSession> {
+async function getSession(modelId: string, modelPath: string): Promise<ort.InferenceSession> {
   const id = resolveModelId(modelId);
   const existing = sessionCache.get(id);
   if (existing) return existing;
   const p = (async () => {
-    const cfg = getConfig();
-    const { modelPath } = await downloadModelAssets(id, cfg.dataDir);
     log.debug('creating ONNX session', { id, modelPath });
     return ort.InferenceSession.create(modelPath, {
       executionProviders: ['cpu'],
@@ -57,8 +55,15 @@ export async function onnxRerank(
   const modelId = opts.modelId ?? cfg.rerankerModel ?? 'bge-reranker-v2-m3';
   const maxLength = opts.maxLength ?? 512;
 
-  const session = await getSession(modelId);
+  // Order matters: download assets first (so tokenizer.json is on disk), then
+  // load the tokenizer via @xenova/transformers (which bundles its own ORT
+  // build and initializes shared native state on import), and only then
+  // create the onnxruntime-node session. Creating the ORT session before the
+  // xenova import overwrites our env handle and the next session.run()
+  // segfaults (SIGBUS) on macOS.
+  const { modelPath } = await downloadModelAssets(modelId, cfg.dataDir);
   const tokenizer = await loadTokenizer(modelId, cfg.dataDir);
+  const session = await getSession(modelId, modelPath);
 
   const scores: RerankScore[] = [];
   for (let i = 0; i < docs.length; i++) {
