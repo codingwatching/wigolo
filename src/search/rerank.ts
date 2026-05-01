@@ -9,7 +9,9 @@ const log = createLogger('search');
 export async function rerankResults(
   query: string,
   results: MergedSearchResult[],
+  opts: { skip?: boolean } = {},
 ): Promise<MergedSearchResult[]> {
+  if (opts.skip) return results;
   const config = getConfig();
   if (results.length === 0) return results;
 

@@ -36,7 +36,6 @@ export async function handleSearch(
   onProgress?: ProgressCallback,
 ): Promise<SearchOutput> {
   const mode = resolveMode(input.mode);
-  void mode;
   const start = Date.now();
   const config = getConfig();
 
@@ -140,7 +139,7 @@ export async function handleSearch(
 
     const { results: rawResults, enginesUsed, errors } = await fanOutSearch(
       normalizedQueries,
-      activeEngines,
+      mode === 'fast' ? activeEngines.slice(0, 1) : activeEngines,
       {
         maxResults,
         timeRange: input.time_range,
@@ -180,7 +179,7 @@ export async function handleSearch(
     });
 
     const intentString = synthesizeIntent(normalizedQueries);
-    merged = await rerankResults(intentString, merged);
+    merged = await rerankResults(intentString, merged, { skip: mode === 'fast' });
     merged = await validateLinks(merged);
     merged = merged.slice(0, maxResults);
 
@@ -268,7 +267,9 @@ export async function handleSearch(
   const subQueries = decomposeQuery(queryStr);
   log.debug('query decomposition', { original: queryStr, parts: subQueries.length });
 
-  await emit(1, 5, `Running ${subQueries.length} search queries across ${activeEngines.length} engines...`);
+  const effectiveEngines = mode === 'fast' ? activeEngines.slice(0, 1) : activeEngines;
+
+  await emit(1, 5, `Running ${subQueries.length} search queries across ${effectiveEngines.length} engines...`);
 
   const allRaw: RawSearchResult[] = [];
   const enginesUsed = new Set<string>();
@@ -277,7 +278,7 @@ export async function handleSearch(
   const hasFilterAttrition = !!(input.include_domains?.length || input.exclude_domains?.length);
   const overfetchFactor = hasFilterAttrition ? 3 : 2;
 
-  const searchPromises = activeEngines.flatMap(engine =>
+  const searchPromises = effectiveEngines.flatMap(engine =>
     subQueries.map(async (query) => {
       try {
         const results = await engine.search(query, {
@@ -329,7 +330,7 @@ export async function handleSearch(
     category: input.category,
   });
 
-  merged = await rerankResults(queryStr, merged);
+  merged = await rerankResults(queryStr, merged, { skip: mode === 'fast' });
   merged = await validateLinks(merged);
 
   merged = merged.slice(0, maxResults);
