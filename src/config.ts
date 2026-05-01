@@ -25,6 +25,8 @@ export interface Config {
   dataDir: string;
   cacheTtlSearch: number;
   cacheTtlContent: number;
+  fastStaleMaxHours: number;
+  fastTimeoutMs: number;
   crawlConcurrency: number;
   crawlDelayMs: number;
   crawlPrivateConcurrency: number;
@@ -114,6 +116,8 @@ export function getConfig(): Config {
     dataDir: envStr('WIGOLO_DATA_DIR') ?? join(homedir(), '.wigolo'),
     cacheTtlSearch: envInt('CACHE_TTL_SEARCH', 86400),
     cacheTtlContent: envInt('CACHE_TTL_CONTENT', 604800),
+    fastStaleMaxHours: envInt('WIGOLO_FAST_STALE_MAX_HOURS', 24),
+    fastTimeoutMs: envInt('WIGOLO_FAST_TIMEOUT_MS', 800),
     crawlConcurrency: envInt('CRAWL_CONCURRENCY', 2),
     crawlDelayMs: envInt('CRAWL_DELAY_MS', 500),
     crawlPrivateConcurrency: envInt('CRAWL_PRIVATE_CONCURRENCY', 10),

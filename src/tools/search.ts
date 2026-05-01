@@ -17,6 +17,7 @@ import { truncateSmartly } from '../search/truncate.js';
 import { cacheSearchResults, getCachedSearchResults, cacheContent } from '../cache/store.js';
 import { getEmbeddingService } from '../embedding/embed.js';
 import { getConfig } from '../config.js';
+import { resolveMode } from '../util/mode.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('search');
@@ -34,6 +35,8 @@ export async function handleSearch(
   samplingServer?: SamplingCapableServer,
   onProgress?: ProgressCallback,
 ): Promise<SearchOutput> {
+  const mode = resolveMode(input.mode);
+  void mode;
   const start = Date.now();
   const config = getConfig();
 

@@ -1,5 +1,8 @@
 import type { JsonSchema } from './extraction/schema.js';
 
+export type Mode = 'fast' | 'balanced' | 'deep';
+export const MODES: readonly Mode[] = ['fast', 'balanced', 'deep'] as const;
+
 export type BrowserAction =
   | { type: 'click'; selector: string }
   | { type: 'type'; selector: string; text: string }
@@ -31,6 +34,7 @@ export interface FetchInput {
   max_tokens_out?: number;
   include_full_markdown?: boolean;
   citation_format?: CitationFormat;
+  mode?: Mode;
 }
 
 export interface FetchOutput {
@@ -167,6 +171,7 @@ export interface SearchInput {
   max_tokens_out?: number;
   include_full_markdown?: boolean;
   citation_format?: CitationFormat;
+  mode?: Mode;
 }
 
 export interface SearchResultItem {

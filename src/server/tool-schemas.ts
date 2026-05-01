@@ -103,6 +103,11 @@ export const FETCH_TOOL_SCHEMA = {
         required: ['type'],
       },
     },
+    mode: {
+      type: 'string',
+      enum: ['fast', 'balanced', 'deep'],
+      description: "fast=low-latency, deep=multi-query+full-body, balanced=default",
+    },
   },
   required: ['url'],
 };
@@ -178,6 +183,11 @@ export const SEARCH_TOOL_SCHEMA = {
       type: 'string',
       enum: ['numbered', 'anthropic_tags', 'json'],
       description: "Citation rendering style. 'numbered' (default) inline [N] markers; 'json' returns a citations[] array; 'anthropic_tags' wraps sources in <source id='...'> tags.",
+    },
+    mode: {
+      type: 'string',
+      enum: ['fast', 'balanced', 'deep'],
+      description: "fast=low-latency, deep=multi-query+full-body, balanced=default",
     },
   },
   required: ['query'],

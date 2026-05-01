@@ -7,6 +7,7 @@ import { detectChange } from '../cache/change-detector.js';
 import { getEmbeddingService } from '../embedding/embed.js';
 import { truncateSmartly, applyOutputBudget } from '../search/truncate.js';
 import { buildEvidenceFromMarkdown } from '../search/evidence.js';
+import { resolveMode } from '../util/mode.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('fetch');
@@ -75,6 +76,8 @@ export async function handleFetch(
   input: FetchInput,
   router: SmartRouter,
 ): Promise<FetchOutput> {
+  const mode = resolveMode(input.mode);
+  void mode;
   try {
     if (!input.force_refresh) {
       const cached = getCachedContent(input.url);
