@@ -1,15 +1,18 @@
 import { Defuddle } from 'defuddle/node';
 import type { ExtractionResult } from '../types.js';
+import { htmlToMarkdown } from './markdown.js';
 
 const MIN_CONTENT_THRESHOLD = 100;
 
 export async function defuddleExtract(html: string, url: string): Promise<ExtractionResult | null> {
   try {
-    const result = await Defuddle(html, url, { markdown: true });
-    if (!result.content || result.content.length < MIN_CONTENT_THRESHOLD) return null;
+    const result = await Defuddle(html, url);
+    if (!result.content) return null;
+    const markdown = htmlToMarkdown(result.content);
+    if (markdown.length < MIN_CONTENT_THRESHOLD) return null;
     return {
       title: result.title ?? '',
-      markdown: result.content,
+      markdown,
       metadata: {
         description: result.description || undefined,
         author: result.author || undefined,

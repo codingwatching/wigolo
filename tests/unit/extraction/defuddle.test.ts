@@ -77,4 +77,24 @@ describe('defuddleExtract', () => {
     expect(result!.links).toEqual([]);
     expect(result!.images).toEqual([]);
   });
+
+  it('routes html through central turndown so <pre><code> becomes a fenced block', async () => {
+    const html = `<!doctype html><html><head><title>Code Sample</title></head><body>
+      <article>
+        <h1>Code Sample</h1>
+        <p>This article demonstrates a small snippet of TypeScript that is intentionally
+        verbose so the extracted content comfortably exceeds the minimum content threshold
+        used by the defuddle wrapper. We need several sentences of body copy to keep the
+        extractor happy and trigger a real markdown conversion.</p>
+        <p>Below is the snippet that must survive the round-trip through the central
+        Turndown converter as a fenced code block.</p>
+        <pre><code>const x = 1;</code></pre>
+        <p>After the snippet we add another paragraph with additional filler so the total
+        text length stays well above the minimum threshold required for extraction.</p>
+      </article>
+    </body></html>`;
+    const result = await defuddleExtract(html, 'https://example.com/code');
+    expect(result).not.toBeNull();
+    expect(result!.markdown).toMatch(/```[\s\S]*const x = 1;[\s\S]*```/);
+  });
 });
