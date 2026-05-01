@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — v1 prep
+## v1.0.0 — 2026-05-01
 
 ### NEW: mode parameter on search and fetch
 - `mode: 'fast' | 'balanced' | 'deep'` on both `search` and `fetch` tools.
