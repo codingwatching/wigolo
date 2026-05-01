@@ -191,3 +191,16 @@ export function mergeWithRRF(rankedLists: MergedSearchResult[][]): MergedSearchR
     return [];
   }
 }
+
+const DEEP_SUFFIXES = ['guide', 'tutorial', 'examples', 'best practices'] as const;
+
+export function expandQueryHeuristic(query: string): string[] {
+  const trimmed = query.trim();
+  const variants: string[] = [trimmed];
+  for (const suffix of DEEP_SUFFIXES) {
+    if (variants.length >= 5) break;
+    const candidate = `${trimmed} ${suffix}`;
+    if (!variants.includes(candidate)) variants.push(candidate);
+  }
+  return variants;
+}

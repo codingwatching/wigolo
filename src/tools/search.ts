@@ -11,7 +11,7 @@ import type { SamplingCapableServer } from '../search/sampling.js';
 import { synthesizeAnswer, buildStructuredFallback } from '../search/answer-synthesis.js';
 import { extractHighlights } from '../search/highlights.js';
 import { applyEvidenceDefault } from '../search/evidence.js';
-import { normalizeQueries, fanOutSearch, synthesizeIntent } from '../search/multi-query.js';
+import { normalizeQueries, fanOutSearch, synthesizeIntent, expandQueryHeuristic } from '../search/multi-query.js';
 import { extractContent } from '../extraction/pipeline.js';
 import { truncateSmartly } from '../search/truncate.js';
 import { cacheSearchResults, getCachedSearchResults, cacheContent } from '../cache/store.js';
@@ -83,11 +83,18 @@ export async function handleSearch(
     }
   };
 
-  const isMultiQuery = Array.isArray(input.query);
+  let normalizedQuery: string | string[] = input.query;
+  let deepAutoExpanded = false;
+  if (mode === 'deep' && typeof normalizedQuery === 'string') {
+    normalizedQuery = expandQueryHeuristic(normalizedQuery);
+    deepAutoExpanded = true;
+  }
+
+  const isMultiQuery = Array.isArray(normalizedQuery);
 
   // --- Multi-query path ---
   if (isMultiQuery) {
-    const normalizedQueries = normalizeQueries(input.query as string[]);
+    const normalizedQueries = normalizeQueries(normalizedQuery as string[]);
 
     if (normalizedQueries.length === 0) {
       const output: SearchOutput = {
@@ -103,7 +110,9 @@ export async function handleSearch(
       return output;
     }
 
-    const displayQuery = normalizedQueries[0];
+    const displayQuery = deepAutoExpanded && typeof input.query === 'string'
+      ? input.query
+      : normalizedQueries[0];
     const cacheKey = normalizedQueries.join(' | ');
 
     const staleMaxSeconds = mode === 'fast' ? config.fastStaleMaxHours * 3600 : 0;
