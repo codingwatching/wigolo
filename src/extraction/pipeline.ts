@@ -1,3 +1,4 @@
+import { parseHTML } from 'linkedom';
 import { defuddleExtract } from './defuddle.js';
 import { readabilityExtract } from './readability.js';
 import { trafilaturaExtract, isTrafilaturaAvailable } from './trafilatura.js';
@@ -9,6 +10,7 @@ import {
   resolveRelativeUrls,
 } from './markdown.js';
 import { extractMetadata } from './extract.js';
+import { stripBoilerplateDom, stripBoilerplateMarkdown } from './boilerplate.js';
 import type { ExtractionResult, Extractor } from '../types.js';
 import { githubExtractor } from './site-extractors/github.js';
 import { stackoverflowExtractor } from './site-extractors/stackoverflow.js';
@@ -67,23 +69,32 @@ export async function extractContent(
     return applyPostProcessing(result, url, html, options);
   }
 
+  let cleanedHtml = html;
+  try {
+    const { document } = parseHTML(html);
+    stripBoilerplateDom(document);
+    cleanedHtml = document.toString();
+  } catch (err) {
+    log.warn('boilerplate DOM pre-pass failed', { url, error: String(err) });
+  }
+
   const siteExtractor = siteExtractors.find((e) => e.canHandle(url, html));
   if (siteExtractor) {
-    const extracted = siteExtractor.extract(html, url);
+    const extracted = siteExtractor.extract(cleanedHtml, url);
     if (extracted) {
       result = extracted;
       return applyPostProcessing(result, url, html, options);
     }
   }
 
-  result = await defuddleExtract(html, url);
+  result = await defuddleExtract(cleanedHtml, url);
 
   if (!result) {
     const config = getConfig();
     if (config.trafilatura !== 'never') {
       const trafAvailable = await isTrafilaturaAvailable();
       if (trafAvailable) {
-        result = await trafilaturaExtract(html, url);
+        result = await trafilaturaExtract(cleanedHtml, url);
         if (result) {
           log.info('Trafilatura extraction succeeded', { url, chars: result.markdown.length });
           return applyPostProcessing(result, url, html, options);
@@ -93,11 +104,11 @@ export async function extractContent(
   }
 
   if (!result) {
-    result = readabilityExtract(html, url);
+    result = readabilityExtract(cleanedHtml, url);
   }
 
   if (!result) {
-    const markdown = htmlToMarkdown(html);
+    const markdown = htmlToMarkdown(cleanedHtml);
     result = {
       title: '',
       markdown,
@@ -144,6 +155,7 @@ function applyPostProcessing(
 
   // Resolve relative links/images before slicing so downstream consumers get absolute URLs.
   markdown = resolveRelativeUrls(markdown, url);
+  markdown = stripBoilerplateMarkdown(markdown);
   markdown = filterDecorativeImages(markdown);
 
   if (options.section) {
