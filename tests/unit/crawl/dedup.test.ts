@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { splitIntoBlocks, normalizeBlockText, deduplicatePages, getStoredBoilerplate, storeBoilerplate } from '../../../src/crawl/dedup.js';
+import { splitIntoBlocks, normalizeBlockText, deduplicatePages, getStoredBoilerplate, storeBoilerplate, stripRepeatedNavigationLines } from '../../../src/crawl/dedup.js';
 import { initDatabase, closeDatabase } from '../../../src/cache/db.js';
 
 vi.mock('../../../src/config.js', () => ({
@@ -123,6 +123,78 @@ describe('deduplicatePages', () => {
     const pages = [{ url: 'https://a.com', markdown: '# Solo\n\nContent.' }];
     const result = deduplicatePages(pages, undefined);
     expect(result[0].markdown).toContain('Solo');
+  });
+});
+
+describe('stripRepeatedNavigationLines', () => {
+  it('strips repeated leading nav block across 5 pages', () => {
+    const nav = [
+      'Home',
+      'About',
+      'Docs',
+      'API',
+      'Blog',
+      'Pricing',
+      'Login',
+      'Sign up',
+    ].join('\n');
+    const pages = Array.from({ length: 5 }, (_, i) => ({
+      url: `https://example.com/p${i}`,
+      markdown: `${nav}\n\n# Page ${i}\n\nUnique content for page ${i}.`,
+    }));
+
+    const result = deduplicatePages(pages);
+
+    for (let i = 0; i < result.length; i++) {
+      expect(result[i].markdown).not.toContain('Sign up');
+      expect(result[i].markdown).not.toContain('Pricing');
+      expect(result[i].markdown).toContain(`Unique content for page ${i}`);
+    }
+  });
+
+  it('strips repeated trailing footer across 5 pages', () => {
+    const footer = [
+      'Copyright 2024 Example Inc.',
+      'Privacy Policy',
+      'Terms of Service',
+      'Contact',
+    ].join('\n');
+    const pages = Array.from({ length: 5 }, (_, i) => ({
+      url: `https://example.com/p${i}`,
+      markdown: `# Article ${i}\n\nBody text ${i}.\n\n${footer}`,
+    }));
+
+    const result = deduplicatePages(pages);
+
+    for (let i = 0; i < result.length; i++) {
+      expect(result[i].markdown).not.toContain('Privacy Policy');
+      expect(result[i].markdown).not.toContain('Terms of Service');
+      expect(result[i].markdown).toContain(`Body text ${i}`);
+    }
+  });
+
+  it('does NOT strip nav when corpus is below MIN_CORPUS', () => {
+    const nav = [
+      'Home',
+      'About',
+      'Docs',
+      'API',
+      'Blog',
+      'Pricing',
+      'Login',
+      'Sign up',
+    ].join('\n');
+    const pages = Array.from({ length: 3 }, (_, i) => ({
+      url: `https://example.com/p${i}`,
+      markdown: `${nav}\n\n# Page ${i}\n\nUnique body ${i}.`,
+    }));
+
+    const result = stripRepeatedNavigationLines(pages);
+
+    for (const page of result) {
+      expect(page.markdown).toContain('Sign up');
+      expect(page.markdown).toContain('Pricing');
+    }
   });
 });
 

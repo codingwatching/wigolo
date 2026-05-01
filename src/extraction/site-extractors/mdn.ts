@@ -1,8 +1,6 @@
 import { parseHTML } from 'linkedom';
-import TurndownService from 'turndown';
+import { htmlToMarkdown } from '../markdown.js';
 import type { Extractor, ExtractionResult } from '../../types.js';
-
-const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
 
 const STRIP_SELECTORS = [
   'nav',
@@ -54,7 +52,7 @@ export const mdnExtractor: Extractor = {
 
     if (!title) return null;
 
-    const markdown = turndown.turndown((article as Element).innerHTML).trim();
+    const markdown = htmlToMarkdown((article as Element).innerHTML).trim();
     if (!markdown) return null;
 
     return {

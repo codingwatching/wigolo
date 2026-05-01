@@ -1,6 +1,21 @@
 import TurndownService from 'turndown';
+import { detectCodeLanguage } from './lang-hints.js';
 
-function buildTurndown(): TurndownService {
+function longestBacktickRun(s: string): number {
+  let max = 0;
+  let cur = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) === 96) {
+      cur++;
+      if (cur > max) max = cur;
+    } else {
+      cur = 0;
+    }
+  }
+  return max;
+}
+
+export function buildTurndown(): TurndownService {
   const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
 
   // Remove script and style tags entirely
@@ -40,6 +55,21 @@ function buildTurndown(): TurndownService {
     filter: ['thead', 'tbody', 'tfoot', 'tr', 'th', 'td'],
     replacement(content) {
       return content;
+    },
+  });
+
+  td.addRule('codeBlockLang', {
+    filter(node) {
+      return node.nodeName === 'PRE' && (node as Element).querySelector('code') !== null;
+    },
+    replacement(_content, node) {
+      const pre = node as Element;
+      const code = pre.querySelector('code');
+      const cls = code?.getAttribute('class') ?? pre.getAttribute('class') ?? '';
+      const lang = detectCodeLanguage(cls);
+      const body = code?.textContent ?? pre.textContent ?? '';
+      const fence = '`'.repeat(Math.max(3, longestBacktickRun(body) + 1));
+      return `\n\n${fence}${lang ?? ''}\n${body.replace(/\n+$/, '')}\n${fence}\n\n`;
     },
   });
 
@@ -201,7 +231,14 @@ export function resolveRelativeUrls(markdown: string, baseUrl: string): string {
   const rewrite = (path: string): string => {
     const trimmed = path.trim();
     if (!trimmed) return path;
-    if (/^(?:https?:|mailto:|tel:|javascript:|data:|#)/i.test(trimmed)) return path;
+    if (/^(?:https?:|mailto:|tel:|javascript:|data:)/i.test(trimmed)) return path;
+    if (trimmed.startsWith('#')) {
+      try {
+        return new URL(trimmed, baseUrl).href;
+      } catch {
+        return path;
+      }
+    }
     if (trimmed.startsWith('//')) {
       try {
         const base = new URL(baseUrl);

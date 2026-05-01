@@ -1,6 +1,6 @@
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
-import TurndownService from 'turndown';
+import { htmlToMarkdown } from './markdown.js';
 import type { ExtractionResult } from '../types.js';
 
 const MIN_CONTENT_THRESHOLD = 100;
@@ -12,8 +12,7 @@ export function readabilityExtract(html: string, _url: string): ExtractionResult
     const article = reader.parse();
     if (!article || !article.content) return null;
 
-    const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
-    const markdown = turndown.turndown(article.content);
+    const markdown = htmlToMarkdown(article.content);
 
     if (markdown.length < MIN_CONTENT_THRESHOLD) return null;
 

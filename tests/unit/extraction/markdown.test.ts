@@ -93,6 +93,45 @@ describe('htmlToMarkdown', () => {
   });
 });
 
+describe('htmlToMarkdown — code language detection', () => {
+  it('detects language hint on inner <code class="language-ts">', () => {
+    const html = '<pre><code class="language-ts">const x: number = 1;</code></pre>';
+    const result = htmlToMarkdown(html);
+    expect(result).toContain('```ts\n');
+    expect(result).toContain('const x: number = 1;');
+  });
+
+  it('canonicalizes hljs+language-python to py', () => {
+    const html = '<pre><code class="hljs language-python">print(\'x\')</code></pre>';
+    const result = htmlToMarkdown(html);
+    expect(result).toContain('```py\n');
+    expect(result).toContain("print('x')");
+  });
+
+  it('emits bare fence when no language hint', () => {
+    const html = '<pre><code>plain</code></pre>';
+    const result = htmlToMarkdown(html);
+    expect(result).toContain('```\nplain');
+    expect(result).not.toMatch(/```[a-z]/i);
+  });
+
+  it('falls back to <pre> class when <code> has no class', () => {
+    const html = '<pre class="prism-language-go"><code>fmt.Println()</code></pre>';
+    const result = htmlToMarkdown(html);
+    expect(result).toContain('```go\n');
+    expect(result).toContain('fmt.Println()');
+  });
+
+  it('extends fence length when body contains triple backticks', () => {
+    const html =
+      '<pre><code class="language-md">```js\nfoo\n```</code></pre>';
+    const result = htmlToMarkdown(html);
+    // outer fence must be longer than any backtick run inside the body
+    expect(result).toContain('````md\n');
+    expect(result).toMatch(/````md\n```js\nfoo\n```\n````/);
+  });
+});
+
 describe('extractSection', () => {
   const markdown = `# Introduction
 
@@ -310,9 +349,30 @@ describe('resolveRelativeUrls', () => {
     expect(resolveRelativeUrls(md, 'https://foo.com/')).toBe(md);
   });
 
-  it('leaves fragment-only links unchanged', () => {
+  it('resolves fragment-only links against the base url', () => {
     const md = '[Top](#toc)';
-    expect(resolveRelativeUrls(md, 'https://x.com/page')).toBe(md);
+    expect(resolveRelativeUrls(md, 'https://x.com/page')).toBe('[Top](https://x.com/page#toc)');
+  });
+
+  it('resolves bare fragment anchors to absolute urls', () => {
+    const md = '[See logs](#logs)';
+    expect(resolveRelativeUrls(md, 'https://react.dev/learn/managing-state')).toBe(
+      '[See logs](https://react.dev/learn/managing-state#logs)',
+    );
+  });
+
+  it('resolves relative path with fragment', () => {
+    const md = '[Other](./effects#cleanup)';
+    expect(resolveRelativeUrls(md, 'https://react.dev/learn/managing-state')).toBe(
+      '[Other](https://react.dev/learn/effects#cleanup)',
+    );
+  });
+
+  it('resolves query+fragment relative links', () => {
+    const md = '[Same path](?tab=usage#a)';
+    expect(resolveRelativeUrls(md, 'https://x.com/y')).toBe(
+      '[Same path](https://x.com/y?tab=usage#a)',
+    );
   });
 
   it('resolves relative image sources', () => {

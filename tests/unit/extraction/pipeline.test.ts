@@ -353,3 +353,48 @@ describe('extractContent — trafilatura path', () => {
     expect(result.markdown.length).toBeLessThanOrEqual(100);
   });
 });
+
+describe('extractContent — boilerplate stripping', () => {
+  it('removes boilerplate elements (feedback widget) from html before extraction', async () => {
+    mockDefuddle.mockResolvedValue(null);
+    mockReadability.mockReturnValue(null);
+
+    const html = `<!doctype html><html><head><title>Doc</title></head><body>
+      <article>
+        <h1>Real Article Title</h1>
+        <p>This is the genuine article body with meaningful content for extraction.</p>
+        <div class="feedback-widget">
+          <p>FeedbackSentinelMarker please rate this page</p>
+        </div>
+      </article>
+    </body></html>`;
+
+    const result = await extractContent(html, 'https://other.com/page');
+
+    expect(result.markdown).not.toContain('FeedbackSentinelMarker');
+    expect(result.markdown).not.toContain('please rate this page');
+  });
+
+  it('strips "Was this helpful?" boilerplate line from extractor markdown output', async () => {
+    mockDefuddle.mockResolvedValue(makeResult({
+      extractor: 'defuddle',
+      markdown: 'Article body paragraph one.\n\nWas this helpful?\n\nAnother body paragraph.',
+    }));
+
+    const result = await extractContent(ARTICLE_HTML, 'https://other.com/page');
+
+    expect(result.markdown).not.toMatch(/was this helpful\?/i);
+    expect(result.markdown).toContain('Article body paragraph one.');
+    expect(result.markdown).toContain('Another body paragraph.');
+  });
+
+  it('still extracts non-empty markdown body from a well-formed article fixture after DOM pre-pass', async () => {
+    mockDefuddle.mockResolvedValue(null);
+    mockReadability.mockReturnValue(null);
+
+    const result = await extractContent(ARTICLE_HTML, 'https://other.com/page');
+
+    expect(result.markdown.length).toBeGreaterThan(0);
+    expect(result.markdown).toContain('TypeScript');
+  });
+});

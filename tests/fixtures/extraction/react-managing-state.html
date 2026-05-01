@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Managing State</title>
+  <meta name="description" content="Learn how to manage React state across components." />
+</head>
+<body>
+  <header>
+    <nav><a href="/learn">Learn</a> <a href="/reference">Reference</a></nav>
+  </header>
+  <main>
+    <article>
+      <h1>Managing State</h1>
+      <p>As your application grows, it helps to be more intentional about how your state is organized and how the data flows between your components. Redundant or duplicate state is a common source of bugs. In this chapter, you will learn how to structure state well, how to keep your state update logic maintainable, and how to share state between distant components.</p>
+
+      <h2>Reacting to input with state</h2>
+      <p>With React, you will not modify the UI from code directly. For example, you will not write commands like disable the button, enable the button, show the success message, and so on. Instead, you will describe the UI you want to see for the different visual states of your component, and then trigger the state changes in response to user input.</p>
+
+      <h2>Choosing the state structure</h2>
+      <p>Structuring state well can make the difference between a component that is pleasant to modify and debug, and one that is a constant source of bugs. The most important principle is that state should not be redundant or duplicated. If there is unnecessary state, it is easy to forget to update it, and introduce bugs.</p>
+
+      <h3>Example: typed reducer</h3>
+      <pre><code class="language-ts">type Action = { type: 'increment' } | { type: 'decrement' };
+function reducer(state: number, action: Action): number {
+  switch (action.type) {
+    case 'increment': return state + 1;
+    case 'decrement': return state - 1;
+  }
+}</code></pre>
+
+      <h3>Example: plain JS handler</h3>
+      <pre><code class="hljs language-js">function handleClick(event) {
+  console.log('clicked', event.target);
+  setCount((c) => c + 1);
+}</code></pre>
+
+      <h3>Example: shell snippet</h3>
+      <pre><code>npm install react react-dom
+npm run build</code></pre>
+
+      <h2 id="cleanup">Cleanup</h2>
+      <p>When you are done managing your state, remember to clean up any subscriptions in the cleanup function returned from your effect. Forgetting to do so is a common cause of memory leaks in long-running React applications.</p>
+      <p>See <a href="#cleanup">See cleanup</a> for the section above. Also see the <a href="/learn/effects">effects guide</a> for more.</p>
+
+      <div class="feedback-widget">Was this helpful? <button>Send</button></div>
+      <a class="edit-page" href="https://github.com/reactjs/react.dev/edit/main/src/content/learn/managing-state.md">Edit this page</a>
+    </article>
+
+    <aside class="sidebar">
+      <ul>
+        <li><a href="/learn/managing-state">Managing State</a></li>
+        <li><a href="/learn/escape-hatches">Escape Hatches</a></li>
+        <li><a href="/learn/adding-interactivity">Adding Interactivity</a></li>
+      </ul>
+    </aside>
+  </main>
+  <footer>Copyright Meta</footer>
+</body>
+</html>

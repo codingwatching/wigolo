@@ -1,8 +1,6 @@
 import { parseHTML } from 'linkedom';
-import TurndownService from 'turndown';
+import { htmlToMarkdown } from '../markdown.js';
 import type { Extractor, ExtractionResult } from '../../types.js';
-
-const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
 
 function isIssueOrPR(url: string): boolean {
   return /\/issues\/\d+|\/pull\/\d+/.test(url);
@@ -34,7 +32,7 @@ function extractIssue(document: Document, _url: string): ExtractionResult | null
 
   Array.from(commentBodies).forEach((body, i) => {
     const html = (body as Element).innerHTML;
-    const md = turndown.turndown(html).trim();
+    const md = htmlToMarkdown(html).trim();
     if (md) {
       sections.push(i === 0 ? md : `---\n\n${md}`);
     }
@@ -63,7 +61,7 @@ function extractReadme(document: Document): ExtractionResult | null {
 
   if (!readmeBody) return null;
 
-  const markdown = turndown.turndown((readmeBody as Element).innerHTML).trim();
+  const markdown = htmlToMarkdown((readmeBody as Element).innerHTML).trim();
   if (!markdown) return null;
 
   return {
@@ -87,7 +85,7 @@ function extractBlob(document: Document): ExtractionResult | null {
 
   if (!codeBlock) return null;
 
-  const markdown = turndown.turndown((codeBlock as Element).innerHTML).trim();
+  const markdown = htmlToMarkdown((codeBlock as Element).innerHTML).trim();
   if (!markdown) return null;
 
   return {
