@@ -1,8 +1,6 @@
 import { parseHTML } from 'linkedom';
-import TurndownService from 'turndown';
+import { htmlToMarkdown } from '../markdown.js';
 import type { Extractor, ExtractionResult } from '../../types.js';
-
-const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
 
 type DocFramework = 'docusaurus' | 'mkdocs' | 'sphinx' | 'gitbook';
 
@@ -72,7 +70,7 @@ function buildResult(
 
   if (!title) return null;
 
-  const markdown = turndown.turndown(contentEl.innerHTML).trim();
+  const markdown = htmlToMarkdown(contentEl.innerHTML).trim();
   if (!markdown) return null;
 
   return {

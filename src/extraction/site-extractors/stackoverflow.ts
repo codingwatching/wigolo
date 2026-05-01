@@ -1,8 +1,6 @@
 import { parseHTML } from 'linkedom';
-import TurndownService from 'turndown';
+import { htmlToMarkdown } from '../markdown.js';
 import type { Extractor, ExtractionResult } from '../../types.js';
-
-const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
 
 interface Answer {
   accepted: boolean;
@@ -40,7 +38,7 @@ function buildMarkdown(
   answers: Answer[],
 ): string {
   const tagLine = `Tags: ${tags.join(', ')} | Votes: ${votes}`;
-  const questionMd = turndown.turndown(questionHtml).trim();
+  const questionMd = htmlToMarkdown(questionHtml).trim();
 
   const sections: string[] = [
     `# ${title}`,
@@ -57,7 +55,7 @@ function buildMarkdown(
     const heading = answer.accepted
       ? `## Accepted Answer (Votes: ${answer.votes})`
       : `## Answer (Votes: ${answer.votes})`;
-    const bodyMd = turndown.turndown(answer.bodyHtml).trim();
+    const bodyMd = htmlToMarkdown(answer.bodyHtml).trim();
     sections.push('---', '', heading, '', bodyMd);
   }
 

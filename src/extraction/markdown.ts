@@ -1,6 +1,6 @@
 import TurndownService from 'turndown';
 
-function buildTurndown(): TurndownService {
+export function buildTurndown(): TurndownService {
   const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
 
   // Remove script and style tags entirely
