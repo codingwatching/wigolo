@@ -586,6 +586,7 @@ export interface FindSimilarOutput {
   search_hits: number;
   embedding_available: boolean;
   cold_start?: string;
+  cache_seeded?: boolean;
   error?: string;
   total_time_ms: number;
   evidence?: EvidenceItem[];

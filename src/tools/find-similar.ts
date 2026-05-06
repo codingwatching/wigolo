@@ -12,6 +12,8 @@ import {
   applyTokenBudget,
   applyAggregateMarkdownBudget,
 } from '../search/evidence.js';
+import * as cacheStore from '../cache/store.js';
+import * as searchTool from './search.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('search');
@@ -56,8 +58,45 @@ export async function handleFindSimilar(
       includeWeb: sanitizedInput.include_web,
     });
 
+    let cacheSeeded = false;
+    if (url) {
+      try {
+        const u = new URL(url);
+        const host = u.hostname;
+        const cachedCount = cacheStore.countCachedUrlsForDomain(host);
+        if (cachedCount < 5) {
+          const lastSeg = u.pathname.split('/').filter(Boolean).pop() ?? '';
+          const seedQuery = (
+            lastSeg.replace(/[-_]/g, ' ') +
+            ' ' +
+            host.replace(/^www\./, '').split('.')[0]
+          ).trim();
+          if (seedQuery.length > 0) {
+            try {
+              await searchTool.handleSearch(
+                { query: seedQuery },
+                engines,
+                router,
+                backendStatus,
+              );
+              cacheSeeded = true;
+            } catch (seedErr) {
+              log.warn('find_similar cold-start seed failed', {
+                error: seedErr instanceof Error ? seedErr.message : String(seedErr),
+              });
+            }
+          }
+        }
+      } catch (parseErr) {
+        log.warn('find_similar cold-start url parse failed', {
+          error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+        });
+      }
+    }
+
     const out = await findSimilar(sanitizedInput, engines, router, backendStatus);
     await attachEvidence(out, input);
+    if (cacheSeeded) out.cache_seeded = true;
     return out;
   } catch (err) {
     log.error('handleFindSimilar failed', { error: String(err) });

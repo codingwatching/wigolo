@@ -307,6 +307,69 @@ describe('handleFindSimilar', () => {
     });
   });
 
+  describe('cold start auto-seed', () => {
+    it('seeds cache via search and returns cache_seeded:true when domain has < 5 cached URLs', async () => {
+      const store = await import('../../../src/cache/store.js');
+      const search = await import('../../../src/tools/search.js');
+      vi.spyOn(store, 'countCachedUrlsForDomain').mockReturnValue(2);
+      const handleSearchSpy = vi.spyOn(search, 'handleSearch').mockResolvedValue({
+        results: [
+          { url: 'https://a.example.com/1', title: 'A', snippet: 'aa', relevance_score: 1, engines: ['mock'] },
+          { url: 'https://b.example.com/2', title: 'B', snippet: 'bb', relevance_score: 0.9, engines: ['mock'] },
+          { url: 'https://c.example.com/3', title: 'C', snippet: 'cc', relevance_score: 0.8, engines: ['mock'] },
+        ],
+        query: 'seed',
+        engines_used: ['mock'],
+        total_time_ms: 10,
+      });
+
+      const out = await handleFindSimilar(
+        { url: 'https://example.com/post-title' },
+        [mockEngine],
+        mockRouter,
+      );
+
+      const seedCall = handleSearchSpy.mock.calls.find(
+        (c) => (c[0] as { query?: string }).query === 'post title example',
+      );
+      expect(seedCall).toBeDefined();
+      expect(out.cache_seeded).toBe(true);
+    });
+
+    it('does NOT seed when domain has >= 5 cached URLs', async () => {
+      const store = await import('../../../src/cache/store.js');
+      const search = await import('../../../src/tools/search.js');
+      vi.spyOn(store, 'countCachedUrlsForDomain').mockReturnValue(7);
+      const handleSearchSpy = vi.spyOn(search, 'handleSearch');
+
+      const out = await handleFindSimilar(
+        { url: 'https://example.com/post-title' },
+        [mockEngine],
+        mockRouter,
+      );
+
+      const seedCall = handleSearchSpy.mock.calls.find(
+        (c) => (c[0] as { query?: string }).query === 'post title example',
+      );
+      expect(seedCall).toBeUndefined();
+      expect(out.cache_seeded).toBeUndefined();
+    });
+
+    it('does NOT seed when only concept is provided (no url)', async () => {
+      const store = await import('../../../src/cache/store.js');
+      const countSpy = vi.spyOn(store, 'countCachedUrlsForDomain');
+
+      const out = await handleFindSimilar(
+        { concept: 'react hooks' },
+        [mockEngine],
+        mockRouter,
+      );
+
+      expect(countSpy).not.toHaveBeenCalled();
+      expect(out.cache_seeded).toBeUndefined();
+    });
+  });
+
   it('concurrent calls do not interfere with each other', async () => {
     const results = await Promise.all([
       handleFindSimilar(
