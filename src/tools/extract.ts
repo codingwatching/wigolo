@@ -104,11 +104,15 @@ export async function handleExtract(
 
     if (mode === 'tables' && Array.isArray(data) && data.length === 0) {
       // StageError-shaped response; type widening deferred to T15
+      const hint =
+        input.execution_mode === 'stealth'
+          ? 'no_tables_detected — page genuinely contains no tables'
+          : 'no_tables_detected — page may require JavaScript; retry with execution_mode: "stealth"';
       return {
         error: 'no_tables_detected',
         error_reason: 'No tables found on page',
         stage: 'extract',
-        hint: 'no_tables_detected — page may require JavaScript; retry with stealth mode',
+        hint,
       } as unknown as ExtractOutput;
     }
 

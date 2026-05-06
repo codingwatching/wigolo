@@ -20,6 +20,10 @@ vi.mock('../../../src/cache/store.js', () => ({
   isExpired: vi.fn(),
 }));
 
+vi.mock('../../../src/fetch/playwright-tier.js', () => ({
+  fetchWithPlaywright: vi.fn(),
+}));
+
 vi.mock('../../../src/logger.js', () => ({
   createLogger: () => ({
     debug: vi.fn(),
@@ -34,6 +38,7 @@ import { extractMetadata, extractSelector, extractTables } from '../../../src/ex
 import { getCachedContent, isExpired } from '../../../src/cache/store.js';
 import { extractWithSchema } from '../../../src/extraction/schema.js';
 import { extractJsonLd } from '../../../src/extraction/jsonld.js';
+import { fetchWithPlaywright } from '../../../src/fetch/playwright-tier.js';
 
 function mockRouter(html = '<html><body>Hello</body></html>') {
   return {
@@ -338,6 +343,38 @@ describe('handleExtract honesty', () => {
     expect((out as any).error).toBe('no_tables_detected');
     expect((out as any).hint).toMatch(/stealth/);
     expect((out as any).stage).toBe('extract');
+  });
+});
+
+describe('handleExtract execution_mode:stealth', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getCachedContent).mockReturnValue(null);
+    vi.mocked(isExpired).mockReturnValue(false);
+  });
+
+  it('uses fetchWithPlaywright and bypasses cache + router for stealth tables extraction', async () => {
+    vi.mocked(fetchWithPlaywright).mockResolvedValue({
+      html: '<table><tr><th>a</th></tr><tr><td>1</td></tr></table>',
+      text: '',
+    } as any);
+    vi.mocked(extractTables).mockReturnValue([
+      { caption: undefined, headers: ['a'], rows: [{ a: '1' }] },
+    ]);
+
+    const router = { fetch: vi.fn(), getDomainStats: vi.fn() };
+
+    const out = await handleExtract(
+      { url: 'https://js-page.test/', mode: 'tables', execution_mode: 'stealth' } as any,
+      router as any,
+    );
+
+    expect(getCachedContent).not.toHaveBeenCalled();
+    expect(router.fetch).not.toHaveBeenCalled();
+    expect(fetchWithPlaywright).toHaveBeenCalledWith('https://js-page.test/');
+    expect(Array.isArray(out.data)).toBe(true);
+    expect((out.data as any[]).length).toBe(1);
+    expect(out.error).toBeUndefined();
   });
 });
 
