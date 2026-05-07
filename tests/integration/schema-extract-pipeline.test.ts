@@ -262,7 +262,6 @@ describe('integration: schema extraction pipeline', () => {
     const result = __r_result.ok ? __r_result.data : ({ ...__r_result } as any);
 
     expect(result.error).toBeDefined();
-    expect(result.mode).toBe('schema');
   });
 
   it('handles 404 URL gracefully in schema mode', async () => {

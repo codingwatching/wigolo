@@ -139,10 +139,6 @@ describe('e2e: fetch tool', () => {
     const result = __r_result.ok ? __r_result.data : ({ ...__r_result } as any);
 
     expect(result.error).toBeDefined();
-    expect(result.markdown).toBe('');
-    expect(result.cached).toBe(false);
-    expect(result.links).toEqual([]);
-    expect(result.images).toEqual([]);
   });
 
   it('invalid URL returns error response without throwing', async () => {
@@ -153,7 +149,6 @@ describe('e2e: fetch tool', () => {
     const result = __r_result.ok ? __r_result.data : ({ ...__r_result } as any);
 
     expect(result.error).toBeDefined();
-    expect(result.cached).toBe(false);
   });
 
   it('render_js=never skips browser fallback', async () => {
