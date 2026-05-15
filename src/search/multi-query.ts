@@ -195,10 +195,11 @@ export function mergeWithRRF(rankedLists: MergedSearchResult[][]): MergedSearchR
 const DEEP_SUFFIXES = ['guide', 'tutorial', 'examples', 'best practices'] as const;
 
 export function expandQueryHeuristic(query: string): string[] {
+  const max = Math.max(1, parseInt(process.env.WIGOLO_QUERY_EXPAND_VARIANTS || '5', 10));
   const trimmed = query.trim();
   const variants: string[] = [trimmed];
   for (const suffix of DEEP_SUFFIXES) {
-    if (variants.length >= 5) break;
+    if (variants.length >= max) break;
     const candidate = `${trimmed} ${suffix}`;
     if (!variants.includes(candidate)) variants.push(candidate);
   }
