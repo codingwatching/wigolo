@@ -194,9 +194,59 @@ export function mergeWithRRF(rankedLists: MergedSearchResult[][]): MergedSearchR
 
 const DEEP_SUFFIXES = ['guide', 'tutorial', 'examples', 'best practices'] as const;
 
+const COMPARE_INTRO = /(compare|comparison of|difference[s]? between|trade[- ]?off[s]? (?:of|between)|vs\.?|versus)/i;
+const STOP_PHRASES = new Set([
+  'and', 'or', 'vs', 'versus', 'between', 'of', 'the', 'a', 'an',
+  'for', 'in', 'on', 'to', 'with', 'compare', 'comparison', 'differences',
+  'tradeoff', 'tradeoffs', 'trade-off', 'trade-offs',
+]);
+
+function splitListEntities(segment: string): string[] {
+  const cleaned = segment.replace(/^\s*(?:between|of|the|a|an)\s+/i, '').trim();
+  const parts = cleaned
+    .split(/,\s*(?:and\s+)?|\s+and\s+|\s+vs\.?\s+|\s+versus\s+/i)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 2 && s.length <= 80 && !STOP_PHRASES.has(s.toLowerCase()));
+  return [...new Set(parts)];
+}
+
+export function decomposeMultiHop(query: string): string[] | null {
+  const text = query.trim();
+
+  const compareMatch = text.match(/(?:compare|trade[- ]?off[s]? (?:of|between)|difference[s]? between)\s+(.+?)(?:[?.]|$)/i);
+  if (compareMatch) {
+    const items = splitListEntities(compareMatch[1]);
+    if (items.length >= 2 && items.length <= 6) return items;
+  }
+
+  const vsMatch = text.match(/^([\w\s.&+#/-]+?)\s+(?:vs\.?|versus)\s+([\w\s.&+#/-]+?)(?:\s+(?:for|in|when|to)\s+|[?.]|$)/i);
+  if (vsMatch) {
+    const items = [vsMatch[1].trim(), vsMatch[2].trim()].filter(Boolean);
+    if (items.length === 2) return items;
+  }
+
+  const commaList = text.match(/of\s+([\w\s.,&+#/-]+?(?:,\s*and\s+|\s+and\s+)[\w\s.&+#/-]+?)(?:\s+(?:for|in|when|to)\s+|[?.]|$)/i);
+  if (commaList) {
+    const items = splitListEntities(commaList[1]);
+    if (items.length >= 2 && items.length <= 6) return items;
+  }
+
+  return null;
+}
+
 export function expandQueryHeuristic(query: string): string[] {
   const max = Math.max(1, parseInt(process.env.WIGOLO_QUERY_EXPAND_VARIANTS || '5', 10));
   const trimmed = query.trim();
+
+  if (COMPARE_INTRO.test(trimmed) || /,.+,.+\band\b/.test(trimmed)) {
+    const parts = decomposeMultiHop(trimmed);
+    if (parts && parts.length >= 2) {
+      const cap = Math.max(max, parts.length);
+      const out = [trimmed, ...parts];
+      return [...new Set(out)].slice(0, cap);
+    }
+  }
+
   const variants: string[] = [trimmed];
   for (const suffix of DEEP_SUFFIXES) {
     if (variants.length >= max) break;
