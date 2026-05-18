@@ -85,8 +85,15 @@ export async function fanOutSearch(
       category: options.category,
     };
 
+    // Q9-followup: when multi-hop decomposition produced ≥3 sub-queries,
+    // cap engines per query to keep total fan-out tasks bounded
+    // (3 entities × 3 engines × variants → wall blows past 180s).
+    const effEngines = queries.length >= 3 && engines.length > 2
+      ? engines.slice(0, 2)
+      : engines;
+
     const tasks: Array<{ engine: SearchEngine; query: string }> = [];
-    for (const engine of engines) {
+    for (const engine of effEngines) {
       for (const query of queries) {
         tasks.push({ engine, query });
       }
