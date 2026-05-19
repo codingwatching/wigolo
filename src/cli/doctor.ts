@@ -24,7 +24,7 @@ function checkDocker(): { ok: boolean; version?: string } {
   return { ok: true, version: (r.stdout || '').trim() };
 }
 
-function checkPlaywright(): { installed: boolean; version?: string; browsers: { chromium: boolean; firefox: boolean; webkit: boolean } } {
+function checkPlaywright(): { installed: boolean; version?: string; browsers: { chromium: boolean; chromiumHeadlessShell: boolean; firefox: boolean; webkit: boolean } } {
   let installed = false;
   let version: string | undefined;
   try {
@@ -40,7 +40,16 @@ function checkPlaywright(): { installed: boolean; version?: string; browsers: { 
     const r = spawnSync('npx', ['playwright', 'install', '--dry-run', browser], { encoding: 'utf-8', timeout: 5000 });
     return r.status === 0 && !/is not installed/i.test(r.stdout + r.stderr);
   };
-  return { installed, version, browsers: { chromium: probe('chromium'), firefox: probe('firefox'), webkit: probe('webkit') } };
+  return {
+    installed,
+    version,
+    browsers: {
+      chromium: probe('chromium'),
+      chromiumHeadlessShell: probe('chromium-headless-shell'),
+      firefox: probe('firefox'),
+      webkit: probe('webkit'),
+    },
+  };
 }
 
 function checkPyPackage(name: string, pythonBin: string): { ok: boolean; version?: string } {
@@ -117,8 +126,13 @@ export async function runDoctor(dataDir: string): Promise<number> {
   const pw = checkPlaywright();
   out('[wigolo doctor] Browser engine:');
   out(`  Installation:  ${pw.installed ? `installed${pw.version ? ` (v${pw.version})` : ''}` : 'not installed'}`);
-  out(`  Browsers:      chromium ${pw.browsers.chromium ? 'OK' : 'missing'}  firefox ${pw.browsers.firefox ? 'OK' : 'missing'}  webkit ${pw.browsers.webkit ? 'OK' : 'missing'}`);
-  if (!pw.installed || !pw.browsers.chromium) degraded = true;
+  out(`  Browsers:      chromium ${pw.browsers.chromium ? 'OK' : 'missing'}  headless-shell ${pw.browsers.chromiumHeadlessShell ? 'OK' : 'missing'}  firefox ${pw.browsers.firefox ? 'OK' : 'missing'}  webkit ${pw.browsers.webkit ? 'OK' : 'missing'}`);
+  if (!pw.installed || !pw.browsers.chromium || !pw.browsers.chromiumHeadlessShell) {
+    if (!pw.browsers.chromiumHeadlessShell && pw.installed) {
+      out("  Hint:          run 'npx playwright install chromium-headless-shell' — JS-rendered pages will fail without it");
+    }
+    degraded = true;
+  }
 
   out('');
   const pythonBin = getPythonBin(dataDir);
