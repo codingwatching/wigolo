@@ -1,5 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { isPrivateUrl, matchesPatterns } from '../../../src/crawl/url-utils.js';
+import { isPrivateUrl, matchesPatterns, canonicalForCrawl } from '../../../src/crawl/url-utils.js';
+
+describe('canonicalForCrawl', () => {
+  it('strips fragment', () => {
+    expect(canonicalForCrawl('https://hono.dev/docs#VPContent')).toBe('https://hono.dev/docs');
+  });
+  it('strips trailing slash', () => {
+    expect(canonicalForCrawl('https://hono.dev/docs/')).toBe('https://hono.dev/docs');
+  });
+  it('keeps root slash', () => {
+    expect(canonicalForCrawl('https://hono.dev/')).toBe('https://hono.dev/');
+  });
+  it('returns input on bad URL', () => {
+    expect(canonicalForCrawl('not a url')).toBe('not a url');
+  });
+});
 
 describe('isPrivateUrl', () => {
   it('detects localhost', () => {

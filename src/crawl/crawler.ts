@@ -1,5 +1,5 @@
 import type { FetchOutput, CrawlInput, CrawlOutput, CrawlResultItem, LinkEdge, RawFetchResult } from '../types.js';
-import { matchesPatterns } from './url-utils.js';
+import { matchesPatterns, canonicalForCrawl } from './url-utils.js';
 import { RateLimiter } from './rate-limiter.js';
 import { RobotsParser } from './robots.js';
 import { parseSitemap, parseSitemapIndex, extractSitemapUrlFromRobots } from './sitemap.js';
@@ -78,7 +78,7 @@ export class Crawler {
 
     // Queue: [url, depth]
     const queue: Array<[string, number]> = [[input.url, 0]];
-    visited.add(input.url);
+    visited.add(canonicalForCrawl(input.url));
 
     while (queue.length > 0 && pages.length < maxPages) {
       const item = strategy === 'dfs' ? queue.pop()! : queue.shift()!;
@@ -121,7 +121,7 @@ export class Crawler {
         const newLinks = this.filterLinks(fetchResult.links, seedOrigin, visited, input.include_patterns, input.exclude_patterns, robotsParser);
 
         for (const link of newLinks) {
-          visited.add(link);
+          visited.add(canonicalForCrawl(link));
           queue.push([link, depth + 1]);
         }
 
@@ -154,7 +154,7 @@ export class Crawler {
       try {
         const parsed = new URL(link);
         if (parsed.origin !== seedOrigin) return false;
-        if (visited.has(link)) return false;
+        if (visited.has(canonicalForCrawl(link))) return false;
         if (!matchesPatterns(link, includePatterns, excludePatterns)) return false;
         if (robotsParser && !robotsParser.isAllowed(parsed.pathname)) return false;
         return true;

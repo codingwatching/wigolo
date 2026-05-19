@@ -108,6 +108,21 @@ export async function handleCrawl(
   }
 }
 
+function buildPageExcerpt(markdown: string, maxChars = 600): string {
+  if (!markdown) return '';
+  const paragraphs = markdown.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+  let out = '';
+  for (const p of paragraphs) {
+    if (out.length + p.length + 2 > maxChars) {
+      const remaining = maxChars - out.length;
+      if (remaining > 80) out += (out ? '\n\n' : '') + p.slice(0, remaining) + '…';
+      break;
+    }
+    out += (out ? '\n\n' : '') + p;
+  }
+  return out;
+}
+
 async function attachEvidence(out: CrawlOutput, input: CrawlInput): Promise<void> {
   if (out.pages.length === 0) return;
   const includeFull = input.include_full_markdown ?? false;
@@ -132,7 +147,13 @@ async function attachEvidence(out: CrawlOutput, input: CrawlInput): Promise<void
   }
 
   if (!includeFull) {
+    // No full markdown: still surface a short excerpt per page so the
+    // result is useful when evidence couldn't be built (no query to highlight).
     for (const page of out.pages) {
+      if (!page.evidence || page.evidence.length === 0) {
+        const excerpt = buildPageExcerpt(page.markdown);
+        if (excerpt) page.excerpt = excerpt;
+      }
       page.markdown = '';
     }
   } else {

@@ -421,6 +421,7 @@ export interface CrawlResultItem {
   markdown: string;
   depth: number;
   evidence?: EvidenceItem[];
+  excerpt?: string;
 }
 
 export interface LinkEdge {

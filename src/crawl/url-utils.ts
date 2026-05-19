@@ -1,3 +1,18 @@
+// Canonical form for visited-set comparison — drops fragments and the
+// trailing slash so /docs, /docs/, and /docs#anchor are treated as one page.
+export function canonicalForCrawl(url: string): string {
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    let pathname = u.pathname;
+    if (pathname.length > 1 && pathname.endsWith('/')) pathname = pathname.slice(0, -1);
+    u.pathname = pathname;
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 export function isPrivateUrl(url: string): boolean {
   const parsed = new URL(url);
   const hostname = parsed.hostname.replace(/^\[|\]$/g, ''); // strip IPv6 brackets
