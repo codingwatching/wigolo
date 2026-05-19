@@ -11,6 +11,7 @@ import {
 } from './markdown.js';
 import { extractMetadata } from './extract.js';
 import { stripBoilerplateDom, stripBoilerplateMarkdown } from './boilerplate.js';
+import { sanitizeExtractedMarkdown } from './markdown-sanitize.js';
 import type { ExtractionResult, Extractor } from '../types.js';
 import { githubExtractor } from './site-extractors/github.js';
 import { stackoverflowExtractor } from './site-extractors/stackoverflow.js';
@@ -157,6 +158,7 @@ function applyPostProcessing(
   markdown = resolveRelativeUrls(markdown, url);
   markdown = stripBoilerplateMarkdown(markdown);
   markdown = filterDecorativeImages(markdown);
+  markdown = sanitizeExtractedMarkdown(markdown);
 
   if (options.section) {
     const { content } = extractSection(markdown, options.section, options.sectionIndex ?? 0);
