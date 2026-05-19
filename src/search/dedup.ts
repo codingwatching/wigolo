@@ -1,5 +1,6 @@
 import { normalizeUrl } from '../cache/store.js';
 import type { RawSearchResult } from '../types.js';
+import { normalizeResultUrl } from './url-unwrap.js';
 
 export interface MergedSearchResult {
   title: string;
@@ -13,7 +14,9 @@ export interface MergedSearchResult {
 export function deduplicateResults(results: RawSearchResult[]): MergedSearchResult[] {
   const urlMap = new Map<string, MergedSearchResult>();
 
-  for (const result of results) {
+  for (const raw of results) {
+    const unwrappedUrl = normalizeResultUrl(raw.url);
+    const result = unwrappedUrl !== raw.url ? { ...raw, url: unwrappedUrl } : raw;
     let normalized: string;
     try {
       normalized = normalizeUrl(result.url);
