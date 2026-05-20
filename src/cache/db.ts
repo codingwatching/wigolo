@@ -143,17 +143,16 @@ export function initDatabase(dbPath: string): Database.Database {
   }
 
   // Apply registered migrations after the inline schema is in place so
-  // migrations can build on the legacy tables (url_cache, etc.). Skip the
-  // vec0 migration when the extension didn't load — its CREATE VIRTUAL
-  // TABLE statement would fail otherwise.
-  if (vecLoaded) {
-    try {
-      applyMigrations(db);
-    } catch (err) {
-      log.error('migration runner failed — vector search may be disabled', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+  // migrations can build on the legacy tables (url_cache, etc.). Migrations
+  // that depend on the sqlite-vec extension declare `requiresVec: true` and
+  // are skipped when the extension is unavailable; FTS5-only migrations
+  // (e.g. feed_items) still run.
+  try {
+    applyMigrations(db, { vecLoaded });
+  } catch (err) {
+    log.error('migration runner failed — some schema may be missing', {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   instance = db;

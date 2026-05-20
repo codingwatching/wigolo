@@ -1,17 +1,50 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   getNewsEngines,
   _resetNewsEnginesForTest,
 } from '../../../../../src/search/v1/verticals/news.js';
 import { _resetBreakersForTest } from '../../../../../src/search/v1/engine-base.js';
+import { initDatabase, closeDatabase } from '../../../../../src/cache/db.js';
+import {
+  upsertFeedItems,
+  _clearFeedStoreForTest,
+} from '../../../../../src/search/v1/rss/feed-store.js';
+import { resetConfig } from '../../../../../src/config.js';
+
+const ORIG_ENV = process.env.WIGOLO_RSS_FEEDS;
+const ORIG_DATA_DIR = process.env.WIGOLO_DATA_DIR;
 
 describe('getNewsEngines', () => {
+  let isolatedDataDir: string;
+
   beforeEach(() => {
+    // Isolate from any real ~/.wigolo/rss-feeds.json on dev machines.
+    isolatedDataDir = mkdtempSync(join(tmpdir(), 'wigolo-news-test-'));
+    process.env.WIGOLO_DATA_DIR = isolatedDataDir;
+    delete process.env.WIGOLO_RSS_FEEDS;
+    resetConfig();
     _resetNewsEnginesForTest();
     _resetBreakersForTest();
   });
 
-  it('returns two entries', () => {
+  afterEach(() => {
+    rmSync(isolatedDataDir, { recursive: true, force: true });
+    if (ORIG_ENV === undefined) delete process.env.WIGOLO_RSS_FEEDS;
+    else process.env.WIGOLO_RSS_FEEDS = ORIG_ENV;
+    if (ORIG_DATA_DIR === undefined) delete process.env.WIGOLO_DATA_DIR;
+    else process.env.WIGOLO_DATA_DIR = ORIG_DATA_DIR;
+    resetConfig();
+    try {
+      closeDatabase();
+    } catch {
+      // ignore
+    }
+  });
+
+  it('returns two entries when no RSS configured and feed store empty', () => {
     expect(getNewsEngines()).toHaveLength(2);
   });
 
@@ -46,5 +79,47 @@ describe('getNewsEngines', () => {
     const lob = entries.find((e) => e.engine.name === 'lobsters');
     expect(hn?.supportsDateFilter).toBe(true);
     expect(lob?.supportsDateFilter).toBe(false);
+  });
+
+  describe('RSS feed integration', () => {
+    it('adds rss-feed engine when env-configured (even with empty store)', () => {
+      process.env.WIGOLO_RSS_FEEDS = 'https://blog.example.com/feed.xml';
+      _resetNewsEnginesForTest();
+      const entries = getNewsEngines();
+      const names = entries.map((e) => e.engine.name);
+      expect(names).toContain('rss-feed');
+      const rss = entries.find((e) => e.engine.name === 'rss-feed');
+      expect(rss?.weight).toBe(1.5);
+      expect(rss?.supportsDateFilter).toBe(true);
+    });
+
+    it('adds rss-feed engine when feed store has rows (even if env unset)', () => {
+      initDatabase(':memory:');
+      _clearFeedStoreForTest();
+      upsertFeedItems([
+        {
+          feedUrl: 'https://stored.example.com/feed',
+          guid: 's-1',
+          title: 'A stored item',
+          link: 'https://stored.example.com/1',
+          summary: 'body',
+        },
+      ]);
+      _resetNewsEnginesForTest();
+      const names = getNewsEngines().map((e) => e.engine.name);
+      expect(names).toContain('rss-feed');
+    });
+
+    it('does not add rss-feed engine when both env unset and store empty', () => {
+      const names = getNewsEngines().map((e) => e.engine.name);
+      expect(names).not.toContain('rss-feed');
+    });
+
+    it('memoizes RSS decision — adding feeds after first call does not change result', () => {
+      const before = getNewsEngines();
+      process.env.WIGOLO_RSS_FEEDS = 'https://late.example.com/feed';
+      const after = getNewsEngines();
+      expect(after).toBe(before);
+    });
   });
 });
