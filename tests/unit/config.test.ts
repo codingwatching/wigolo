@@ -462,10 +462,10 @@ describe('config', () => {
       expect(getConfig().rerankerModel).toBe('bge-reranker-v2-m3');
     });
 
-    it('retired value "flashrank" rejects with migration message', () => {
+    it('legacy value "flashrank" is aliased to "onnx" (with warn log)', () => {
       process.env.WIGOLO_RERANKER = 'flashrank';
       resetConfig();
-      expect(() => getConfig()).toThrow(/WIGOLO_RERANKER=.flashrank.*retired.*onnx/i);
+      expect(getConfig().reranker).toBe('onnx');
     });
 
     it('"minilm-l12" alias is preserved verbatim (resolution at use-site)', () => {
