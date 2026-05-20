@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { initDatabase, closeDatabase } from '../../src/cache/db.js';
-import { cacheContent, updateCacheEmbedding, getEmbeddingForUrl, getAllEmbeddings } from '../../src/cache/store.js';
-import { VectorIndex } from '../../src/embedding/vector-index.js';
+import { initDatabase, closeDatabase, isVecExtensionLoaded } from '../../src/cache/db.js';
+import {
+  cacheContent,
+  updateCacheEmbedding,
+  getEmbeddingForUrl,
+  getAllEmbeddings,
+} from '../../src/cache/store.js';
+import {
+  getVectorStore,
+  _resetVectorStoreForTest,
+} from '../../src/providers/vector-store.js';
 import { resetConfig } from '../../src/config.js';
 import type { RawFetchResult, ExtractionResult } from '../../src/types.js';
 
@@ -14,17 +22,19 @@ vi.mock('../../src/logger.js', () => ({
   }),
 }));
 
-describe('Embedding integration: SQLite + VectorIndex', () => {
+describe('Embedding integration: SQLite + sqlite-vec store', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
     process.env = { ...originalEnv };
     resetConfig();
+    _resetVectorStoreForTest();
     initDatabase(':memory:');
   });
 
   afterEach(() => {
     closeDatabase();
+    _resetVectorStoreForTest();
     process.env = originalEnv;
     resetConfig();
   });
@@ -50,19 +60,25 @@ describe('Embedding integration: SQLite + VectorIndex', () => {
     cacheContent(raw, extraction);
   }
 
+  // Generate a deterministic 384-dim vector so the test exercises the
+  // migration-shaped float[384] virtual table provisioned by 001-sqlite-vec.
   function generateVector(dims: number, seed: number): Float32Array {
     const v = new Float32Array(dims);
-    for (let i = 0; i < dims; i++) {
-      v[i] = Math.sin(seed * (i + 1) * 0.1);
-    }
+    for (let i = 0; i < dims; i++) v[i] = Math.sin(seed * (i + 1) * 0.1);
     let norm = 0;
     for (let i = 0; i < dims; i++) norm += v[i] * v[i];
     norm = Math.sqrt(norm);
-    for (let i = 0; i < dims; i++) v[i] /= norm;
+    if (norm > 0) {
+      for (let i = 0; i < dims; i++) v[i] /= norm;
+    }
     return v;
   }
 
-  it('end-to-end: cache page -> embed -> load into VectorIndex -> findSimilar', () => {
+  it('vec extension loads on init', () => {
+    expect(isVecExtensionLoaded()).toBe(true);
+  });
+
+  it('end-to-end: cache page -> updateCacheEmbedding -> vector store search', async () => {
     const dims = 384;
     const urls = [
       'https://react.dev/hooks',
@@ -86,135 +102,121 @@ describe('Embedding integration: SQLite + VectorIndex', () => {
       expect(emb!.dims).toBe(dims);
     }
 
-    const index = new VectorIndex();
-    const allEmb = getAllEmbeddings();
-    expect(allEmb).toHaveLength(3);
+    const store = await getVectorStore();
+    for (let i = 0; i < urls.length; i++) {
+      await store.upsert([{
+        id: urls[i],
+        vector: generateVector(dims, i + 1),
+        metadata: {
+          url: urls[i],
+          contentHash: '',
+          modelId: 'bge-small-en-v1.5',
+        },
+      }]);
+    }
 
-    const loaded = index.loadFromBuffers(allEmb.map(e => ({
-      url: e.normalizedUrl,
-      embedding: e.embedding,
-      dims: e.dims,
-    })));
-    expect(loaded).toBe(3);
-    expect(index.size()).toBe(3);
+    expect(await store.size()).toBe(3);
 
     const queryVector = generateVector(dims, 1);
-    const results = index.findSimilar(queryVector, 3);
+    const results = await store.search(queryVector, 3);
 
     expect(results.length).toBe(3);
-    expect(results[0].score).toBeCloseTo(1.0, 2);
+    expect(results[0].id).toBe(urls[0]);
   });
 
-  it('VectorIndex excludeUrls excludes specific URLs', () => {
-    const dims = 8;
-    const index = new VectorIndex();
+  it('upsert replaces an existing record (no duplicates)', async () => {
+    const dims = 384;
+    const store = await getVectorStore();
+    await store.upsert([{
+      id: 'https://mutable.com',
+      vector: generateVector(dims, 1),
+      metadata: { url: 'https://mutable.com', contentHash: 'h1', modelId: 'model-a' },
+    }]);
+    await store.upsert([{
+      id: 'https://mutable.com',
+      vector: generateVector(dims, 2),
+      metadata: { url: 'https://mutable.com', contentHash: 'h2', modelId: 'model-b' },
+    }]);
 
-    index.add('https://include.com', generateVector(dims, 1));
-    index.add('https://exclude.com', generateVector(dims, 1));
-    index.add('https://other.com', generateVector(dims, 3));
+    expect(await store.size()).toBe(1);
 
-    const query = generateVector(dims, 1);
-    const results = index.findSimilar(query, 10, new Set(['https://exclude.com']));
-
-    expect(results.every(r => r.url !== 'https://exclude.com')).toBe(true);
-    expect(results.length).toBe(2);
+    const r = await store.search(generateVector(dims, 2), 1);
+    expect(r[0].id).toBe('https://mutable.com');
+    expect(r[0].metadata.modelId).toBe('model-b');
   });
 
-  it('embedding update overwrites previous vector', () => {
-    seedPage('https://mutable.com', 'Original content');
+  it('filters by modelId', async () => {
+    const dims = 384;
+    const store = await getVectorStore();
+    await store.upsert([
+      {
+        id: 'https://a.com',
+        vector: generateVector(dims, 1),
+        metadata: { url: 'https://a.com', contentHash: 'h', modelId: 'model-1' },
+      },
+      {
+        id: 'https://b.com',
+        vector: generateVector(dims, 1),
+        metadata: { url: 'https://b.com', contentHash: 'h', modelId: 'model-2' },
+      },
+    ]);
 
-    const dims = 4;
-    const v1 = new Float32Array([1, 0, 0, 0]);
-    const v2 = new Float32Array([0, 0, 0, 1]);
-
-    updateCacheEmbedding('https://mutable.com', Buffer.from(v1.buffer), 'model-a', dims);
-
-    let emb = getEmbeddingForUrl('https://mutable.com');
-    expect(emb!.model).toBe('model-a');
-
-    updateCacheEmbedding('https://mutable.com', Buffer.from(v2.buffer), 'model-b', dims);
-
-    emb = getEmbeddingForUrl('https://mutable.com');
-    expect(emb!.model).toBe('model-b');
-
-    const index = new VectorIndex();
-    const stored = getAllEmbeddings();
-    index.loadFromBuffers(stored.map(e => ({
-      url: e.normalizedUrl,
-      embedding: e.embedding,
-      dims: e.dims,
-    })));
-
-    const results = index.findSimilar(new Float32Array([0, 0, 0, 1]), 1);
-    expect(results[0].url).toContain('mutable.com');
-    expect(results[0].score).toBeCloseTo(1.0, 4);
-  });
-
-  it('large number of embeddings loads correctly', () => {
-    const dims = 16;
-    const count = 100;
-
-    for (let i = 0; i < count; i++) {
-      seedPage(`https://page${i}.com`, `Content ${i}`);
-      const vector = generateVector(dims, i + 1);
-      updateCacheEmbedding(`https://page${i}.com`, Buffer.from(vector.buffer), 'model', dims);
-    }
-
-    const all = getAllEmbeddings();
-    expect(all.length).toBe(count);
-
-    const index = new VectorIndex();
-    index.loadFromBuffers(all.map(e => ({
-      url: e.normalizedUrl,
-      embedding: e.embedding,
-      dims: e.dims,
-    })));
-
-    expect(index.size()).toBe(count);
-
-    const query = generateVector(dims, 43);
-    const results = index.findSimilar(query, 5);
-    expect(results.length).toBe(5);
-    for (const r of results) {
-      expect(isNaN(r.score)).toBe(false);
-    }
+    const r = await store.search(generateVector(dims, 1), 10, { modelId: 'model-1' });
+    expect(r.map(x => x.id)).toEqual(['https://a.com']);
   });
 
   it('pages without embeddings are excluded from getAllEmbeddings', () => {
     seedPage('https://embedded.com', 'Has embedding');
     seedPage('https://plain.com', 'No embedding');
 
-    const vector = generateVector(4, 1);
-    updateCacheEmbedding('https://embedded.com', Buffer.from(vector.buffer), 'model', 4);
+    const dims = 384;
+    const vector = generateVector(dims, 1);
+    updateCacheEmbedding('https://embedded.com', Buffer.from(vector.buffer), 'model', dims);
 
     const all = getAllEmbeddings();
     expect(all).toHaveLength(1);
     expect(all[0].normalizedUrl).toContain('embedded.com');
   });
 
-  it('cosine similarity math is correct for known vectors', () => {
-    const index = new VectorIndex();
+  it('large number of vectors search returns top-K with finite scores', async () => {
+    const dims = 384;
+    const count = 100;
+    const store = await getVectorStore();
 
-    const v = new Float32Array([0.6, 0.8, 0, 0]);
-    index.add('https://same.com', v);
+    const records = Array.from({ length: count }, (_, i) => ({
+      id: `https://page${i}.com`,
+      vector: generateVector(dims, i + 1),
+      metadata: {
+        url: `https://page${i}.com`,
+        contentHash: '',
+        modelId: 'model',
+      },
+    }));
+    await store.upsert(records);
 
-    const results = index.findSimilar(v, 1);
-    expect(results[0].score).toBeCloseTo(1.0, 5);
+    expect(await store.size()).toBe(count);
 
-    index.add('https://ortho.com', new Float32Array([0, 0, 1, 0]));
-    const results2 = index.findSimilar(v, 2);
-    const orthoResult = results2.find(r => r.url === 'https://ortho.com');
-    expect(orthoResult!.score).toBeCloseTo(0.0, 5);
+    const query = generateVector(dims, 43);
+    const results = await store.search(query, 5);
+    expect(results.length).toBe(5);
+    for (const r of results) {
+      expect(Number.isFinite(r.score)).toBe(true);
+    }
   });
 
   it('handles concurrent embedding updates without corruption', async () => {
-    const dims = 4;
+    const dims = 384;
     seedPage('https://concurrent.com', 'Concurrent test');
 
     const promises = Array.from({ length: 10 }, (_, i) => {
-      const v = new Float32Array([i * 0.1, 1 - i * 0.1, 0, 0]);
+      const v = generateVector(dims, i + 1);
       return Promise.resolve(
-        updateCacheEmbedding('https://concurrent.com', Buffer.from(v.buffer), `model-${i}`, dims),
+        updateCacheEmbedding(
+          'https://concurrent.com',
+          Buffer.from(v.buffer),
+          `model-${i}`,
+          dims,
+        ),
       );
     });
 

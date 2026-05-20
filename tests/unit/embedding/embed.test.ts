@@ -1,11 +1,52 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { EmbedProvider } from '../../../src/providers/embed-provider.js';
+import type { VectorStore } from '../../../src/providers/vector-store.js';
 
 vi.mock('../../../src/cache/store.js', () => ({
   updateCacheEmbedding: vi.fn().mockReturnValue(true),
   getAllEmbeddings: vi.fn().mockReturnValue([]),
   normalizeUrl: vi.fn((url: string) => url),
 }));
+
+const mockStoreState: {
+  store: VectorStore;
+  records: Map<string, { vector: Float32Array; metadata: { url: string; contentHash: string; modelId: string } }>;
+} = {
+  records: new Map(),
+  store: {
+    upsert: vi.fn(),
+    delete: vi.fn(),
+    size: vi.fn(),
+    search: vi.fn(),
+  },
+};
+
+mockStoreState.store.upsert = vi.fn(async (records) => {
+  for (const r of records) {
+    mockStoreState.records.set(r.id, { vector: r.vector, metadata: r.metadata });
+  }
+});
+mockStoreState.store.delete = vi.fn(async (ids) => {
+  for (const id of ids) mockStoreState.records.delete(id);
+});
+mockStoreState.store.size = vi.fn(async () => mockStoreState.records.size);
+mockStoreState.store.search = vi.fn(async (_q, limit) => {
+  return [...mockStoreState.records.entries()].slice(0, limit).map(([id, v]) => ({
+    id,
+    score: 0.9,
+    metadata: v.metadata,
+  }));
+});
+
+vi.mock('../../../src/providers/vector-store.js', async () => {
+  const actual = await vi.importActual<typeof import('../../../src/providers/vector-store.js')>(
+    '../../../src/providers/vector-store.js',
+  );
+  return {
+    ...actual,
+    getVectorStore: vi.fn(async () => mockStoreState.store),
+  };
+});
 
 vi.mock('../../../src/config.js', () => ({
   getConfig: vi.fn().mockReturnValue({
@@ -44,6 +85,7 @@ describe('EmbeddingService', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockStoreState.records.clear();
     vi.mocked(getAllEmbeddings).mockReturnValue([]);
     vi.mocked(updateCacheEmbedding).mockReturnValue(true);
     const mod = await import('../../../src/embedding/embed.js');
@@ -112,7 +154,7 @@ describe('EmbeddingService', () => {
     expect(provider.embed).toHaveBeenCalled();
   });
 
-  it('findSimilar delegates to VectorIndex', async () => {
+  it('findSimilar delegates to VectorStore', async () => {
     const provider = makeMockProvider();
     const service = new EmbeddingService(provider);
     await service.init();
