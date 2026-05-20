@@ -1,21 +1,26 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  getExtractor,
-  _resetExtractorForTest,
+  getExtractProvider,
+  _resetExtractProviderForTest,
 } from '../../../src/providers/extract-provider.js';
 import { LegacyExtractProvider } from '../../../src/extraction/legacy-provider.js';
 
-describe('getExtractor', () => {
-  beforeEach(() => { _resetExtractorForTest(); });
-  afterEach(() => { _resetExtractorForTest(); });
+describe('getExtractProvider', () => {
+  beforeEach(() => { _resetExtractProviderForTest(); });
+  afterEach(() => { _resetExtractProviderForTest(); });
 
   it('returns LegacyExtractProvider', async () => {
-    expect(await getExtractor()).toBeInstanceOf(LegacyExtractProvider);
+    expect(await getExtractProvider()).toBeInstanceOf(LegacyExtractProvider);
   });
 
   it('memoizes the resolved provider', async () => {
-    const a = await getExtractor();
-    const b = await getExtractor();
+    const a = await getExtractProvider();
+    const b = await getExtractProvider();
     expect(a).toBe(b);
+  });
+
+  it('exposes legacy name', async () => {
+    const p = await getExtractProvider();
+    expect(p.name).toBe('legacy');
   });
 });

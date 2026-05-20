@@ -12,6 +12,8 @@ import { extractContent } from './pipeline.js';
  * delegation. Behavior is unchanged.
  */
 export class LegacyExtractProvider implements ExtractProvider {
+  readonly name = 'legacy' as const;
+
   async extract(
     html: string,
     url: string,

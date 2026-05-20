@@ -28,11 +28,12 @@ export interface ExtractProvider {
     url: string,
     options?: ExtractProviderOptions,
   ): Promise<ExtractionResult>;
+  readonly name: 'legacy' | 'v1';
 }
 
 let cached: Promise<ExtractProvider> | null = null;
 
-export function getExtractor(): Promise<ExtractProvider> {
+export function getExtractProvider(): Promise<ExtractProvider> {
   if (cached) return cached;
   cached = import('../extraction/legacy-provider.js').then(
     m => {
@@ -44,6 +45,6 @@ export function getExtractor(): Promise<ExtractProvider> {
   return cached;
 }
 
-export function _resetExtractorForTest(): void {
+export function _resetExtractProviderForTest(): void {
   cached = null;
 }
