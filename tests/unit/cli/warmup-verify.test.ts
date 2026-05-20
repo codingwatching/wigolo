@@ -31,7 +31,18 @@ vi.mock('../../../src/search/reranker/download.js', () => ({
 }));
 vi.mock('../../../src/search/reranker/onnx.js', () => ({
   onnxRerank: vi.fn().mockResolvedValue([{ index: 0, score: 0.5 }]),
+  disposeOnnxSessions: vi.fn().mockResolvedValue(undefined),
 }));
+
+vi.mock('../../../src/embedding/fastembed-provider.js', () => {
+  const FastembedEmbedProvider = vi.fn(function (this: Record<string, unknown>) {
+    this.modelId = 'BGE-small-en-v1.5';
+    this.dim = 384;
+    this.warmup = vi.fn().mockResolvedValue(undefined);
+    this.embed = vi.fn().mockResolvedValue([new Float32Array(384).fill(0.1)]);
+  });
+  return { FastembedEmbedProvider };
+});
 
 const mockStart = vi.fn();
 const mockStop = vi.fn();

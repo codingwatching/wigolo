@@ -37,7 +37,18 @@ vi.mock('../../../src/search/reranker/download.js', () => ({
 
 vi.mock('../../../src/search/reranker/onnx.js', () => ({
   onnxRerank: vi.fn().mockResolvedValue([{ index: 0, score: 0.5 }]),
+  disposeOnnxSessions: vi.fn().mockResolvedValue(undefined),
 }));
+
+vi.mock('../../../src/embedding/fastembed-provider.js', () => {
+  const FastembedEmbedProvider = vi.fn(function (this: Record<string, unknown>) {
+    this.modelId = 'BGE-small-en-v1.5';
+    this.dim = 384;
+    this.warmup = vi.fn().mockResolvedValue(undefined);
+    this.embed = vi.fn().mockResolvedValue([new Float32Array(384).fill(0.1)]);
+  });
+  return { FastembedEmbedProvider };
+});
 
 import { runCommand } from '../../../src/cli/tui/run-command.js';
 import { runWarmup } from '../../../src/cli/warmup.js';
@@ -240,17 +251,18 @@ describe('warmup --reranker', () => {
     expect(result.reranker).toBe('ok');
   });
 
-  it('--all combines sentence-transformers into the reranker pip call (single resolver pass)', async () => {
+  it('--all no longer pip-installs sentence-transformers (replaced by fastembed)', async () => {
     await runWarmup(['--all']);
 
     const calls = vi.mocked(runCommand).mock.calls;
-    const combinedCall = calls.find(
-      (c) =>
-        includesArg(c, 'tokenizers') &&
-        includesArg(c, 'onnxruntime') &&
-        includesArg(c, 'sentence-transformers'),
+    const sentenceTransformersCall = calls.find((c) => includesArg(c, 'sentence-transformers'));
+    expect(sentenceTransformersCall).toBeUndefined();
+
+    // The reranker pip call should still bundle tokenizers + onnxruntime in one pass.
+    const rerankerCall = calls.find(
+      (c) => includesArg(c, 'tokenizers') && includesArg(c, 'onnxruntime'),
     );
-    expect(combinedCall).toBeDefined();
+    expect(rerankerCall).toBeDefined();
   });
 
   it('reports failure when pip install fails', async () => {

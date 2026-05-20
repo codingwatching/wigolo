@@ -32,7 +32,20 @@ vi.mock('../../../src/search/reranker/download.js', () => ({
 
 vi.mock('../../../src/search/reranker/onnx.js', () => ({
   onnxRerank: vi.fn().mockResolvedValue([{ index: 0, score: 0.5 }]),
+  disposeOnnxSessions: vi.fn().mockResolvedValue(undefined),
 }));
+
+const fastembedWarmup = vi.fn().mockResolvedValue(undefined);
+const fastembedEmbed = vi.fn().mockResolvedValue([new Float32Array(384).fill(0.1)]);
+vi.mock('../../../src/embedding/fastembed-provider.js', () => {
+  const FastembedEmbedProvider = vi.fn(function (this: Record<string, unknown>) {
+    this.modelId = 'BGE-small-en-v1.5';
+    this.dim = 384;
+    this.warmup = fastembedWarmup;
+    this.embed = fastembedEmbed;
+  });
+  return { FastembedEmbedProvider };
+});
 
 import { existsSync } from 'node:fs';
 import { runCommand } from '../../../src/cli/tui/run-command.js';
@@ -81,14 +94,15 @@ describe('warmup uses venv python', () => {
     expect(pipCallFor('flashrank')).toBeUndefined();
   });
 
-  it('installs sentence-transformers via venv python when venv exists', async () => {
+  it('warms up the fastembed embedding model when --embeddings is passed', async () => {
     vi.mocked(existsSync).mockImplementation((p) => String(p) === VENV_PYTHON);
 
     await runWarmup(['--embeddings']);
 
-    const st = pipCallFor('sentence-transformers');
-    expect(st).toBeDefined();
-    expect(st![0]).toBe(VENV_PYTHON);
+    // fastembed is native; there should be no pip call for sentence-transformers.
+    expect(pipCallFor('sentence-transformers')).toBeUndefined();
+    expect(fastembedWarmup).toHaveBeenCalled();
+    expect(fastembedEmbed).toHaveBeenCalled();
   });
 
   it('falls back to system python3 when venv does not exist', async () => {

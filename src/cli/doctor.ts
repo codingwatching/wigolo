@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getBootstrapState, type BootstrapState } from '../searxng/bootstrap.js';
 import { isProcessAlive } from '../searxng/process.js';
@@ -93,6 +93,24 @@ async function checkOnnxReranker(
   }
 }
 
+function checkFastembedCache(dataDir: string): { installed: boolean; reason?: string } {
+  const cacheDir = join(dataDir, 'fastembed');
+  if (!existsSync(cacheDir)) {
+    return { installed: false, reason: 'cache dir missing — run `wigolo warmup --embeddings`' };
+  }
+  try {
+    // First-run downloads create a model subdir with ONNX assets. Empty cache
+    // dir means the model has not been fetched yet.
+    const entries = readdirSync(cacheDir);
+    if (entries.length === 0) {
+      return { installed: false, reason: 'cache empty — run `wigolo warmup --embeddings`' };
+    }
+    return { installed: true };
+  } catch (err) {
+    return { installed: false, reason: err instanceof Error ? err.message : 'unknown error' };
+  }
+}
+
 function checkRerankerPyPackages(pythonBin: string): {
   ok: boolean;
   tokenizers?: string;
@@ -167,6 +185,7 @@ export async function runDoctor(dataDir: string): Promise<number> {
   const pythonBin = getPythonBin(dataDir);
   const traf = checkPyPackage('trafilatura', pythonBin);
   const reranker = await checkOnnxReranker(dataDir);
+  const embeddings = checkFastembedCache(dataDir);
   out('[wigolo doctor] Optional components:');
   out(`  Content extractor:  ${traf.ok ? `installed (trafilatura${traf.version ? ` v${traf.version}` : ''})` : 'not installed'}`);
   if (reranker.installed) {
@@ -174,6 +193,11 @@ export async function runDoctor(dataDir: string): Promise<number> {
     out(`  ML reranker:        installed (onnx ${reranker.modelId})${timing}`);
   } else {
     out(`  ML reranker:        not installed${reranker.reason ? ` (${reranker.reason})` : ''}`);
+  }
+  if (embeddings.installed) {
+    out(`  Embeddings model:   installed (fastembed BGE-small-en-v1.5)`);
+  } else {
+    out(`  Embeddings model:   not installed${embeddings.reason ? ` (${embeddings.reason})` : ''}`);
   }
 
   const pyPkgs = checkRerankerPyPackages(pythonBin);

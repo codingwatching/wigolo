@@ -81,12 +81,10 @@ async function installTrafilatura(dataDir: string, reporter: WarmupReporter): Pr
 async function installRerankerPython(
   dataDir: string,
   reporter: WarmupReporter,
-  installEmbeddings: boolean,
 ): Promise<Pick<WarmupResult, 'reranker' | 'rerankerError'>> {
   reporter.start('reranker', 'Installing ML reranker (tokenizers + onnxruntime)');
   const py = getPythonBin(dataDir);
   const pkgs = ['tokenizers', 'onnxruntime'];
-  if (installEmbeddings) pkgs.unshift('sentence-transformers');
   const r = await runCommand(
     py,
     ['-m', 'pip', 'install', '--quiet', '--upgrade-strategy', 'only-if-needed', ...pkgs],
@@ -134,18 +132,24 @@ async function installWebkit(reporter: WarmupReporter): Promise<Pick<WarmupResul
   return { webkit: 'failed', webkitError: message };
 }
 
-async function installSentenceTransformers(dataDir: string, reporter: WarmupReporter): Promise<Pick<WarmupResult, 'embeddings' | 'embeddingsError'>> {
-  const py = getPythonBin(dataDir);
-  reporter.start('embeddings', 'Installing semantic embeddings (sentence-transformers)');
-  const r = await runCommand(py, ['-m', 'pip', 'install', '--quiet',
-    '--upgrade-strategy', 'only-if-needed', 'sentence-transformers'], { timeout: 300_000 });
-  if (r.code === 0) {
-    reporter.success('embeddings', 'installed');
+async function installEmbeddings(reporter: WarmupReporter): Promise<Pick<WarmupResult, 'embeddings' | 'embeddingsError'>> {
+  reporter.start('embeddings', 'Downloading semantic embeddings model (fastembed)');
+  try {
+    const { FastembedEmbedProvider } = await import('../embedding/fastembed-provider.js');
+    const provider = new FastembedEmbedProvider();
+    await provider.warmup();
+    // Probe to ensure the ONNX model can actually produce a vector end-to-end.
+    const [vec] = await provider.embed(['warmup']);
+    if (!vec || vec.length !== provider.dim) {
+      throw new Error(`unexpected embedding shape (dim=${vec?.length ?? 'undef'})`);
+    }
+    reporter.success('embeddings', `model ${provider.modelId} ready`);
     return { embeddings: 'ok' };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    reporter.fail('embeddings', message);
+    return { embeddings: 'failed', embeddingsError: message };
   }
-  const message = (r.stderr || r.stdout || `exit ${r.code}`).trim();
-  reporter.fail('embeddings', message);
-  return { embeddings: 'failed', embeddingsError: message };
 }
 
 function getLightpandaUrl(): string {
@@ -267,8 +271,7 @@ export async function runWarmup(
 
   let rerankerResult: Pick<WarmupResult, 'reranker' | 'rerankerError'> = {};
   if (flagSet.has('--reranker') || flagSet.has('--all')) {
-    const installEmbeddings = flagSet.has('--embeddings') || flagSet.has('--all');
-    rerankerResult = await installRerankerPython(config.dataDir, reporterImpl, installEmbeddings);
+    rerankerResult = await installRerankerPython(config.dataDir, reporterImpl);
   }
 
   let firefoxResult: Pick<WarmupResult, 'firefox' | 'firefoxError'> = {};
@@ -283,7 +286,7 @@ export async function runWarmup(
 
   let embeddingsResult: Pick<WarmupResult, 'embeddings' | 'embeddingsError'> = {};
   if (flagSet.has('--embeddings') || flagSet.has('--all')) {
-    embeddingsResult = await installSentenceTransformers(config.dataDir, reporterImpl);
+    embeddingsResult = await installEmbeddings(reporterImpl);
   }
 
   let lightpandaResult: Pick<WarmupResult, 'lightpanda' | 'lightpandaError'> = {};

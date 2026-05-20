@@ -35,40 +35,54 @@ vi.mock('../../../src/search/reranker/download.js', () => ({
 }));
 vi.mock('../../../src/search/reranker/onnx.js', () => ({
   onnxRerank: vi.fn().mockResolvedValue([{ index: 0, score: 0.5 }]),
+  disposeOnnxSessions: vi.fn().mockResolvedValue(undefined),
 }));
+
+const warmupMock = vi.fn().mockResolvedValue(undefined);
+const embedMock = vi.fn().mockResolvedValue([new Float32Array(384).fill(0.1)]);
+vi.mock('../../../src/embedding/fastembed-provider.js', () => {
+  const FastembedEmbedProvider = vi.fn(function (this: Record<string, unknown>) {
+    this.modelId = 'BGE-small-en-v1.5';
+    this.dim = 384;
+    this.warmup = warmupMock;
+    this.embed = embedMock;
+  });
+  return { FastembedEmbedProvider };
+});
 
 import { runCommand } from '../../../src/cli/tui/run-command.js';
 
 const ok = { code: 0, stdout: '', stderr: '', timedOut: false };
 
-const hasPkg = (needle: string) =>
-  vi.mocked(runCommand).mock.calls.some((c) => (c[1] as string[]).some((a) => String(a).includes(needle)));
-
-describe('warmup --embeddings flag', () => {
+describe('warmup --embeddings flag (fastembed)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(runCommand).mockResolvedValue(ok);
+    warmupMock.mockResolvedValue(undefined);
+    embedMock.mockResolvedValue([new Float32Array(384).fill(0.1)]);
   });
 
-  it('installs sentence-transformers when --embeddings flag is passed', async () => {
+  it('downloads the fastembed model when --embeddings is passed', async () => {
     const { runWarmup } = await import('../../../src/cli/warmup.js');
-    await runWarmup(['--embeddings']);
+    const result = await runWarmup(['--embeddings']);
 
-    expect(hasPkg('sentence-transformers') || hasPkg('sentence_transformers')).toBe(true);
+    expect(warmupMock).toHaveBeenCalled();
+    expect(embedMock).toHaveBeenCalled();
+    expect(result.embeddings).toBe('ok');
   });
 
-  it('installs sentence-transformers when --all flag is passed', async () => {
+  it('downloads the fastembed model with --all', async () => {
     const { runWarmup } = await import('../../../src/cli/warmup.js');
     await runWarmup(['--all']);
 
-    expect(hasPkg('sentence-transformers') || hasPkg('sentence_transformers')).toBe(true);
+    expect(warmupMock).toHaveBeenCalled();
   });
 
-  it('skips sentence-transformers without --embeddings flag', async () => {
+  it('does not download embeddings model without --embeddings flag', async () => {
     const { runWarmup } = await import('../../../src/cli/warmup.js');
     await runWarmup([]);
 
-    expect(hasPkg('sentence-transformers')).toBe(false);
+    expect(warmupMock).not.toHaveBeenCalled();
   });
 
   it('reports embeddings status in WarmupResult', async () => {
@@ -79,18 +93,23 @@ describe('warmup --embeddings flag', () => {
     expect(['ok', 'failed']).toContain(result.embeddings);
   });
 
-  it('handles sentence-transformers install failure', async () => {
-    vi.mocked(runCommand).mockImplementation(async (_cmd, args) => {
-      if (args.some((a) => String(a).includes('sentence-transformers'))) {
-        return { code: 1, stdout: '', stderr: 'pip install failed', timedOut: false };
-      }
-      return ok;
-    });
+  it('reports failure when fastembed warmup throws', async () => {
+    warmupMock.mockRejectedValueOnce(new Error('ONNX download failed'));
 
     const { runWarmup } = await import('../../../src/cli/warmup.js');
     const result = await runWarmup(['--embeddings']);
 
     expect(result.embeddings).toBe('failed');
-    expect(result.embeddingsError).toContain('pip install failed');
+    expect(result.embeddingsError).toContain('ONNX download failed');
+  });
+
+  it('does not install sentence-transformers (Python package) anymore', async () => {
+    const { runWarmup } = await import('../../../src/cli/warmup.js');
+    await runWarmup(['--all']);
+
+    const installedSentenceTransformers = vi.mocked(runCommand).mock.calls.some((c) =>
+      (c[1] as string[]).some((a) => String(a).includes('sentence-transformers')),
+    );
+    expect(installedSentenceTransformers).toBe(false);
   });
 });
