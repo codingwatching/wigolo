@@ -5,8 +5,7 @@ import { getBootstrapState, type BootstrapState } from '../searxng/bootstrap.js'
 import { isProcessAlive } from '../searxng/process.js';
 import { getPythonBin } from '../python-env.js';
 import { getConfig } from '../config.js';
-import { resolveModelId } from '../search/reranker/models.js';
-import { onnxRerank } from '../search/reranker/onnx.js';
+import { getRerankProvider } from '../providers/rerank-provider.js';
 import { allProviders, providerEnvVar } from '../integrations/cloud/llm/select.js';
 
 function out(line = ''): void { process.stderr.write(`${line}\n`); }
@@ -61,35 +60,23 @@ function checkPyPackage(name: string, pythonBin: string): { ok: boolean; version
   return { ok: true, version: version || undefined };
 }
 
-async function checkOnnxReranker(
-  dataDir: string,
+async function checkReranker(
 ): Promise<{ installed: boolean; modelId?: string; rerankMs?: number; reason?: string }> {
-  let modelId: string;
   try {
-    modelId = resolveModelId(getConfig().rerankerModel);
-  } catch (err) {
-    return { installed: false, reason: err instanceof Error ? err.message : 'unknown error' };
-  }
-  const dir = join(dataDir, 'models', modelId);
-  const required = ['model_quantized.onnx', 'tokenizer.json', 'tokenizer_config.json'];
-  const missing = required.filter((f) => !existsSync(join(dir, f)));
-  if (missing.length > 0) {
-    return { installed: false, modelId, reason: `missing: ${missing.join(', ')}` };
-  }
-  try {
+    const provider = await getRerankProvider();
     const docs = [
-      { text: 'React Server Components render on the server.' },
-      { text: 'Next.js App Router uses RSC by default.' },
-      { text: 'Bananas are a popular fruit.' },
-      { text: 'TypeScript adds static types to JavaScript.' },
-      { text: 'The capital of France is Paris.' },
-    ];
+      'React Server Components render on the server.',
+      'Next.js App Router uses RSC by default.',
+      'Bananas are a popular fruit.',
+      'TypeScript adds static types to JavaScript.',
+      'The capital of France is Paris.',
+    ].map((text, i) => ({ id: String(i), text }));
     const t0 = Date.now();
-    await onnxRerank('react server components', docs, { modelId });
+    await provider.rerank('react server components', docs);
     const rerankMs = Date.now() - t0;
-    return { installed: true, modelId, rerankMs };
+    return { installed: true, modelId: provider.modelId, rerankMs };
   } catch (err) {
-    return { installed: false, modelId, reason: err instanceof Error ? err.message : 'rerank failed' };
+    return { installed: false, reason: err instanceof Error ? err.message : 'rerank failed' };
   }
 }
 
@@ -108,35 +95,6 @@ function checkFastembedCache(dataDir: string): { installed: boolean; reason?: st
     return { installed: true };
   } catch (err) {
     return { installed: false, reason: err instanceof Error ? err.message : 'unknown error' };
-  }
-}
-
-function checkRerankerPyPackages(pythonBin: string): {
-  ok: boolean;
-  tokenizers?: string;
-  onnxruntime?: string;
-} {
-  const tok = checkPyPackage('tokenizers', pythonBin);
-  const ort = checkPyPackage('onnxruntime', pythonBin);
-  return {
-    ok: tok.ok && ort.ok,
-    tokenizers: tok.version,
-    onnxruntime: ort.version,
-  };
-}
-
-function checkVenvStale(dataDir: string, _pythonBin: string): { stale: boolean; reason?: string } {
-  const cfgPath = join(dataDir, 'searxng', 'venv', 'pyvenv.cfg');
-  if (!existsSync(cfgPath)) return { stale: false };
-  try {
-    const cfg = readFileSync(cfgPath, 'utf-8');
-    const homeMatch = cfg.match(/home\s*=\s*(.+)$/m);
-    if (!homeMatch) return { stale: false };
-    const venvHome = homeMatch[1].trim();
-    if (!existsSync(venvHome)) return { stale: true, reason: `recorded home ${venvHome} does not exist` };
-    return { stale: false };
-  } catch {
-    return { stale: false };
   }
 }
 
@@ -184,13 +142,13 @@ export async function runDoctor(dataDir: string): Promise<number> {
   out('');
   const pythonBin = getPythonBin(dataDir);
   const traf = checkPyPackage('trafilatura', pythonBin);
-  const reranker = await checkOnnxReranker(dataDir);
+  const reranker = await checkReranker();
   const embeddings = checkFastembedCache(dataDir);
   out('[wigolo doctor] Optional components:');
   out(`  Content extractor:  ${traf.ok ? `installed (trafilatura${traf.version ? ` v${traf.version}` : ''})` : 'not installed'}`);
   if (reranker.installed) {
     const timing = reranker.rerankMs !== undefined ? ` — 5-doc rerank ${reranker.rerankMs}ms` : '';
-    out(`  ML reranker:        installed (onnx ${reranker.modelId})${timing}`);
+    out(`  ML reranker:        installed (${reranker.modelId})${timing}`);
   } else {
     out(`  ML reranker:        not installed${reranker.reason ? ` (${reranker.reason})` : ''}`);
   }
@@ -198,17 +156,6 @@ export async function runDoctor(dataDir: string): Promise<number> {
     out(`  Embeddings model:   installed (fastembed BGE-small-en-v1.5)`);
   } else {
     out(`  Embeddings model:   not installed${embeddings.reason ? ` (${embeddings.reason})` : ''}`);
-  }
-
-  const pyPkgs = checkRerankerPyPackages(pythonBin);
-  const versionPart = pyPkgs.tokenizers && pyPkgs.onnxruntime
-    ? ` (tokenizers=${pyPkgs.tokenizers} onnxruntime=${pyPkgs.onnxruntime})`
-    : '';
-  out(`  Python reranker packages: ${pyPkgs.ok ? 'ok' : 'missing'}${versionPart}`);
-
-  const venvCheck = checkVenvStale(dataDir, pythonBin);
-  if (venvCheck.stale) {
-    out(`  Python reranker venv:    STALE — re-run "wigolo warmup --reranker" (${venvCheck.reason})`);
   }
 
   out('');

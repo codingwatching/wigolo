@@ -25,17 +25,11 @@ vi.mock('../../../src/searxng/bootstrap.js', () => ({
   getBootstrapState: vi.fn().mockReturnValue(null),
 }));
 
-vi.mock('../../../src/search/reranker/download.js', () => ({
-  downloadModelAssets: vi.fn().mockResolvedValue({
-    modelPath: '/tmp/model.onnx',
-    tokenizerPath: '/tmp/tokenizer.json',
-    configPath: '/tmp/tokenizer_config.json',
-  }),
-}));
-
-vi.mock('../../../src/search/reranker/onnx.js', () => ({
-  onnxRerank: vi.fn().mockResolvedValue([{ index: 0, score: 0.5 }]),
-  disposeOnnxSessions: vi.fn().mockResolvedValue(undefined),
+vi.mock('../../../src/providers/rerank-provider.js', () => ({
+  getRerankProvider: vi.fn(async () => ({
+    modelId: 'Xenova/ms-marco-MiniLM-L-6-v2',
+    rerank: vi.fn().mockResolvedValue([{ id: '0', score: 0.5 }]),
+  })),
 }));
 
 vi.mock('../../../src/embedding/fastembed-provider.js', () => {

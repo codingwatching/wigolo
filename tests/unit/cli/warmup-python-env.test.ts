@@ -22,17 +22,11 @@ vi.mock('../../../src/searxng/bootstrap.js', () => ({
   bootstrapNativeSearxng: vi.fn(),
 }));
 
-vi.mock('../../../src/search/reranker/download.js', () => ({
-  downloadModelAssets: vi.fn().mockResolvedValue({
-    modelPath: '/tmp/model.onnx',
-    tokenizerPath: '/tmp/tokenizer.json',
-    configPath: '/tmp/tokenizer_config.json',
-  }),
-}));
-
-vi.mock('../../../src/search/reranker/onnx.js', () => ({
-  onnxRerank: vi.fn().mockResolvedValue([{ index: 0, score: 0.5 }]),
-  disposeOnnxSessions: vi.fn().mockResolvedValue(undefined),
+vi.mock('../../../src/providers/rerank-provider.js', () => ({
+  getRerankProvider: vi.fn(async () => ({
+    modelId: 'Xenova/ms-marco-MiniLM-L-6-v2',
+    rerank: vi.fn().mockResolvedValue([{ id: '0', score: 0.5 }]),
+  })),
 }));
 
 const fastembedWarmup = vi.fn().mockResolvedValue(undefined);
@@ -80,17 +74,13 @@ describe('warmup uses venv python', () => {
     expect(trafCall![1]).toEqual(expect.arrayContaining(['-m', 'pip', 'install']));
   });
 
-  it('--reranker pip-installs tokenizers + onnxruntime via venv python', async () => {
+  it('--reranker does not pip-install any Python packages (cross-encoder is in-process)', async () => {
     vi.mocked(existsSync).mockImplementation((p) => String(p) === VENV_PYTHON);
 
     await runWarmup(['--reranker']);
 
-    const tokCall = pipCallFor('tokenizers');
-    const ortCall = pipCallFor('onnxruntime');
-    expect(tokCall).toBeDefined();
-    expect(ortCall).toBeDefined();
-    expect(tokCall![0]).toBe(VENV_PYTHON);
-    expect(tokCall![1]).toEqual(expect.arrayContaining(['-m', 'pip', 'install']));
+    expect(pipCallFor('tokenizers')).toBeUndefined();
+    expect(pipCallFor('onnxruntime')).toBeUndefined();
     expect(pipCallFor('flashrank')).toBeUndefined();
   });
 

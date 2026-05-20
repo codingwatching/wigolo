@@ -3,9 +3,7 @@ import { join } from 'node:path';
 import { getConfig } from '../config.js';
 import { checkPythonAvailable, bootstrapNativeSearxng, getBootstrapState } from '../searxng/bootstrap.js';
 import { isProcessAlive } from '../searxng/process.js';
-import { downloadModelAssets } from '../search/reranker/download.js';
-import { onnxRerank } from '../search/reranker/onnx.js';
-import { resolveModelId } from '../search/reranker/models.js';
+import { getRerankProvider } from '../providers/rerank-provider.js';
 import { getPythonBin } from '../python-env.js';
 import { runCommand } from './tui/run-command.js';
 import type { WarmupReporter } from './tui/reporter.js';
@@ -78,28 +76,21 @@ async function installTrafilatura(dataDir: string, reporter: WarmupReporter): Pr
   return 'failed';
 }
 
-async function installRerankerPython(
-  dataDir: string,
+async function installReranker(
   reporter: WarmupReporter,
 ): Promise<Pick<WarmupResult, 'reranker' | 'rerankerError'>> {
-  reporter.start('reranker', 'Installing ML reranker (tokenizers + onnxruntime)');
-  const py = getPythonBin(dataDir);
-  const pkgs = ['tokenizers', 'onnxruntime'];
-  const r = await runCommand(
-    py,
-    ['-m', 'pip', 'install', '--quiet', '--upgrade-strategy', 'only-if-needed', ...pkgs],
-    { timeout: 300_000 },
-  );
-  if (r.code !== 0) {
-    const message = (r.stderr || r.stdout || `exit ${r.code}`).trim();
-    reporter.fail('reranker', message);
-    return { reranker: 'failed', rerankerError: message };
-  }
-  const modelId = resolveModelId(getConfig().rerankerModel);
+  reporter.start('reranker', 'Downloading ML reranker model (cross-encoder)');
   try {
-    await downloadModelAssets(modelId, dataDir, reporter);
-    await onnxRerank('warmup', [{ text: 'hello world' }], { modelId });
-    reporter.success('reranker', 'installed');
+    const provider = await getRerankProvider();
+    // Smoke-test end-to-end: warmup loads model + tokenizer, then a single
+    // rerank call exercises the inference path.
+    const scored = await provider.rerank('warmup', [
+      { id: '0', text: 'hello world' },
+    ]);
+    if (scored.length !== 1) {
+      throw new Error(`unexpected rerank shape (results=${scored.length})`);
+    }
+    reporter.success('reranker', `model ${provider.modelId} ready`);
     return { reranker: 'ok' };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -271,7 +262,7 @@ export async function runWarmup(
 
   let rerankerResult: Pick<WarmupResult, 'reranker' | 'rerankerError'> = {};
   if (flagSet.has('--reranker') || flagSet.has('--all')) {
-    rerankerResult = await installRerankerPython(config.dataDir, reporterImpl);
+    rerankerResult = await installReranker(reporterImpl);
   }
 
   let firefoxResult: Pick<WarmupResult, 'firefox' | 'firefoxError'> = {};
@@ -318,16 +309,6 @@ export async function runWarmup(
 
   if (flagSet.has('--verify') || flagSet.has('--all')) {
     await runVerify(config.dataDir, reporterImpl);
-  }
-
-  // Reset the reranker subprocess registry before exit (legacy no-op shim
-  // retained from the pre-Python-migration shape; subprocess teardown happens
-  // via process.exit(0) in src/index.ts).
-  try {
-    const { disposeOnnxSessions } = await import('../search/reranker/onnx.js');
-    await disposeOnnxSessions();
-  } catch {
-    // best-effort cleanup; never block warmup success on it
   }
 
   reporterImpl.finish();

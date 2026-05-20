@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-const { execSyncMock, existsSyncMock } = vi.hoisted(() => ({
+const { execSyncMock, existsSyncMock, readdirSyncMock } = vi.hoisted(() => ({
   execSyncMock: vi.fn(),
   existsSyncMock: vi.fn(),
+  readdirSyncMock: vi.fn(),
 }));
 
 vi.mock('node:child_process', () => ({
@@ -11,19 +12,11 @@ vi.mock('node:child_process', () => ({
 
 vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
-  return { ...actual, existsSync: existsSyncMock };
+  return { ...actual, existsSync: existsSyncMock, readdirSync: readdirSyncMock };
 });
 
 vi.mock('../../../../src/python-env.js', () => ({
   getPythonBin: () => '/fake/python',
-}));
-
-vi.mock('../../../../src/config.js', () => ({
-  getConfig: () => ({ rerankerModel: 'bge-reranker-v2-m3' }),
-}));
-
-vi.mock('../../../../src/search/reranker/models.js', () => ({
-  resolveModelId: (id: string) => id,
 }));
 
 import { probePythonPackages } from '../../../../src/cli/tui/status-python.js';
@@ -31,12 +24,14 @@ import { probePythonPackages } from '../../../../src/cli/tui/status-python.js';
 beforeEach(() => {
   execSyncMock.mockReset();
   existsSyncMock.mockReset();
+  readdirSyncMock.mockReset();
 });
 
 describe('probePythonPackages', () => {
-  it('marks each package ok when every import/file check succeeds', () => {
+  it('marks each package ok when every probe succeeds', () => {
     execSyncMock.mockReturnValue(Buffer.from(''));
     existsSyncMock.mockReturnValue(true);
+    readdirSyncMock.mockReturnValue(['model.onnx'] as unknown as ReturnType<typeof readdirSyncMock>);
 
     const result = probePythonPackages('/tmp/data');
 
@@ -48,6 +43,7 @@ describe('probePythonPackages', () => {
   it('marks each package missing when its probe fails', () => {
     execSyncMock.mockImplementation(() => { throw new Error('ModuleNotFoundError'); });
     existsSyncMock.mockReturnValue(false);
+    readdirSyncMock.mockReturnValue([] as unknown as ReturnType<typeof readdirSyncMock>);
 
     const result = probePythonPackages('/tmp/data');
 
@@ -59,11 +55,12 @@ describe('probePythonPackages', () => {
   it('marks reranker missing but trafilatura ok (per-package failure isolation)', () => {
     existsSyncMock.mockReturnValue(false);
     execSyncMock.mockImplementation(() => Buffer.from(''));
+    readdirSyncMock.mockReturnValue([] as unknown as ReturnType<typeof readdirSyncMock>);
 
     const result = probePythonPackages('/tmp/data');
 
     expect(result.reranker).toBe('missing');
     expect(result.trafilatura).toBe('ok');
-    expect(result.embeddings).toBe('ok');
+    expect(result.embeddings).toBe('missing');
   });
 });

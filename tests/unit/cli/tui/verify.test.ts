@@ -1,14 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-const { startMock, stopMock, execSyncMock, existsSyncMock } = vi.hoisted(() => ({
+const { startMock, stopMock, execSyncMock, rerankMock } = vi.hoisted(() => ({
   startMock: vi.fn(),
   stopMock: vi.fn(),
   execSyncMock: vi.fn(),
-  existsSyncMock: vi.fn(),
+  rerankMock: vi.fn(),
 }));
 
 vi.mock('../../../../src/searxng/process.js', () => ({
-  SearxngProcess: vi.fn().mockImplementation(function (this: any) {
+  SearxngProcess: vi.fn().mockImplementation(function (this: { start: typeof startMock; stop: typeof stopMock }) {
     this.start = startMock;
     this.stop = stopMock;
   }),
@@ -18,21 +18,15 @@ vi.mock('node:child_process', () => ({
   execSync: execSyncMock,
 }));
 
-vi.mock('node:fs', async () => {
-  const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
-  return { ...actual, existsSync: existsSyncMock };
-});
-
 vi.mock('../../../../src/python-env.js', () => ({
   getPythonBin: (_dir: string) => '/fake/venv/python',
 }));
 
-vi.mock('../../../../src/config.js', () => ({
-  getConfig: () => ({ rerankerModel: 'bge-reranker-v2-m3' }),
-}));
-
-vi.mock('../../../../src/search/reranker/models.js', () => ({
-  resolveModelId: (id: string) => id,
+vi.mock('../../../../src/providers/rerank-provider.js', () => ({
+  getRerankProvider: vi.fn(async () => ({
+    modelId: 'Xenova/ms-marco-MiniLM-L-6-v2',
+    rerank: rerankMock,
+  })),
 }));
 
 import { runVerify } from '../../../../src/cli/tui/verify.js';
@@ -52,9 +46,8 @@ beforeEach(() => {
   startMock.mockReset();
   stopMock.mockReset();
   execSyncMock.mockReset();
-  existsSyncMock.mockReset();
-  // default: reranker model files present
-  existsSyncMock.mockReturnValue(true);
+  rerankMock.mockReset();
+  rerankMock.mockResolvedValue([{ id: '0', score: 0.5 }]);
 });
 
 describe('runVerify — SearXNG branches', () => {
@@ -101,8 +94,7 @@ describe('runVerify — package probes', () => {
     startMock.mockResolvedValue('http://127.0.0.1:8888');
   });
 
-  it('marks reranker ok when model files exist', async () => {
-    existsSyncMock.mockReturnValue(true);
+  it('marks reranker ok when the provider responds', async () => {
     execSyncMock.mockImplementation((cmd: string) => {
       if (cmd.includes('import trafilatura')) return Buffer.from('');
       if (cmd.includes('sentence_transformers')) return Buffer.from('384\n');
@@ -116,13 +108,13 @@ describe('runVerify — package probes', () => {
     expect(result.trafilatura).toBe('ok');
     expect(result.embeddings).toBe('ok');
     expect(result.embeddingsDim).toBe(384);
-    expect(reporter.events).toContain('success:reranker:installed (bge-reranker-v2-m3)');
+    expect(reporter.events).toContain('success:reranker:installed (Xenova/ms-marco-MiniLM-L-6-v2)');
     expect(reporter.events).toContain('success:trafilatura:installed');
     expect(reporter.events).toContain('success:embeddings:384-dim');
   });
 
   it('marks each package missing when its probe fails', async () => {
-    existsSyncMock.mockReturnValue(false);
+    rerankMock.mockRejectedValueOnce(new Error('model load failed'));
     execSyncMock.mockImplementation((cmd: string) => {
       if (cmd.includes('import trafilatura')) throw new Error('ModuleNotFoundError: trafilatura');
       if (cmd.includes('sentence_transformers')) throw new Error('ModuleNotFoundError: sentence_transformers');
@@ -133,7 +125,7 @@ describe('runVerify — package probes', () => {
     const result = await runVerify('/tmp/wigolo-data', reporter);
 
     expect(result.reranker).toBe('missing');
-    expect(result.rerankerError).toContain('missing');
+    expect(result.rerankerError).toContain('model load failed');
     expect(result.trafilatura).toBe('missing');
     expect(result.embeddings).toBe('missing');
     expect(result.embeddingsDim).toBeUndefined();
@@ -143,7 +135,6 @@ describe('runVerify — package probes', () => {
   });
 
   it('marks embeddings missing when dim parse fails', async () => {
-    existsSyncMock.mockReturnValue(true);
     execSyncMock.mockImplementation((cmd: string) => {
       if (cmd.includes('import trafilatura')) return Buffer.from('');
       if (cmd.includes('sentence_transformers')) return Buffer.from('not-a-number\n');
@@ -158,7 +149,6 @@ describe('runVerify — package probes', () => {
   });
 
   it('allPassed is true only when every check is ok', async () => {
-    existsSyncMock.mockReturnValue(true);
     execSyncMock.mockImplementation((cmd: string) => {
       if (cmd.includes('import trafilatura')) return Buffer.from('');
       if (cmd.includes('sentence_transformers')) return Buffer.from('384\n');
@@ -187,7 +177,6 @@ describe('runVerify — suggestions on failure', () => {
 
   it('emits no notes when everything passes', async () => {
     startMock.mockResolvedValue('http://127.0.0.1:8888');
-    existsSyncMock.mockReturnValue(true);
     execSyncMock.mockImplementation((cmd: string) => {
       if (cmd.includes('import trafilatura')) return Buffer.from('');
       if (cmd.includes('sentence_transformers')) return Buffer.from('384\n');

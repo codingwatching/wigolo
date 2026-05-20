@@ -10,8 +10,11 @@ vi.mock('node:fs', async () => {
     readFileSync: vi.fn(),
   };
 });
-vi.mock('../../../src/search/reranker/onnx.js', () => ({
-  onnxRerank: vi.fn().mockResolvedValue([{ index: 0, score: 0.9 }]),
+vi.mock('../../../src/providers/rerank-provider.js', () => ({
+  getRerankProvider: vi.fn(async () => ({
+    modelId: 'Xenova/ms-marco-MiniLM-L-6-v2',
+    rerank: vi.fn().mockResolvedValue([{ id: '0', score: 0.9 }]),
+  })),
 }));
 
 import { spawnSync } from 'node:child_process';
