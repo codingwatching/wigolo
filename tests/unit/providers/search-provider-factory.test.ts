@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { getSearchProvider, _resetSearchProviderForTest } from '../../../src/providers/search-provider.js';
 import { resetConfig } from '../../../src/config.js';
 import { LegacySearxngProvider } from '../../../src/search/legacy/searxng-provider.js';
-import { V1StubProvider } from '../../../src/search/v1/stub-provider.js';
+import { V1SearchProvider } from '../../../src/search/v1/v1-provider.js';
 
 describe('getSearchProvider', () => {
   let originalEnv: string | undefined;
@@ -28,9 +28,11 @@ describe('getSearchProvider', () => {
     expect(await getSearchProvider()).toBeInstanceOf(LegacySearxngProvider);
   });
 
-  it('returns V1StubProvider when WIGOLO_SEARCH=v1', async () => {
+  it('returns V1SearchProvider when WIGOLO_SEARCH=v1', async () => {
     process.env.WIGOLO_SEARCH = 'v1';
-    expect(await getSearchProvider()).toBeInstanceOf(V1StubProvider);
+    const provider = await getSearchProvider();
+    expect(provider).toBeInstanceOf(V1SearchProvider);
+    expect(provider.name).toBe('v1');
   });
 
   it('rejects on unknown value', async () => {

@@ -44,10 +44,10 @@ export function getSearchProvider(): Promise<SearchProvider> {
       err => { cached = null; throw err; },
     );
   } else if (which === 'v1') {
-    cached = import('../search/v1/stub-provider.js').then(
+    cached = import('../search/v1/v1-provider.js').then(
       m => {
-        log.info('search provider selected', { provider: 'v1' });
-        return new m.V1StubProvider();
+        log.info('search provider selected', { provider: 'v1', impl: 'v1' });
+        return new m.V1SearchProvider();
       },
       err => { cached = null; throw err; },
     );
