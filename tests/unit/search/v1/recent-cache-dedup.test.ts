@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { RawSearchResult } from '../../../../src/types.js';
 import {
   normalizeUrlForDedup,
   dedupAgainstRecentUrls,
+  shouldLowercasePathForHost,
 } from '../../../../src/search/v1/recent-cache-dedup.js';
 
 function makeResult(url: string, title = 't'): RawSearchResult {
@@ -161,5 +162,74 @@ describe('dedupAgainstRecentUrls', () => {
     const results = [makeResult('https://example.com/a')];
     const out = dedupAgainstRecentUrls(results, ['not a url', 'also bad']);
     expect(out).toBe(results);
+  });
+});
+
+describe('case-insensitive path normalization', () => {
+  const ORIGINAL_ENV = process.env.WIGOLO_DEDUP_CASE_INSENSITIVE_HOSTS;
+
+  beforeEach(() => {
+    delete process.env.WIGOLO_DEDUP_CASE_INSENSITIVE_HOSTS;
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_ENV === undefined) {
+      delete process.env.WIGOLO_DEDUP_CASE_INSENSITIVE_HOSTS;
+    } else {
+      process.env.WIGOLO_DEDUP_CASE_INSENSITIVE_HOSTS = ORIGINAL_ENV;
+    }
+  });
+
+  it('lowercases paths on the default microsoft.com allowlist', () => {
+    expect(
+      normalizeUrlForDedup('https://learn.microsoft.com/en-us/Azure/Topic'),
+    ).toBe('https://learn.microsoft.com/en-us/azure/topic');
+  });
+
+  it('lowercases paths on archive.org', () => {
+    expect(normalizeUrlForDedup('https://web.archive.org/Web/2024/X')).toBe(
+      'https://web.archive.org/web/2024/x',
+    );
+  });
+
+  it('matches parent-domain suffixes (any.subdomain.microsoft.com)', () => {
+    expect(
+      normalizeUrlForDedup('https://Tech.MICROSOFT.com/Docs/Foo'),
+    ).toBe('https://tech.microsoft.com/docs/foo');
+  });
+
+  it('preserves case on case-sensitive hosts like github.com', () => {
+    expect(normalizeUrlForDedup('https://github.com/KnockOutEZ/Repo')).toBe(
+      'https://github.com/KnockOutEZ/Repo',
+    );
+  });
+
+  it('honors WIGOLO_DEDUP_CASE_INSENSITIVE_HOSTS env extension', () => {
+    process.env.WIGOLO_DEDUP_CASE_INSENSITIVE_HOSTS = 'mysite.example';
+    expect(normalizeUrlForDedup('https://mysite.example/A/B')).toBe(
+      'https://mysite.example/a/b',
+    );
+  });
+
+  it('shouldLowercasePathForHost is true for default allowlist hosts', () => {
+    expect(shouldLowercasePathForHost('learn.microsoft.com')).toBe(true);
+    expect(shouldLowercasePathForHost('archive.org')).toBe(true);
+    expect(shouldLowercasePathForHost('github.com')).toBe(false);
+  });
+
+  it('dedups case-different paths on case-insensitive hosts', () => {
+    const results = [makeResult('https://learn.microsoft.com/EN-US/Azure')];
+    const out = dedupAgainstRecentUrls(results, [
+      'https://learn.microsoft.com/en-us/azure',
+    ]);
+    expect(out).toHaveLength(0);
+  });
+
+  it('does NOT dedup case-different paths on github.com', () => {
+    const results = [makeResult('https://github.com/Anthropic/sdk')];
+    const out = dedupAgainstRecentUrls(results, [
+      'https://github.com/anthropic/sdk',
+    ]);
+    expect(out).toHaveLength(1);
   });
 });

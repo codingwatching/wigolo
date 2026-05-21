@@ -4,15 +4,53 @@
 // strips trailing slash + fragment, removes tracking params (utm_*, gclid,
 // fbclid), sorts remaining params. Malformed URLs are kept (we don't drop
 // on parse error).
+//
+// For hosts known to serve paths case-insensitively (IIS, docs.microsoft.com,
+// archive.org, etc.) the path is also lowercased so /A and /a normalize the
+// same way. Callers can extend the allowlist via
+// WIGOLO_DEDUP_CASE_INSENSITIVE_HOSTS=a.com,b.org. Paths on github.com,
+// pypi.org, etc. stay case-sensitive (RFC 3986 default).
 
 import type { RawSearchResult } from '../../types.js';
 
 const TRACKING_PARAM_PREFIXES = ['utm_'];
 const TRACKING_PARAM_EXACT = new Set(['gclid', 'fbclid']);
 
+const DEFAULT_CASE_INSENSITIVE_HOSTS: ReadonlySet<string> = new Set([
+  'microsoft.com',
+  'learn.microsoft.com',
+  'docs.microsoft.com',
+  'msdn.microsoft.com',
+  'support.microsoft.com',
+  'archive.org',
+  'web.archive.org',
+]);
+
 function isTrackingParam(name: string): boolean {
   if (TRACKING_PARAM_EXACT.has(name)) return true;
   for (const p of TRACKING_PARAM_PREFIXES) if (name.startsWith(p)) return true;
+  return false;
+}
+
+function caseInsensitiveHosts(): Set<string> {
+  const set = new Set(DEFAULT_CASE_INSENSITIVE_HOSTS);
+  const extra = process.env.WIGOLO_DEDUP_CASE_INSENSITIVE_HOSTS;
+  if (extra) {
+    for (const raw of extra.split(',')) {
+      const h = raw.trim().toLowerCase();
+      if (h) set.add(h);
+    }
+  }
+  return set;
+}
+
+export function shouldLowercasePathForHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  const hosts = caseInsensitiveHosts();
+  if (hosts.has(h)) return true;
+  for (const known of hosts) {
+    if (h.endsWith('.' + known)) return true;
+  }
   return false;
 }
 
@@ -26,6 +64,10 @@ export function normalizeUrlForDedup(url: string): string {
     (u.protocol === 'https:' && u.port === '443')
   ) {
     u.port = '';
+  }
+
+  if (shouldLowercasePathForHost(u.hostname)) {
+    u.pathname = u.pathname.toLowerCase();
   }
 
   const params = [...u.searchParams.entries()].filter(([k]) => !isTrackingParam(k));
