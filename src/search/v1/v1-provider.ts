@@ -32,10 +32,23 @@ export class V1SearchProvider implements SearchProvider {
     }
     const query = rawQuery.trim();
 
+    // v1 has no images vertical. Silently coercing to general was misleading —
+    // callers got general results back labelled as if they'd asked for images.
+    // Surface this explicitly so the host LLM can pick another tool (or fall
+    // back to legacy SearXNG via WIGOLO_SEARCH=searxng).
+    if (input.category === 'images') {
+      return {
+        ok: false,
+        error: 'unsupported_category',
+        error_reason: 'images vertical not supported in v1 — set WIGOLO_SEARCH=searxng for legacy image search, or omit category for a general search',
+        stage: 'search',
+      };
+    }
+
     const start = Date.now();
     const result = await runV1Search({
       query,
-      category: input.category === 'images' ? undefined : input.category,
+      category: input.category,
       fromDate: input.from_date,
       toDate: input.to_date,
       maxResults: input.max_results,
