@@ -64,12 +64,29 @@ function writeText(level: LogLevel, module: string, msg: string, data?: Record<s
   process.stderr.write(line + '\n');
 }
 
+// Runtime suppression floor — set by CLI commands (eg. doctor) that need a
+// clean human-readable output and don't want logger lines from cache, search,
+// etc. interleaved with their own. Levels strictly below the floor are
+// dropped. `null` (default) means honour only the per-logger config level.
+let suppressionFloor: LogLevel | null = null;
+
+export function setLogSuppression(level: LogLevel | null): void {
+  suppressionFloor = level;
+}
+
+export function getLogSuppression(): LogLevel | null {
+  return suppressionFloor;
+}
+
 export function createLogger(module: Module): Logger {
   const config = getConfig();
   const minPriority = LEVEL_PRIORITY[config.logLevel];
   const write = config.logFormat === 'json' ? writeJson : writeText;
 
   function log(level: LogLevel, msg: string, data?: Record<string, unknown>): void {
+    if (suppressionFloor !== null && LEVEL_PRIORITY[level] < LEVEL_PRIORITY[suppressionFloor]) {
+      return;
+    }
     if (LEVEL_PRIORITY[level] >= minPriority) {
       write(level, module, msg, data);
     }

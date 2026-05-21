@@ -10,6 +10,7 @@ import { initDatabase, closeDatabase } from '../cache/db.js';
 import { loadFeedConfig } from '../search/v1/rss/feed-config.js';
 import { isTelemetryEnabled } from './telemetry.js';
 import { allProviders, providerEnvVar } from '../integrations/cloud/llm/select.js';
+import { setLogSuppression } from '../logger.js';
 
 function out(line = ''): void { process.stderr.write(`${line}\n`); }
 
@@ -109,6 +110,18 @@ function humanRetry(nextRetryAt?: string): string {
  *   search engine bootstrap failed/no_runtime, or search engine process supposed to be up but isn't.
  */
 export async function runDoctor(dataDir: string): Promise<number> {
+  // Doctor produces its own human-readable diagnostic — suppress info/debug
+  // logger noise from the modules it touches so the output stays clean.
+  // Warnings and errors still come through.
+  setLogSuppression('warn');
+  try {
+    return await runDoctorInner(dataDir);
+  } finally {
+    setLogSuppression(null);
+  }
+}
+
+async function runDoctorInner(dataDir: string): Promise<number> {
   let degraded = false;
 
   out(`[wigolo doctor] Data dir:        ${dataDir}`);
