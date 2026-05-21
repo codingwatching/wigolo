@@ -200,6 +200,19 @@ async function runInitPlain(flags: InitFlagsResolved): Promise<number> {
     lastInit: new Date().toISOString(),
   });
 
+  // Optional onboarding: pick search engine, RSS feeds, LLM endpoint.
+  // Defaults are skip-everything, so non-interactive and "just hit Enter"
+  // users land in exactly the prior behaviour.
+  if (!flags.nonInteractive) {
+    try {
+      const { promptExtras } = await import('./tui/extras-prompt.js');
+      await promptExtras(config.dataDir);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`Optional setup skipped: ${message}\n`);
+    }
+  }
+
   if (!flags.skipVerify) {
     try {
       const verifyResult = await runVerify(config.dataDir, reporter);
