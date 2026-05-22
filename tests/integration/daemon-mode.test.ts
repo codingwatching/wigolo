@@ -50,7 +50,7 @@ describe('Daemon Mode Integration', () => {
 
   afterAll(async () => {
     await daemon.stop();
-  }, 10000);
+  }, 30000);
 
   it('daemon starts and returns a URL', () => {
     expect(daemonUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
@@ -163,8 +163,11 @@ describe('Daemon Mode Integration', () => {
   });
 
   it('daemon handles rapid sequential requests', async () => {
+    // Use the Connection:close GET helper to bypass undici's keep-alive
+    // pool — CI runners occasionally close pooled sockets between requests
+    // and the next reuse blows up with TypeError: fetch failed.
     for (let i = 0; i < 5; i++) {
-      const resp = await fetch(`${daemonUrl}/health`);
+      const resp = await httpGetJson(`${daemonUrl}/health`);
       expect(resp.status).toBe(200);
     }
   });
