@@ -7,6 +7,7 @@
 
 import type { SearchProvider, SearchContext } from '../../providers/search-provider.js';
 import type {
+  EngineOutcomeSummary,
   RawSearchResult,
   SearchInput,
   SearchOutput,
@@ -116,6 +117,7 @@ export class V1SearchProvider implements SearchProvider {
     let contentFetched = false;
     let servedFromCache = false;
     let cachedAt: string | undefined;
+    let engineOutcomes: EngineOutcomeSummary[] | undefined;
 
     if (!input.force_refresh) {
       try {
@@ -159,6 +161,24 @@ export class V1SearchProvider implements SearchProvider {
       }
       enginesUsed = [...enginesUsedSet];
       allDegraded = dispatches.every((d) => d.degraded);
+
+      if (input.include_engine_outcomes) {
+        // Flatten per-dispatch outcomes into a single array, summarized so we
+        // never leak the raw RawSearchResult payload into telemetry.
+        engineOutcomes = [];
+        for (const d of dispatches) {
+          for (const o of d.outcomes) {
+            engineOutcomes.push({
+              engine: o.engine,
+              ok: o.ok,
+              latency_ms: o.latencyMs,
+              result_count: o.results.length,
+              ...(o.error ? { error: o.error } : {}),
+              ...(o.skipped ? { skipped: true } : {}),
+            });
+          }
+        }
+      }
 
       let processed = fused;
 
@@ -216,6 +236,7 @@ export class V1SearchProvider implements SearchProvider {
       total_time_ms: Date.now() - start,
       search_time_ms: searchElapsed,
       fetch_time_ms: fetchElapsed,
+      ...(engineOutcomes ? { engine_outcomes: engineOutcomes } : {}),
     };
 
     if (allDegraded) {

@@ -8,6 +8,32 @@ import {
 } from './engine-base.js';
 import { recencyMultiplier, hasTemporalIntent } from './recency-boost.js';
 import { applyAuthorityBoost } from '../reranker/authority-boost.js';
+
+// Hosts matching this regex are demoted when the query is ≤2 tokens — short
+// brand-name queries like "next" tend to surface retail collisions
+// (next.co.uk fashion, bestbuy.com, etsy.com store fronts) that crowd out
+// the intended technical subject. Heuristic; only fires on short queries.
+const RETAIL_TLD_RE = /\.(?:co\.uk|shop|store|deals|sale|boutique|fashion)$/i;
+const BRAND_COLLISION_PENALTY = 0.3;
+
+function applyBrandCollisionGuard(query: string, results: RawSearchResult[]): RawSearchResult[] {
+  const tokens = query.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length > 2) return results;
+  if (results.length === 0) return results;
+
+  return results.map((r) => {
+    let host = '';
+    try {
+      host = new URL(r.url).hostname.toLowerCase();
+    } catch {
+      return r;
+    }
+    if (RETAIL_TLD_RE.test(host)) {
+      return { ...r, relevance_score: r.relevance_score * BRAND_COLLISION_PENALTY };
+    }
+    return r;
+  });
+}
 import { getGeneralEngines, _resetGeneralEnginesForTest } from './verticals/general.js';
 import { getNewsEngines, _resetNewsEnginesForTest } from './verticals/news.js';
 import { getCodeEngines, _resetCodeEnginesForTest } from './verticals/code.js';
@@ -231,6 +257,7 @@ export async function runV1Search(
     .filter((r): r is RawSearchResult => r !== undefined);
 
   merged = applyAuthorityBoost(query, merged);
+  merged = applyBrandCollisionGuard(query, merged);
   merged.sort((a, b) => b.relevance_score - a.relevance_score);
 
   merged = applyDomainFilters(merged, input.includeDomains, input.excludeDomains);

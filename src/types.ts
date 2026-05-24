@@ -207,6 +207,18 @@ export interface SearchInput {
   citation_format?: CitationFormat;
   mode?: Mode;
   agent_context?: AgentContext;
+  /** When true, the response carries per-engine timing + result counts under
+   * engine_outcomes. Opt-in because the field is debug-shaped and noisy. */
+  include_engine_outcomes?: boolean;
+}
+
+export interface EngineOutcomeSummary {
+  engine: string;
+  ok: boolean;
+  latency_ms: number;
+  result_count: number;
+  error?: string;
+  skipped?: boolean;
 }
 
 export interface SearchResultItem {
@@ -240,6 +252,9 @@ export interface SearchOutput {
   streaming?: boolean;
   evidence?: EvidenceItem[];
   citations_xml?: string;
+  /** Present only when input.include_engine_outcomes is true and the call
+   * went to the engine pool (cache hits don't populate it). */
+  engine_outcomes?: EngineOutcomeSummary[];
 }
 
 export interface SourceSpan {

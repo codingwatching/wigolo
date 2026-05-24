@@ -231,6 +231,78 @@ describe('V1SearchProvider', () => {
     });
   });
 
+  describe('engine_outcomes telemetry', () => {
+    it('does not emit engine_outcomes by default', async () => {
+      runV1SearchMock.mockClear();
+      getCachedSearchResultsMock.mockReturnValue(null);
+      runV1SearchMock.mockResolvedValue({
+        results: [{ title: 't', url: 'https://x', snippet: '', relevance_score: 1, engine: 'b' }],
+        enginesUsed: ['b'],
+        degraded: false,
+      });
+
+      const provider = new V1SearchProvider();
+      const result = await provider.search({ query: 'q', max_results: 5 }, ctx);
+      if (result.ok) expect(result.data.engine_outcomes).toBeUndefined();
+    });
+
+    it('emits engine_outcomes with per-engine timing/count when include_engine_outcomes is true', async () => {
+      runV1SearchMock.mockClear();
+      getCachedSearchResultsMock.mockReturnValue(null);
+      runV1SearchMock.mockResolvedValue({
+        results: [{ title: 't', url: 'https://x', snippet: '', relevance_score: 1, engine: 'bing' }],
+        enginesUsed: ['bing'],
+        degraded: false,
+        outcomes: [
+          { engine: 'bing', ok: true, latencyMs: 120, results: [{ title: 't', url: 'https://x', snippet: '', relevance_score: 1, engine: 'bing' }] },
+          { engine: 'duckduckgo', ok: false, latencyMs: 80, results: [], error: 'timeout' },
+        ],
+      } as never);
+
+      const provider = new V1SearchProvider();
+      const result = await provider.search(
+        { query: 'q', include_engine_outcomes: true, max_results: 5 },
+        ctx,
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.engine_outcomes).toBeDefined();
+        expect(result.data.engine_outcomes).toHaveLength(2);
+        expect(result.data.engine_outcomes![0]).toMatchObject({
+          engine: 'bing',
+          ok: true,
+          latency_ms: 120,
+          result_count: 1,
+        });
+        expect(result.data.engine_outcomes![1]).toMatchObject({
+          engine: 'duckduckgo',
+          ok: false,
+          latency_ms: 80,
+          result_count: 0,
+          error: 'timeout',
+        });
+      }
+    });
+
+    it('omits engine_outcomes when served from cache', async () => {
+      runV1SearchMock.mockClear();
+      getCachedSearchResultsMock.mockReturnValue({
+        query: 'q',
+        results: [{ title: 'cached', url: 'https://c', snippet: '', relevance_score: 1 }],
+        engines_used: ['bing'],
+        searched_at: '2026-05-24T00:00:00Z',
+      });
+
+      const provider = new V1SearchProvider();
+      const result = await provider.search(
+        { query: 'q', include_engine_outcomes: true, max_results: 5 },
+        ctx,
+      );
+      if (result.ok) expect(result.data.engine_outcomes).toBeUndefined();
+    });
+  });
+
   describe('cache layer', () => {
     it('stores items after dispatch when cache miss', async () => {
       runV1SearchMock.mockClear();

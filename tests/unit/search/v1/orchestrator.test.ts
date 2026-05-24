@@ -332,6 +332,63 @@ describe('runV1Search — RRF fusion', () => {
   });
 });
 
+describe('runV1Search — brand-collision guard', () => {
+  it('demotes retail TLDs (.co.uk, .shop) for short queries', async () => {
+    // Query "next" used to surface next.co.uk fashion above nextjs-related
+    // pages because Bing literal-matched the brand. The guard penalizes
+    // retail TLDs when the query has ≤2 tokens so authoritative pages win.
+    const { entry } = makeEntry({
+      name: 'bing',
+      results: [
+        makeResult('bing', 'https://next.co.uk/fashion'),
+        makeResult('bing', 'https://example.dev/post-about-next'),
+      ],
+    });
+    verticalState.general = [entry];
+
+    const out = await runV1Search({ query: 'next' });
+    expect(out.results[0].url).toBe('https://example.dev/post-about-next');
+    expect(out.results[1].url).toBe('https://next.co.uk/fashion');
+  });
+
+  it('does not apply the guard for longer queries with disambiguating context', async () => {
+    // Three tokens — the query is specific enough that retail collisions
+    // are unlikely. Don't penalize.
+    const { entry } = makeEntry({
+      name: 'bing',
+      results: [
+        makeResult('bing', 'https://shop.example.shop/abc'),
+        makeResult('bing', 'https://other.example/page'),
+      ],
+    });
+    verticalState.general = [entry];
+
+    const out = await runV1Search({
+      query: 'shop example abc detailed product listing review',
+    });
+    expect(out.results[0].url).toBe('https://shop.example.shop/abc');
+  });
+
+  it('leaves results untouched when no retail TLDs are present', async () => {
+    // Use .example hostnames so neither matches AUTHORITATIVE_TLD in
+    // authority-boost (which would re-order .org above .com on a 1-token query).
+    const { entry } = makeEntry({
+      name: 'bing',
+      results: [
+        makeResult('bing', 'https://alpha.example/a'),
+        makeResult('bing', 'https://beta.example/b'),
+      ],
+    });
+    verticalState.general = [entry];
+
+    const out = await runV1Search({ query: 'foo' });
+    expect(out.results.map((r) => r.url)).toEqual([
+      'https://alpha.example/a',
+      'https://beta.example/b',
+    ]);
+  });
+});
+
 describe('runV1Search — domain filters', () => {
   it('returns includeDomains matches first and backfills below when matches are sparse', async () => {
     // Soft include semantics: surviving matches sit at the top; if fewer than
