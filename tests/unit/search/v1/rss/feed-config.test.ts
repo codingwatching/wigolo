@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadFeedConfig } from '../../../../../src/search/v1/rss/feed-config.js';
+import { loadFeedConfig } from '../../../../../src/search/core/rss/feed-config.js';
 import { resetConfig } from '../../../../../src/config.js';
 
 const ORIG_ENV = process.env.WIGOLO_RSS_FEEDS;

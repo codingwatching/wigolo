@@ -4,9 +4,9 @@ import {
   _resetSearchProviderForTest,
   type SearchContext,
 } from '../../src/providers/search-provider.js';
-import { V1SearchProvider } from '../../src/search/v1/v1-provider.js';
-import { _resetBreakersForTest } from '../../src/search/v1/engine-base.js';
-import { _resetOrchestratorVerticalsForTest } from '../../src/search/v1/orchestrator.js';
+import { CoreSearchProvider } from '../../src/search/core/core-provider.js';
+import { _resetBreakersForTest } from '../../src/search/core/engine-base.js';
+import { _resetOrchestratorVerticalsForTest } from '../../src/search/core/orchestrator.js';
 import type { SmartRouter } from '../../src/fetch/router.js';
 import type { SearchInput } from '../../src/types.js';
 import { resetConfig } from '../../src/config.js';
@@ -125,9 +125,9 @@ describe('search v1 pipeline — factory + provider integration', () => {
     vi.restoreAllMocks();
   });
 
-  it('factory resolves to V1SearchProvider when WIGOLO_SEARCH=v1', async () => {
+  it('factory resolves to CoreSearchProvider when WIGOLO_SEARCH=v1', async () => {
     const provider = await getSearchProvider();
-    expect(provider).toBeInstanceOf(V1SearchProvider);
+    expect(provider).toBeInstanceOf(CoreSearchProvider);
     expect(provider.name).toBe('v1');
   });
 

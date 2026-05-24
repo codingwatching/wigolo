@@ -4,7 +4,7 @@ import {
   normalizeUrlForDedup,
   dedupAgainstRecentUrls,
   shouldLowercasePathForHost,
-} from '../../../../src/search/v1/recent-cache-dedup.js';
+} from '../../../../src/search/core/recent-cache-dedup.js';
 
 function makeResult(url: string, title = 't'): RawSearchResult {
   return {

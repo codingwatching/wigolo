@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { initDatabase, closeDatabase } from '../../../../../src/cache/db.js';
-import { RssFeedEngine } from '../../../../../src/search/v1/rss/rss-engine.js';
+import { RssFeedEngine } from '../../../../../src/search/core/rss/rss-engine.js';
 import {
   upsertFeedItems,
   _clearFeedStoreForTest,
-} from '../../../../../src/search/v1/rss/feed-store.js';
-import * as store from '../../../../../src/search/v1/rss/feed-store.js';
+} from '../../../../../src/search/core/rss/feed-store.js';
+import * as store from '../../../../../src/search/core/rss/feed-store.js';
 
 describe('RssFeedEngine', () => {
   beforeEach(() => {

@@ -8,7 +8,7 @@ import {
   wrapWithRetryAndBreaker,
   runEnginesParallel,
   _resetBreakersForTest,
-} from '../../../../src/search/v1/engine-base.js';
+} from '../../../../src/search/core/engine-base.js';
 
 function makeResult(title: string): RawSearchResult {
   return {

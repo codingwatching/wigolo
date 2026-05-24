@@ -1,6 +1,6 @@
-// V1SearchProvider — Phase 7 retrieval-only adapter.
+// CoreSearchProvider — Phase 7 retrieval-only adapter.
 //
-// Delegates to the v1 orchestrator (intent routing + per-vertical engines +
+// Delegates to the core orchestrator (intent routing + per-vertical engines +
 // RRF fusion) and maps RawSearchResult to SearchResultItem for the MCP
 // `search` tool surface. Array queries dispatch in parallel and are RRF-fused
 // across dispatches so callers can hedge phrasings without paying serial cost.
@@ -72,8 +72,8 @@ function fuseRankedLists(lists: RawSearchResult[][]): RawSearchResult[] {
     .filter((r): r is RawSearchResult => r !== undefined);
 }
 
-export class V1SearchProvider implements SearchProvider {
-  readonly name = 'v1' as const;
+export class CoreSearchProvider implements SearchProvider {
+  readonly name = 'core' as const;
 
   async search(input: SearchInput, ctx: SearchContext): Promise<StageResult<SearchOutput>> {
     const isArray = Array.isArray(input.query);
@@ -96,7 +96,7 @@ export class V1SearchProvider implements SearchProvider {
       return {
         ok: false,
         error: 'unsupported_category',
-        error_reason: 'images vertical not supported in v1 — set WIGOLO_SEARCH=searxng for legacy image search, or omit category for a general search',
+        error_reason: 'images vertical not supported in core — set WIGOLO_SEARCH=searxng for legacy image search, or omit category for a general search',
         stage: 'search',
       };
     }

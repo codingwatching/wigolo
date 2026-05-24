@@ -4,7 +4,7 @@ import type {
   SearchEngineOptions,
   RawSearchResult,
 } from '../../../../src/types.js';
-import type { EngineEntry } from '../../../../src/search/v1/engine-base.js';
+import type { EngineEntry } from '../../../../src/search/core/engine-base.js';
 
 // State injected per-test via the vi.mock factory below.
 const verticalState: {
@@ -21,31 +21,31 @@ const verticalState: {
   papers: [],
 };
 
-vi.mock('../../../../src/search/v1/verticals/general.js', () => ({
+vi.mock('../../../../src/search/core/verticals/general.js', () => ({
   getGeneralEngines: () => verticalState.general,
   _resetGeneralEnginesForTest: () => {
     verticalState.general = [];
   },
 }));
-vi.mock('../../../../src/search/v1/verticals/news.js', () => ({
+vi.mock('../../../../src/search/core/verticals/news.js', () => ({
   getNewsEngines: () => verticalState.news,
   _resetNewsEnginesForTest: () => {
     verticalState.news = [];
   },
 }));
-vi.mock('../../../../src/search/v1/verticals/code.js', () => ({
+vi.mock('../../../../src/search/core/verticals/code.js', () => ({
   getCodeEngines: () => verticalState.code,
   _resetCodeEnginesForTest: () => {
     verticalState.code = [];
   },
 }));
-vi.mock('../../../../src/search/v1/verticals/docs.js', () => ({
+vi.mock('../../../../src/search/core/verticals/docs.js', () => ({
   getDocsEngines: () => verticalState.docs,
   _resetDocsEnginesForTest: () => {
     verticalState.docs = [];
   },
 }));
-vi.mock('../../../../src/search/v1/verticals/papers.js', () => ({
+vi.mock('../../../../src/search/core/verticals/papers.js', () => ({
   getPapersEngines: () => verticalState.papers,
   _resetPapersEnginesForTest: () => {
     verticalState.papers = [];
@@ -53,7 +53,7 @@ vi.mock('../../../../src/search/v1/verticals/papers.js', () => ({
 }));
 
 const { runV1Search } = await import(
-  '../../../../src/search/v1/orchestrator.js'
+  '../../../../src/search/core/orchestrator.js'
 );
 
 function makeResult(
@@ -539,7 +539,7 @@ describe('runV1Search — degraded paths', () => {
     // Use the real breaker wrapper with threshold=1 to deterministically
     // trip and then return a skipped outcome on the next dispatch.
     const { wrapWithRetryAndBreaker, _resetBreakersForTest } = await import(
-      '../../../../src/search/v1/engine-base.js'
+      '../../../../src/search/core/engine-base.js'
     );
     _resetBreakersForTest();
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-vi.mock('../../../../src/search/v1/orchestrator.js', () => ({
+vi.mock('../../../../src/search/core/orchestrator.js', () => ({
   runV1Search: vi.fn(async () => ({
     results: [],
     enginesUsed: [],
@@ -36,8 +36,8 @@ vi.mock('../../../../src/search/evidence.js', async (importOriginal) => {
   };
 });
 
-import { V1SearchProvider } from '../../../../src/search/v1/v1-provider.js';
-import { runV1Search } from '../../../../src/search/v1/orchestrator.js';
+import { CoreSearchProvider } from '../../../../src/search/core/core-provider.js';
+import { runV1Search } from '../../../../src/search/core/orchestrator.js';
 import { runSynthesis } from '../../../../src/search/answer-synthesis.js';
 import { fetchContentForResults } from '../../../../src/search/content-fetch.js';
 import { applyEvidenceDefault } from '../../../../src/search/evidence.js';
@@ -52,9 +52,9 @@ const cacheSearchResultsMock = vi.mocked(cacheSearchResults);
 
 const ctx = { router: undefined } as never;
 
-describe('V1SearchProvider', () => {
+describe('CoreSearchProvider', () => {
   it('rejects category=images with explicit unsupported_category error', async () => {
-    const provider = new V1SearchProvider();
+    const provider = new CoreSearchProvider();
     const result = await provider.search(
       { query: 'cats', category: 'images', max_results: 5 },
       ctx,
@@ -62,7 +62,7 @@ describe('V1SearchProvider', () => {
     expect(result.ok).toBe(false);
     if (result.ok === false) {
       expect(result.error).toBe('unsupported_category');
-      expect(result.error_reason).toMatch(/images vertical not supported in v1/);
+      expect(result.error_reason).toMatch(/images vertical not supported in core/);
       expect(result.stage).toBe('search');
     }
     expect(runV1SearchMock).not.toHaveBeenCalled();
@@ -72,7 +72,7 @@ describe('V1SearchProvider', () => {
     runV1SearchMock.mockClear();
     runV1SearchMock.mockResolvedValueOnce({ results: [], enginesUsed: ['stub'], degraded: false });
 
-    const provider = new V1SearchProvider();
+    const provider = new CoreSearchProvider();
     const result = await provider.search(
       { query: 'react server components', category: 'docs', max_results: 5 },
       ctx,
@@ -83,7 +83,7 @@ describe('V1SearchProvider', () => {
   });
 
   it('rejects an empty query before the images check', async () => {
-    const provider = new V1SearchProvider();
+    const provider = new CoreSearchProvider();
     const result = await provider.search(
       { query: '   ', category: 'images', max_results: 5 },
       ctx,
@@ -104,7 +104,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: ['hnsw tuning', 'ef_construction m', 'pgvector index'], max_results: 5 },
         ctx,
@@ -135,7 +135,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       }));
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: ['query one', 'query two'], max_results: 5 },
         ctx,
@@ -161,7 +161,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: ['  same  ', 'same', 'other', ''], max_results: 5 },
         ctx,
@@ -175,7 +175,7 @@ describe('V1SearchProvider', () => {
 
     it('rejects an array of only empty strings as invalid_input', async () => {
       runV1SearchMock.mockClear();
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: ['  ', ''], max_results: 5 },
         ctx,
@@ -196,7 +196,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search({ query: 'cats', max_results: 5 }, ctx);
 
       expect(result.ok).toBe(true);
@@ -218,7 +218,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       }));
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: ['q1', 'q2'], max_results: 5 },
         ctx,
@@ -241,7 +241,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search({ query: 'q', max_results: 5 }, ctx);
       if (result.ok) expect(result.data.engine_outcomes).toBeUndefined();
     });
@@ -259,7 +259,7 @@ describe('V1SearchProvider', () => {
         ],
       } as never);
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: 'q', include_engine_outcomes: true, max_results: 5 },
         ctx,
@@ -294,7 +294,7 @@ describe('V1SearchProvider', () => {
         searched_at: '2026-05-24T00:00:00Z',
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: 'q', include_engine_outcomes: true, max_results: 5 },
         ctx,
@@ -315,7 +315,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       await provider.search({ query: 'rust async runtime', max_results: 5 }, ctx);
 
       expect(runV1SearchMock).toHaveBeenCalledOnce();
@@ -340,7 +340,7 @@ describe('V1SearchProvider', () => {
         searched_at: '2026-05-23T10:00:00Z',
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search({ query: 'rust async runtime', max_results: 5 }, ctx);
 
       expect(runV1SearchMock).not.toHaveBeenCalled();
@@ -372,7 +372,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: 'q', force_refresh: true, max_results: 5 },
         ctx,
@@ -403,7 +403,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search({ query: 'q', max_results: 5 }, ctx);
 
       expect(runV1SearchMock).toHaveBeenCalledOnce();
@@ -423,7 +423,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       await provider.search({ query: ['hnsw tuning', 'ef_construction'], max_results: 5 }, ctx);
 
       const lookupKey = getCachedSearchResultsMock.mock.calls[0][0];
@@ -442,7 +442,7 @@ describe('V1SearchProvider', () => {
         degraded: true,
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       await provider.search({ query: 'q', max_results: 5 }, ctx);
 
       expect(cacheSearchResultsMock).not.toHaveBeenCalled();
@@ -460,7 +460,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       await provider.search({ query: 'q', max_results: 5 }, ctx);
 
       expect(fetchContentMock).not.toHaveBeenCalled();
@@ -482,7 +482,7 @@ describe('V1SearchProvider', () => {
       });
 
       const router = { fetch: vi.fn() } as never;
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: 'q', max_results: 5 },
         { router, samplingServer: undefined } as never,
@@ -507,7 +507,7 @@ describe('V1SearchProvider', () => {
       });
 
       const router = { fetch: vi.fn() } as never;
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       await provider.search(
         { query: 'q', include_content: false, max_results: 5 },
         { router } as never,
@@ -528,7 +528,7 @@ describe('V1SearchProvider', () => {
       });
 
       const router = { fetch: vi.fn() } as never;
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       await provider.search({ query: 'q', max_results: 5 }, { router } as never);
 
       expect(applyEvidenceDefaultMock).toHaveBeenCalledOnce();
@@ -548,7 +548,7 @@ describe('V1SearchProvider', () => {
       });
 
       const router = { fetch: vi.fn() } as never;
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       await provider.search(
         { query: 'q', format: 'answer', max_results: 5 },
         { router } as never,
@@ -569,7 +569,7 @@ describe('V1SearchProvider', () => {
       });
 
       const router = { fetch: vi.fn() } as never;
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search({ query: 'q', max_results: 5 }, { router } as never);
 
       expect(result.ok).toBe(true);
@@ -590,7 +590,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search({ query: 'q', max_results: 5 }, ctx);
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -610,7 +610,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: 'q', citation_format: 'numbered', max_results: 5 },
         ctx,
@@ -635,7 +635,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: 'q', citation_format: 'anthropic_tags', max_results: 5 },
         ctx,
@@ -658,7 +658,7 @@ describe('V1SearchProvider', () => {
         degraded: false,
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: 'q', citation_format: 'json', max_results: 5 },
         ctx,
@@ -689,7 +689,7 @@ describe('V1SearchProvider', () => {
         },
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: 'q', format: 'answer', citation_format: 'anthropic_tags', max_results: 5 },
         ctx,
@@ -726,7 +726,7 @@ describe('V1SearchProvider', () => {
         },
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: 'why sky blue', format: 'answer', max_results: 5 },
         ctx,
@@ -759,7 +759,7 @@ describe('V1SearchProvider', () => {
         data: { answer: 'streamed', citations: [], fallback_level: 1 },
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: 'q', format: 'stream_answer', max_results: 5 },
         ctx,
@@ -786,7 +786,7 @@ describe('V1SearchProvider', () => {
       });
 
       const samplingServer = { capabilities: {} } as never;
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       await provider.search(
         { query: 'q', format: 'answer', max_results: 5 },
         { router: undefined, samplingServer } as never,
@@ -808,7 +808,7 @@ describe('V1SearchProvider', () => {
         data: { answer: 'fallback', citations: [], warning: 'fallback used', fallback_level: 2 },
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: 'q', format: 'answer', max_results: 5 },
         ctx,
@@ -835,7 +835,7 @@ describe('V1SearchProvider', () => {
         stage: 'synthesize',
       });
 
-      const provider = new V1SearchProvider();
+      const provider = new CoreSearchProvider();
       const result = await provider.search(
         { query: 'q', format: 'answer', max_results: 5 },
         ctx,

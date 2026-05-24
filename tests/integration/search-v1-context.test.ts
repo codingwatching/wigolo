@@ -4,8 +4,8 @@ import {
   _resetSearchProviderForTest,
   type SearchContext,
 } from '../../src/providers/search-provider.js';
-import { _resetBreakersForTest } from '../../src/search/v1/engine-base.js';
-import { _resetOrchestratorVerticalsForTest } from '../../src/search/v1/orchestrator.js';
+import { _resetBreakersForTest } from '../../src/search/core/engine-base.js';
+import { _resetOrchestratorVerticalsForTest } from '../../src/search/core/orchestrator.js';
 import type { SmartRouter } from '../../src/fetch/router.js';
 import type { SearchInput } from '../../src/types.js';
 import type { EmbedProvider } from '../../src/providers/embed-provider.js';

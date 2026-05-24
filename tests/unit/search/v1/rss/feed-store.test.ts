@@ -5,7 +5,7 @@ import {
   queryFeedStore,
   countFeedItems,
   _clearFeedStoreForTest,
-} from '../../../../../src/search/v1/rss/feed-store.js';
+} from '../../../../../src/search/core/rss/feed-store.js';
 
 const SAMPLES = [
   {

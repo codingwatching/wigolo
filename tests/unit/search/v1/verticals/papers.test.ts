@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   getPapersEngines,
   _resetPapersEnginesForTest,
-} from '../../../../../src/search/v1/verticals/papers.js';
-import { _resetBreakersForTest } from '../../../../../src/search/v1/engine-base.js';
+} from '../../../../../src/search/core/verticals/papers.js';
+import { _resetBreakersForTest } from '../../../../../src/search/core/engine-base.js';
 
 describe('getPapersEngines', () => {
   beforeEach(() => {

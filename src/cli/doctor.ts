@@ -8,7 +8,7 @@ import { getConfig } from '../config.js';
 import { getRerankProvider } from '../providers/rerank-provider.js';
 import { getEmbedProvider } from '../providers/embed-provider.js';
 import { initDatabase, closeDatabase } from '../cache/db.js';
-import { loadFeedConfig } from '../search/v1/rss/feed-config.js';
+import { loadFeedConfig } from '../search/core/rss/feed-config.js';
 import { isTelemetryEnabled } from './telemetry.js';
 import { allProviders, providerEnvVar, selectProvider } from '../integrations/cloud/llm/select.js';
 import { resolveModel, providerDefaultModel, providerModelEnvVar } from '../integrations/cloud/llm/model-select.js';

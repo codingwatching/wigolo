@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   getDocsEngines,
   _resetDocsEnginesForTest,
-} from '../../../../../src/search/v1/verticals/docs.js';
-import { _resetBreakersForTest } from '../../../../../src/search/v1/engine-base.js';
+} from '../../../../../src/search/core/verticals/docs.js';
+import { _resetBreakersForTest } from '../../../../../src/search/core/engine-base.js';
 
 describe('getDocsEngines', () => {
   beforeEach(() => {

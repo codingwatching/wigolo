@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   getCodeEngines,
   _resetCodeEnginesForTest,
-} from '../../../../../src/search/v1/verticals/code.js';
-import { _resetBreakersForTest } from '../../../../../src/search/v1/engine-base.js';
+} from '../../../../../src/search/core/verticals/code.js';
+import { _resetBreakersForTest } from '../../../../../src/search/core/engine-base.js';
 
 describe('getCodeEngines', () => {
   beforeEach(() => {

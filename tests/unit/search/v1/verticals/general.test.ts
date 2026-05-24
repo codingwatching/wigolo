@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   getGeneralEngines,
   _resetGeneralEnginesForTest,
-} from '../../../../../src/search/v1/verticals/general.js';
-import { _resetBreakersForTest } from '../../../../../src/search/v1/engine-base.js';
+} from '../../../../../src/search/core/verticals/general.js';
+import { _resetBreakersForTest } from '../../../../../src/search/core/engine-base.js';
 
 describe('getGeneralEngines', () => {
   const originalBraveKey = process.env.BRAVE_API_KEY;

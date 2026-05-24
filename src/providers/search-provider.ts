@@ -23,7 +23,7 @@ export interface SearchContext {
 export interface SearchProvider {
   search(input: SearchInput, ctx: SearchContext): Promise<StageResult<SearchOutput>>;
   /** Best-effort name for telemetry/logging. */
-  readonly name: 'searxng' | 'v1';
+  readonly name: 'core' | 'searxng';
 }
 
 let cached: Promise<SearchProvider> | null = null;
@@ -44,10 +44,10 @@ export function getSearchProvider(): Promise<SearchProvider> {
       err => { cached = null; throw err; },
     );
   } else if (which === 'v1') {
-    cached = import('../search/v1/v1-provider.js').then(
+    cached = import('../search/core/core-provider.js').then(
       m => {
         log.info('search provider selected', { provider: 'v1', impl: 'v1' });
-        return new m.V1SearchProvider();
+        return new m.CoreSearchProvider();
       },
       err => { cached = null; throw err; },
     );

@@ -3,11 +3,11 @@ import { initDatabase, closeDatabase } from '../../../../../src/cache/db.js';
 import {
   pollFeedsOnce,
   pollFeedsForever,
-} from '../../../../../src/search/v1/rss/feed-poller.js';
+} from '../../../../../src/search/core/rss/feed-poller.js';
 import {
   countFeedItems,
   _clearFeedStoreForTest,
-} from '../../../../../src/search/v1/rss/feed-store.js';
+} from '../../../../../src/search/core/rss/feed-store.js';
 
 const RSS_A = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel>

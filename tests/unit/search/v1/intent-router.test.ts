@@ -3,7 +3,7 @@ import {
   classifyIntent,
   classifyIntentDetailed,
   VERTICALS,
-} from '../../../../src/search/v1/intent-router.js';
+} from '../../../../src/search/core/intent-router.js';
 
 const NOW = new Date('2026-05-21T12:00:00.000Z');
 function isoDaysAgo(days: number, now: Date = NOW): string {

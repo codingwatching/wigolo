@@ -18,7 +18,7 @@ vi.mock('../../../../src/providers/embed-provider.js', () => ({
 }));
 
 const { applyContextRank } = await import(
-  '../../../../src/search/v1/context-rank.js'
+  '../../../../src/search/core/context-rank.js'
 );
 
 function makeProvider(

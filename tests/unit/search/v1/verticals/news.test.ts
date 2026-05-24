@@ -5,13 +5,13 @@ import { tmpdir } from 'node:os';
 import {
   getNewsEngines,
   _resetNewsEnginesForTest,
-} from '../../../../../src/search/v1/verticals/news.js';
-import { _resetBreakersForTest } from '../../../../../src/search/v1/engine-base.js';
+} from '../../../../../src/search/core/verticals/news.js';
+import { _resetBreakersForTest } from '../../../../../src/search/core/engine-base.js';
 import { initDatabase, closeDatabase } from '../../../../../src/cache/db.js';
 import {
   upsertFeedItems,
   _clearFeedStoreForTest,
-} from '../../../../../src/search/v1/rss/feed-store.js';
+} from '../../../../../src/search/core/rss/feed-store.js';
 import { resetConfig } from '../../../../../src/config.js';
 
 const ORIG_ENV = process.env.WIGOLO_RSS_FEEDS;

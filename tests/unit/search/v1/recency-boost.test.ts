@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   recencyMultiplier,
   hasTemporalIntent,
-} from '../../../../src/search/v1/recency-boost.js';
+} from '../../../../src/search/core/recency-boost.js';
 
 const NOW = new Date('2026-05-21T12:00:00.000Z');
 

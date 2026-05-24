@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runV1Search } from '../../src/search/v1/orchestrator.js';
+import { runV1Search } from '../../src/search/core/orchestrator.js';
 
 const RUN_SEARCH_BENCH = process.env.RUN_SEARCH_BENCH === '1';
 
