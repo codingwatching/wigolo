@@ -9,6 +9,7 @@ import { extractJsonLd } from '../extraction/jsonld.js';
 import { extractStructured } from '../extraction/structured.js';
 import { getCachedContent, isExpired } from '../cache/store.js';
 import { fetchWithPlaywright } from '../fetch/playwright-tier.js';
+import { countTokens } from '../search/tokens.js';
 import { createLogger } from '../logger.js';
 import {
   isNamedSchemaType,
@@ -18,6 +19,84 @@ import {
 import { isLocalLlmEnabled, extractWithLocalLlm } from '../extraction/v1/local-llm.js';
 
 const log = createLogger('extract');
+
+// Trim a structured extraction payload to fit within `maxTokens`.
+//   - arrays: keep prefix items until budget exhausted, then stop.
+//   - objects with array fields (StructuredData): trim each array in
+//     descending order of token weight until total fits.
+//   - primitives: returned untouched (already under budget by construction).
+// Returns a shallow copy; never mutates the input.
+function clampExtractData(
+  data: ExtractOutput['data'],
+  maxTokens: number,
+): ExtractOutput['data'] {
+  if (data === null || data === undefined) return data;
+  const total = countTokens(JSON.stringify(data));
+  if (total <= maxTokens) return data;
+
+  if (Array.isArray(data)) {
+    const out: unknown[] = [];
+    let used = 2; // [] brackets
+    for (const item of data) {
+      const t = countTokens(JSON.stringify(item)) + 1; // comma
+      if (used + t > maxTokens) break;
+      out.push(item);
+      used += t;
+    }
+    return out as ExtractOutput['data'];
+  }
+
+  if (typeof data === 'object') {
+    const obj = data as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    // First, copy primitive fields (cheap, almost always retained).
+    const arrayKeys: string[] = [];
+    let used = 2; // {} braces
+    for (const [k, v] of Object.entries(obj)) {
+      if (Array.isArray(v)) {
+        arrayKeys.push(k);
+        out[k] = [];
+        continue;
+      }
+      const t = countTokens(JSON.stringify({ [k]: v })) - 1; // strip outer braces
+      if (used + t <= maxTokens) {
+        out[k] = v;
+        used += t;
+      }
+    }
+    // Then fill array fields proportionally, biggest-first.
+    arrayKeys.sort((a, b) =>
+      countTokens(JSON.stringify(obj[b])) - countTokens(JSON.stringify(obj[a])),
+    );
+    for (const k of arrayKeys) {
+      const arr = obj[k] as unknown[];
+      const kept: unknown[] = [];
+      for (const item of arr) {
+        const t = countTokens(JSON.stringify(item)) + 1;
+        if (used + t > maxTokens) break;
+        kept.push(item);
+        used += t;
+      }
+      out[k] = kept;
+    }
+    return out as ExtractOutput['data'];
+  }
+
+  return data;
+}
+
+function buildSuccessOutput(
+  data: ExtractOutput['data'],
+  sourceUrl: string | undefined,
+  mode: ExtractOutput['mode'],
+  maxTokens: number | undefined,
+  warnings?: string[],
+): StageResult<ExtractOutput> {
+  const finalData = maxTokens !== undefined ? clampExtractData(data, maxTokens) : data;
+  const out: ExtractOutput = { data: finalData, source_url: sourceUrl, mode };
+  if (warnings && warnings.length > 0) out.warnings = warnings;
+  return { ok: true, data: out };
+}
 
 async function resolveHtml(
   input: ExtractInput,
@@ -112,14 +191,12 @@ export async function handleExtract(
           },
         };
       }
-      return {
-        ok: true,
-        data: {
-          data: namedData as unknown as Record<string, unknown>,
-          source_url: sourceUrl,
-          mode: 'schema',
-        },
-      };
+      return buildSuccessOutput(
+        namedData as unknown as Record<string, unknown>,
+        sourceUrl,
+        'schema',
+        input.max_tokens_out,
+      );
     }
 
     if (mode === 'schema' && input.schema && isLocalLlmEnabled()) {
@@ -128,14 +205,12 @@ export async function handleExtract(
         html,
         url: sourceUrl ?? input.url ?? '',
       });
-      return {
-        ok: true,
-        data: {
-          data: (llmData ?? {}) as Record<string, unknown>,
-          source_url: sourceUrl,
-          mode: 'schema',
-        },
-      };
+      return buildSuccessOutput(
+        (llmData ?? {}) as Record<string, unknown>,
+        sourceUrl,
+        'schema',
+        input.max_tokens_out,
+      );
     }
 
     let data: ExtractOutput['data'];
@@ -156,15 +231,7 @@ export async function handleExtract(
           const detailed = await extractWithSchemaDetailedAsync(html, schema);
           data = detailed.values;
           if (detailed.warnings.length > 0) {
-            return {
-              ok: true,
-              data: {
-                data,
-                source_url: sourceUrl,
-                mode,
-                warnings: detailed.warnings,
-              },
-            };
+            return buildSuccessOutput(data, sourceUrl, mode, input.max_tokens_out, detailed.warnings);
           }
         } else {
           data = extractWithSchema(html, schema);
@@ -197,7 +264,7 @@ export async function handleExtract(
       };
     }
 
-    return { ok: true, data: { data, source_url: sourceUrl, mode } };
+    return buildSuccessOutput(data, sourceUrl, mode, input.max_tokens_out);
   } catch (err) {
     log.error('Extract failed', { url: input.url, error: String(err) });
     return {

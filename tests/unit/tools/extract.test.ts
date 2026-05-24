@@ -476,4 +476,26 @@ describe('handleExtract mode=metadata with JSON-LD', () => {
     const data = output.data as any;
     expect(data.jsonld).toBeUndefined();
   });
+
+  it('caps mode=tables output to max_tokens_out', async () => {
+    const big = (n: number) => 'cell '.repeat(n).trim();
+    const fakeTables = Array.from({ length: 20 }, (_, i) => ({
+      caption: `Table ${i}`,
+      headers: ['col1', 'col2'],
+      rows: Array.from({ length: 30 }, () => ({ col1: big(60), col2: big(60) })),
+    }));
+    vi.mocked(extractTables).mockReturnValue(fakeTables);
+    const { countTokens } = await import('../../../src/search/tokens.js');
+
+    const __r = await handleExtract({
+      html: '<html></html>',
+      mode: 'tables',
+      max_tokens_out: 1500,
+    }, mockRouter());
+    expect(__r.ok).toBe(true);
+    if (__r.ok) {
+      const tokensUsed = countTokens(JSON.stringify(__r.data.data));
+      expect(tokensUsed).toBeLessThanOrEqual(1800);
+    }
+  });
 });

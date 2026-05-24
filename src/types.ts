@@ -539,6 +539,7 @@ export interface ExtractInput {
   schema?: JsonSchema;
   named_schema?: NamedSchemaType;
   execution_mode?: Mode;
+  max_tokens_out?: number;
 }
 
 export interface MetadataData {
