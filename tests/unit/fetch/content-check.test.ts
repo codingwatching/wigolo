@@ -37,4 +37,23 @@ describe('contentAppearsEmpty', () => {
   it('detects thin content pages', () => {
     expect(contentAppearsEmpty(fixture('thin-content.html'))).toBe(true);
   });
+
+  it('detects shell-id pages with nav content but no <main>/<article>', () => {
+    // Simulates react.dev: substantial nav text in <div id="root"> but the
+    // article body only mounts via client-side hydration, so the page has
+    // neither <main> nor <article>.
+    const html = `<!doctype html><html><body><div id="root">
+      <header><a href="/">Home</a><a href="/learn">Learn</a><a href="/reference">Reference</a></header>
+      <nav>${'<a href="/x">Link</a>'.repeat(40)}</nav>
+    </div></body></html>`;
+    expect(contentAppearsEmpty(html)).toBe(true);
+  });
+
+  it('keeps shell-id pages that DO have <main>/<article>', () => {
+    const html = `<!doctype html><html><body><div id="root">
+      <header><a href="/">Home</a></header>
+      <main>${'<p>Real article body content here that meaningfully describes the topic.</p>'.repeat(10)}</main>
+    </div></body></html>`;
+    expect(contentAppearsEmpty(html)).toBe(false);
+  });
 });

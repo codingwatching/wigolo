@@ -6,6 +6,24 @@ import { fetchWithPlaywright, shouldEscalate } from './playwright-tier.js';
 import { describeFetchError } from './error-describe.js';
 import type { RawFetchResult, BrowserAction, Mode, StageError } from '../types.js';
 
+// Domains we know up-front are heavily client-rendered. HTTP-first detection
+// keeps mis-classifying these (react.dev SSRs enough nav text to clear the
+// empty-content threshold even though the article body only mounts after
+// hydration), so we route them straight to Playwright on the first visit.
+const KNOWN_SPA_DOMAINS = new Set<string>([
+  'react.dev',
+  'nextjs.org',
+  'vuejs.org',
+  'svelte.dev',
+  'angular.io',
+  'angular.dev',
+  'preactjs.com',
+  'solidjs.com',
+  'remix.run',
+  'astro.build',
+  'nuxt.com',
+]);
+
 export interface RouterFetchOptions {
   renderJs?: 'auto' | 'always' | 'never';
   useAuth?: boolean;
@@ -75,6 +93,16 @@ export interface SmartRouterOptions {
 interface DomainStats {
   failureCount: number;
   preferPlaywright: boolean;
+}
+
+function isKnownSpaDomain(host: string): boolean {
+  const lower = host.toLowerCase();
+  if (KNOWN_SPA_DOMAINS.has(lower)) return true;
+  // Match subdomains: docs.react.dev → react.dev hit
+  for (const d of KNOWN_SPA_DOMAINS) {
+    if (lower.endsWith(`.${d}`)) return true;
+  }
+  return false;
 }
 
 export class SmartRouter {
@@ -290,10 +318,21 @@ export class SmartRouter {
   private ensureStats(domain: string): DomainStats {
     let stats = this.domainMap.get(domain);
     if (!stats) {
-      stats = { failureCount: 0, preferPlaywright: false };
+      // Known SPA domains start in `preferPlaywright` so the very first visit
+      // skips the HTTP-only round that would otherwise return a nav shell.
+      stats = {
+        failureCount: 0,
+        preferPlaywright: isKnownSpaDomain(domain),
+      };
       this.domainMap.set(domain, stats);
     }
     return stats;
+  }
+
+  // Exposed for testing — callers should not branch on this.
+  /* istanbul ignore next */
+  static isKnownSpaDomain(host: string): boolean {
+    return isKnownSpaDomain(host);
   }
 
   private toRawFetchResult(

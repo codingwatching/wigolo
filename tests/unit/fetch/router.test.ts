@@ -294,4 +294,30 @@ describe('SmartRouter --- actions routing', () => {
     expect(browserPool.fetchWithBrowser).toHaveBeenCalledOnce();
     expect(result.method).toBe('playwright');
   });
+
+  it('routes known-SPA domains straight to Playwright on first visit', async () => {
+    vi.mocked(browserPool.fetchWithBrowser).mockResolvedValue(
+      makeBrowserResult('https://react.dev/learn'),
+    );
+    const result = await router.fetch('https://react.dev/learn');
+    expect(httpClient.fetch).not.toHaveBeenCalled();
+    expect(browserPool.fetchWithBrowser).toHaveBeenCalledOnce();
+    expect(result.method).toBe('playwright');
+  });
+
+  it('routes SPA subdomains (docs.react.dev) the same way', async () => {
+    vi.mocked(browserPool.fetchWithBrowser).mockResolvedValue(
+      makeBrowserResult('https://docs.react.dev/intro'),
+    );
+    const result = await router.fetch('https://docs.react.dev/intro');
+    expect(httpClient.fetch).not.toHaveBeenCalled();
+    expect(result.method).toBe('playwright');
+  });
+
+  it('does NOT pre-mark unrelated domains', async () => {
+    vi.mocked(httpClient.fetch).mockResolvedValue(makeHttpResult());
+    const result = await router.fetch('https://example.com/page');
+    expect(httpClient.fetch).toHaveBeenCalledOnce();
+    expect(result.method).toBe('http');
+  });
 });

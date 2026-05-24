@@ -14,12 +14,21 @@ function extractVisibleText(html: string): string {
 }
 
 function hasSpaShellIndicator(html: string): boolean {
-  const spaPatterns = [
+  const emptyShell = [
     /<div[^>]+id=["']root["'][^>]*>\s*<\/div>/i,
     /<div[^>]+id=["']app["'][^>]*>\s*<\/div>/i,
     /<div[^>]+id=["']__next["'][^>]*>\s*<\/div>/i,
   ];
-  return spaPatterns.some((pattern) => pattern.test(html));
+  if (emptyShell.some((pattern) => pattern.test(html))) return true;
+
+  // Non-empty root div but no semantic content: react.dev / nextjs.org SSR
+  // a small nav skeleton into <div id="root"> yet ship the real article
+  // content via client-side hydration. If a shell ID is present AND the page
+  // lacks a <main>/<article> block, treat it as a SPA so the router escalates.
+  const hasShellId = /<div[^>]+id=["'](?:root|app|__next)["']/i.test(html);
+  if (!hasShellId) return false;
+  const hasSemanticContent = /<main[\s>]|<article[\s>]/i.test(html);
+  return !hasSemanticContent;
 }
 
 function hasNextData(html: string): boolean {
