@@ -367,11 +367,13 @@ export class MultiBrowserPool {
               return true;
             }
 
-            // SPA hydration markers: Next.js `#__next` and React `#root`
-            // typically host the full app tree once hydrated. Use a higher
-            // text threshold to make sure the article (not just header) has
-            // mounted.
-            const spaRoot = document.querySelector('#__next, #root, [data-reactroot]');
+            // SPA hydration markers: Next.js `#__next`, React `#root`/`[data-reactroot]`,
+            // Vue 3 `[data-v-app]`, VitePress `.VPDoc`/`.vp-doc`, Docusaurus `.theme-doc-markdown`.
+            // Use a higher text threshold to make sure the article (not just
+            // header) has mounted before declaring hydration complete.
+            const spaRoot = document.querySelector(
+              '#__next, #root, [data-reactroot], [data-v-app], .VPDoc, .vp-doc, .theme-doc-markdown',
+            );
             if (measure(spaRoot) > 1200 && (spaRoot?.querySelectorAll('p').length ?? 0) >= 4) {
               return true;
             }
