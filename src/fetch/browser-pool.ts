@@ -33,6 +33,26 @@ export interface PoolTypeStat {
 
 const log = createLogger('fetch');
 
+const NAV_RACE_PATTERN = /execution context (?:was )?destroyed|page is navigating|frame.*detached|target closed/i;
+
+async function readContentWithRetry(
+  page: import('playwright').Page,
+  url: string,
+): Promise<string> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await page.content();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!NAV_RACE_PATTERN.test(msg) || attempt === 2) throw err;
+      log.debug('page.content hit navigation race, retrying', { url, attempt, msg });
+      await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+  return await page.content();
+}
+
 function getLauncher(type: BrowserType) {
   switch (type) {
     case 'firefox': return firefox;
@@ -324,7 +344,11 @@ export class MultiBrowserPool {
         actionResults = await executeActions(page, options.actions);
       }
 
-      const html = await page.content();
+      // Client-side routers (React Router / Next.js) can fire a pushState
+      // navigation during initial hydration. If page.content() runs mid-
+      // transition Playwright throws "Execution context was destroyed".
+      // Retry briefly so a hydration nav doesn't fail the whole fetch.
+      const html = await readContentWithRetry(page, url);
 
       let screenshotBase64: string | undefined;
       if (options.screenshot) {
