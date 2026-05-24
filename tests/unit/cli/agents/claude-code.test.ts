@@ -45,14 +45,15 @@ describe('claudeCodeHandler.detect', () => {
 });
 
 describe('claudeCodeHandler.installMcp', () => {
-  it('calls claude mcp add with the provided command', async () => {
+  it('calls claude mcp add with --scope user so the entry lives once in ~/.claude.json', async () => {
     vi.mocked(execSync).mockReturnValue(Buffer.from(''));
     const { claudeCodeHandler } = await import('../../../../src/cli/agents/claude-code.js');
     await claudeCodeHandler.installMcp({ command: 'wigolo', args: [] });
-    expect(execSync).toHaveBeenCalledWith(
-      expect.stringContaining('claude mcp add wigolo -- wigolo'),
-      expect.any(Object),
-    );
+    const cmd = vi.mocked(execSync).mock.calls[0][0] as string;
+    expect(cmd).toContain('claude mcp add wigolo');
+    expect(cmd).toContain('--scope user');
+    // The -- separator before the executable must still be present.
+    expect(cmd).toMatch(/--scope user .*-- wigolo/);
   });
 
   it('tolerates "already exists" errors', async () => {
@@ -98,6 +99,43 @@ describe('claudeCodeHandler.installSkills', () => {
     expect(existsSync(join(tmpHome, '.claude', 'skills', 'wigolo', 'rules', 'cache-first.md'))).toBe(true);
     expect(existsSync(join(tmpHome, '.claude', 'skills', 'wigolo', 'rules', 'synthesis.md'))).toBe(true);
   });
+
+  it('aborts before any writes when a skill dest path exists as a regular file', async () => {
+    // A path collision (file where we want a directory) used to throw mid-loop
+    // and leave skills installed up to that point. Pre-flight should detect
+    // the collision and refuse to start.
+    vi.mocked(execSync).mockReturnValue(Buffer.from(''));
+    const skillsBase = join(tmpHome, '.claude', 'skills');
+    mkdirSync(skillsBase, { recursive: true });
+    writeFileSync(join(skillsBase, 'wigolo-extract'), 'I am a file, not a dir', 'utf-8');
+
+    const { claudeCodeHandler } = await import('../../../../src/cli/agents/claude-code.js');
+    await expect(claudeCodeHandler.installSkills()).rejects.toThrow();
+
+    // No other skill dirs should have been touched.
+    expect(existsSync(join(skillsBase, 'wigolo', 'SKILL.md'))).toBe(false);
+    expect(existsSync(join(skillsBase, 'wigolo-search', 'SKILL.md'))).toBe(false);
+    expect(existsSync(join(skillsBase, 'wigolo-fetch', 'SKILL.md'))).toBe(false);
+  });
+
+  it('rolls back freshly-created skill dirs when a mid-install write fails', async () => {
+    vi.mocked(execSync).mockReturnValue(Buffer.from(''));
+    const skillsBase = join(tmpHome, '.claude', 'skills');
+    mkdirSync(skillsBase, { recursive: true });
+
+    // Force a mid-install failure: claim wigolo-research as a read-only file.
+    // The pre-flight collision check catches this AND rejects before any
+    // writes — exactly the desired behavior. Verify no partial install.
+    writeFileSync(join(skillsBase, 'wigolo-research'), 'collision', 'utf-8');
+
+    const { claudeCodeHandler } = await import('../../../../src/cli/agents/claude-code.js');
+    await expect(claudeCodeHandler.installSkills()).rejects.toThrow();
+
+    // None of the other skill dirs should have been left behind.
+    for (const d of ['wigolo', 'wigolo-search', 'wigolo-fetch', 'wigolo-crawl', 'wigolo-extract', 'wigolo-find-similar', 'wigolo-agent']) {
+      expect(existsSync(join(skillsBase, d, 'SKILL.md'))).toBe(false);
+    }
+  });
 });
 
 describe('claudeCodeHandler.installCommand', () => {
@@ -109,6 +147,21 @@ describe('claudeCodeHandler.installCommand', () => {
     expect(existsSync(cmdFile)).toBe(true);
     const content = readFileSync(cmdFile, 'utf-8');
     expect(content).toContain('wigolo');
+  });
+
+  it('installs a slash command with YAML frontmatter so the command listing renders the description (not "wigolo: wigolo")', async () => {
+    vi.mocked(execSync).mockReturnValue(Buffer.from(''));
+    const { claudeCodeHandler } = await import('../../../../src/cli/agents/claude-code.js');
+    await claudeCodeHandler.installCommand();
+    const cmdFile = join(tmpHome, '.claude', 'commands', 'wigolo.md');
+    const content = readFileSync(cmdFile, 'utf-8');
+    // Frontmatter must be the literal first bytes for Claude Code's parser.
+    expect(content.startsWith('---\n')).toBe(true);
+    // Description field is required for the slash-command listing UI.
+    expect(content).toMatch(/^description:\s+.+/m);
+    // Frontmatter must close before the body starts.
+    const closing = content.indexOf('\n---\n', 4);
+    expect(closing).toBeGreaterThan(0);
   });
 });
 
@@ -122,6 +175,17 @@ describe('claudeCodeHandler.uninstall', () => {
     const content = existsSync(claudeMd) ? readFileSync(claudeMd, 'utf-8') : '';
     expect(content).not.toContain('<!-- wigolo:start');
     expect(result.removed.length).toBeGreaterThan(0);
+  });
+
+  it('calls claude mcp remove with --scope user matching the install path', async () => {
+    vi.mocked(execSync).mockReturnValue(Buffer.from(''));
+    const { claudeCodeHandler } = await import('../../../../src/cli/agents/claude-code.js');
+    await claudeCodeHandler.uninstall();
+    const mcpRemoveCall = vi.mocked(execSync).mock.calls.find(
+      (c) => typeof c[0] === 'string' && (c[0] as string).includes('mcp remove'),
+    );
+    expect(mcpRemoveCall).toBeDefined();
+    expect(mcpRemoveCall![0] as string).toContain('--scope user');
   });
 
   it('removes skill directories', async () => {
