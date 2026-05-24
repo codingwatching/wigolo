@@ -87,13 +87,14 @@ export class V1SearchProvider implements SearchProvider {
         stage: 'search',
       };
     }
+    const category = input.category;
 
     const start = Date.now();
     const dispatches = await Promise.all(
       queries.map((q) =>
         runV1Search({
           query: q,
-          category: input.category,
+          category,
           fromDate: input.from_date,
           toDate: input.to_date,
           maxResults: input.max_results,
