@@ -3,6 +3,7 @@ import { getConfig } from '../config.js';
 import { createLogger } from '../logger.js';
 import { BrowserSelector, type SelectionStrategy } from './browser-selector.js';
 import { executeActions } from './action-executor.js';
+import { HYDRATION_PROBE_SOURCE } from './hydration-probe.js';
 import type { RawFetchResult, BrowserType, ActionResult, BrowserAction } from '../types.js';
 
 export interface BrowserFetchOptions {
@@ -339,57 +340,16 @@ export class MultiBrowserPool {
         log.debug('networkidle timeout, using page content as-is', { url, type: resolvedType });
       }
 
-      // SPAs (React/Next/etc.) ship a populated nav-shell that already clears
-      // networkidle even though the article body is empty. Wait briefly for
-      // semantic content (`<article>`/`<main>`) or an SPA hydration marker
-      // (`#__next`/`#root` with substantial inner text) to appear. Mirrors
-      // the playwright-tier probe so search + crawl + find_similar fetches
-      // don't leak nav-only shells.
+      // SPAs (React Router, VitePress, Docusaurus, ...) ship a populated
+      // nav-shell that clears networkidle while the article body is empty.
+      // Wait briefly for hydrated content per the shared probe so search +
+      // crawl + find_similar fetches don't leak nav-only shells. See
+      // src/fetch/hydration-probe.ts for the predicate + selector set.
       if (typeof page.waitForFunction === 'function') {
         const hydrationBudget = Math.min(8000, Math.max(1500, Math.floor(navTimeoutMs / 4)));
-        await page.waitForFunction(
-          () => {
-            const measure = (el: Element | null): number => {
-              if (!el) return 0;
-              const text = (el as HTMLElement).innerText ?? '';
-              return text.trim().length;
-            };
-
-            // Prefer real article containers: an `<article>` or `<main>` with
-            // > 600 chars AND at least 3 paragraphs (avoids matching when
-            // nav/sidebar text alone clears the threshold).
-            const article = document.querySelector('article');
-            if (measure(article) > 600 && (article?.querySelectorAll('p').length ?? 0) >= 3) {
-              return true;
-            }
-            const main = document.querySelector('main');
-            if (measure(main) > 600 && (main?.querySelectorAll('p').length ?? 0) >= 3) {
-              return true;
-            }
-
-            // SPA hydration markers: Next.js `#__next`, React `#root`/`[data-reactroot]`,
-            // Vue 3 `[data-v-app]`, VitePress `.VPDoc`/`.vp-doc`, Docusaurus `.theme-doc-markdown`.
-            // Use a higher text threshold to make sure the article (not just
-            // header) has mounted before declaring hydration complete.
-            const spaRoot = document.querySelector(
-              '#__next, #root, [data-reactroot], [data-v-app], .VPDoc, .vp-doc, .theme-doc-markdown',
-            );
-            if (measure(spaRoot) > 1200 && (spaRoot?.querySelectorAll('p').length ?? 0) >= 4) {
-              return true;
-            }
-
-            // Fallback: many paragraphs of total visible text (catches blogs
-            // and docs sites without semantic landmarks).
-            const paragraphs = document.querySelectorAll('p');
-            let pText = 0;
-            for (const p of Array.from(paragraphs).slice(0, 12)) {
-              pText += ((p as HTMLElement).innerText ?? '').length;
-            }
-            return pText > 800;
-          },
-          undefined,
-          { timeout: hydrationBudget },
-        ).catch(() => undefined);
+        await page.waitForFunction(HYDRATION_PROBE_SOURCE, undefined, {
+          timeout: hydrationBudget,
+        }).catch(() => undefined);
       }
 
       let actionResults: ActionResult[] | undefined;

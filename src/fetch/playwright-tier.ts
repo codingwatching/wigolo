@@ -1,6 +1,7 @@
 import { chromium, type Browser, type BrowserContext } from 'playwright';
 import { existsSync } from 'node:fs';
 import { createLogger } from '../logger.js';
+import { HYDRATION_PROBE_SOURCE } from './hydration-probe.js';
 
 const log = createLogger('playwright-tier');
 
@@ -74,25 +75,7 @@ export async function fetchWithPlaywright(url: string, opts: { timeoutMs?: numbe
     // any reasonable text threshold before the article mounts.
     const hydrationBudget = Math.min(5000, Math.max(800, Math.floor(overall / 6)));
     await Promise.race([
-      page.waitForFunction(
-        () => {
-          const main = document.querySelector('main, article');
-          if (main) {
-            const text = (main as HTMLElement).innerText ?? '';
-            return text.trim().length > 300;
-          }
-          // Fallback for sites that don't use semantic landmarks — count
-          // visible paragraphs as a hydration signal.
-          const paragraphs = document.querySelectorAll('p');
-          let pText = 0;
-          for (const p of Array.from(paragraphs).slice(0, 10)) {
-            pText += ((p as HTMLElement).innerText ?? '').length;
-          }
-          return pText > 600;
-        },
-        undefined,
-        { timeout: hydrationBudget },
-      ).catch(() => undefined),
+      page.waitForFunction(HYDRATION_PROBE_SOURCE, undefined, { timeout: hydrationBudget }).catch(() => undefined),
       page.waitForLoadState('networkidle', { timeout: hydrationBudget }).catch(() => undefined),
     ]);
     const html = await page.content();
