@@ -8,6 +8,7 @@ import {
 import { detectChange } from '../cache/change-detector.js';
 import { getExtractProvider } from '../providers/extract-provider.js';
 import { reciprocalRankFusion, sortByRRFScore, buildRankMap } from '../search/rrf.js';
+import { applyAggregateMarkdownBudget } from '../search/evidence.js';
 import { getEmbedProvider } from '../providers/embed-provider.js';
 import { getVectorStore } from '../providers/vector-store.js';
 import { createLogger } from '../logger.js';
@@ -107,7 +108,7 @@ export async function handleCache(input: CacheInput, router?: SmartRouter): Prom
         limit: input.limit,
       });
       const results = await runHybridSearch(input);
-      if (results !== null) return { results };
+      if (results !== null) return { results: applyBudget(results, input.max_tokens_out) };
       // fall through to FTS-only when hybrid was unavailable
     }
 
@@ -125,18 +126,31 @@ export async function handleCache(input: CacheInput, router?: SmartRouter): Prom
       limit: input.limit,
     });
 
-    return {
-      results: results.map((r) => ({
-        url: r.url,
-        title: r.title,
-        markdown: r.markdown,
-        fetched_at: r.fetchedAt,
-      })),
-    };
+    const mapped: CacheResultItem[] = results.map((r) => ({
+      url: r.url,
+      title: r.title,
+      markdown: r.markdown,
+      fetched_at: r.fetchedAt,
+    }));
+    return { results: applyBudget(mapped, input.max_tokens_out) };
   } catch (err) {
     log.error('Cache tool error', { error: String(err) });
     return { error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+// Trim the aggregate markdown body across results so the response stays under
+// `max_tokens_out`. Bodies past the budget are emptied; results never disappear
+// from the list (a callers can still see URL/title/fetched_at for trimmed rows).
+function applyBudget(results: CacheResultItem[], maxTokensOut?: number): CacheResultItem[] {
+  if (maxTokensOut === undefined) return results;
+  applyAggregateMarkdownBudget(
+    results,
+    (r) => r.markdown,
+    (r, body) => { r.markdown = body; },
+    { maxTokensOut },
+  );
+  return results;
 }
 
 /**

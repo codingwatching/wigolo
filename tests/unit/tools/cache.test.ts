@@ -182,6 +182,27 @@ describe('handleCache', () => {
     expect(result.cleared).toBeUndefined();
     expect(clearCacheEntries).not.toHaveBeenCalled();
   });
+
+  it('caps total markdown tokens to max_tokens_out across results', async () => {
+    const big = (n: number) => 'word '.repeat(n).trim();
+    vi.mocked(searchCacheFiltered).mockReturnValue([
+      makeCachedContent({ url: 'https://a.example.com', markdown: big(800) }),
+      makeCachedContent({ url: 'https://b.example.com', markdown: big(800) }),
+      makeCachedContent({ url: 'https://c.example.com', markdown: big(800) }),
+    ]);
+    const { countTokens } = await import('../../../src/search/tokens.js');
+
+    const result = await handleCache({ query: 'word', max_tokens_out: 200 });
+    expect(result.results).toBeDefined();
+    const total = result.results!.reduce((n, r) => n + countTokens(r.markdown), 0);
+    expect(total).toBeLessThanOrEqual(220);
+  });
+
+  it('passes limit to searchCacheFiltered', async () => {
+    vi.mocked(searchCacheFiltered).mockReturnValue([]);
+    await handleCache({ query: 'q', limit: 7 });
+    expect(searchCacheFiltered).toHaveBeenCalledWith(expect.objectContaining({ limit: 7 }));
+  });
 });
 
 describe('handleCache --- check_changes mode', () => {

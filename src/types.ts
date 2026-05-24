@@ -486,6 +486,7 @@ export interface CacheInput {
    */
   mode?: 'fts' | 'hybrid';
   limit?: number;
+  max_tokens_out?: number;
 }
 
 export interface CacheResultItem {

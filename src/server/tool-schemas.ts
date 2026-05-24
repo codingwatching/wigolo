@@ -285,6 +285,10 @@ export const CACHE_TOOL_SCHEMA = {
       type: 'number',
       description: 'Maximum number of results to return (default 20).',
     },
+    max_tokens_out: {
+      type: 'number',
+      description: "Token-budget cap on total output (cl100k-base BPE). Caps the aggregate size of all returned markdown bodies; bodies past the budget are truncated or dropped.",
+    },
   },
 };
 
@@ -314,6 +318,10 @@ export const EXTRACT_TOOL_SCHEMA = {
       type: 'string',
       enum: ['Article', 'Recipe', 'Product', 'CodeSnippet', 'Paper', 'EventListing'],
       description: 'Extract page data into a strict named schema (heuristic only; no LLM required). Mutually exclusive with `schema`.',
+    },
+    max_tokens_out: {
+      type: 'number',
+      description: "Token-budget cap on extracted output (cl100k-base BPE). Trims structured/table/schema results to fit; trailing rows or heavy keys are dropped first.",
     },
   },
 };
