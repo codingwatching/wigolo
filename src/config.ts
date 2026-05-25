@@ -46,6 +46,7 @@ export interface Config {
   rerankerRequestTimeoutMs: number;
   rerankerIdleTimeoutMs: number;
   relevanceThreshold: number;
+  findSimilarColdStartThreshold: number;
   bootstrapMaxAttempts: number;
   bootstrapBackoffSeconds: number[];
   healthProbeIntervalMs: number;
@@ -150,6 +151,12 @@ export function getConfig(): Config {
     rerankerRequestTimeoutMs: envInt('WIGOLO_RERANKER_REQUEST_TIMEOUT_MS', 30_000),
     rerankerIdleTimeoutMs: envInt('WIGOLO_RERANKER_IDLE_TIMEOUT_MS', 300_000),
     relevanceThreshold: parseFloat(envStr('WIGOLO_RELEVANCE_THRESHOLD') ?? '0') || 0,
+    findSimilarColdStartThreshold: (() => {
+      const raw = envStr('WIGOLO_FIND_SIMILAR_COLD_START_THRESHOLD');
+      if (raw === null || raw === undefined || raw === '') return 0.02;
+      const n = parseFloat(raw);
+      return Number.isFinite(n) ? n : 0.02;
+    })(),
     bootstrapMaxAttempts: envInt('WIGOLO_BOOTSTRAP_MAX_ATTEMPTS', 3),
     bootstrapBackoffSeconds: envIntArray('WIGOLO_BOOTSTRAP_BACKOFF_SECONDS', [30, 3600, 86400]),
     healthProbeIntervalMs: envInt('WIGOLO_HEALTH_PROBE_INTERVAL_MS', 30000),

@@ -15,6 +15,7 @@ import { handleSearch } from '../tools/search.js';
 import { getExtractProvider } from '../providers/extract-provider.js';
 import { getEmbeddingService } from '../embedding/embed.js';
 import { createLogger } from '../logger.js';
+import { getConfig } from '../config.js';
 import { selectMode } from './find-similar/mode.js';
 import { crawlRank } from './find-similar/crawl-rank.js';
 
@@ -194,9 +195,12 @@ export async function findSimilar(
     const allResults = mergeResults(cacheResults, embeddingResults, searchResults);
 
     let finalResults: FindSimilarResult[];
+    let topRawScore = 0;
 
     if (rankedLists.length >= 1) {
-      finalResults = fuseResults(rankedLists, allResults, maxResults);
+      const fused = fuseResults(rankedLists, allResults, maxResults);
+      finalResults = fused.results;
+      topRawScore = fused.topRawScore;
     } else {
       finalResults = allResults
         .sort((a, b) => b.relevance_score - a.relevance_score)
@@ -212,13 +216,37 @@ export async function findSimilar(
     const cacheHits = finalResults.filter(r => r.source === 'cache').length;
     const searchHits = finalResults.filter(r => r.source === 'search').length;
 
-    const coldStart = buildColdStartNote(
+    // Weak-signal cold_start (sub-ticket 2.8): when the raw RRF top score is
+    // below the configured threshold, fuseResults' normalization to 1.0 is
+    // hiding the truth — the match is weak. Surface that to the caller and
+    // replace per-result relevance_score with the raw fused_score so callers
+    // see the real signal strength instead of the normalization lie.
+    const coldStartThreshold = safeColdStartThreshold();
+    const weakSignal =
+      rankedLists.length >= 1 &&
+      finalResults.length > 0 &&
+      topRawScore > 0 &&
+      coldStartThreshold > 0 &&
+      topRawScore < coldStartThreshold;
+
+    if (weakSignal) {
+      for (const r of finalResults) {
+        r.relevance_score = r.match_signals.fused_score;
+      }
+    }
+
+    const queryForNote = (input.concept?.trim() || input.url?.trim() || '').slice(0, 200);
+    const baseNote = buildColdStartNote(
       cacheHits,
       searchHits,
       embeddingAvailable,
       initialCacheSize,
       initialEmbedIndexSize,
     );
+    const weakNote = weakSignal
+      ? buildWeakSignalNote(queryForNote, topRawScore, coldStartThreshold)
+      : undefined;
+    const coldStart = [baseNote, weakNote].filter(Boolean).join(' ') || undefined;
 
     return {
       results: finalResults,
@@ -301,6 +329,29 @@ function buildColdStartNote(
     return 'Embedding index is empty. Semantic matching disabled until background embedding jobs catch up.';
   }
   return undefined;
+}
+
+function safeColdStartThreshold(): number {
+  try {
+    return getConfig().findSimilarColdStartThreshold;
+  } catch {
+    return 0.02;
+  }
+}
+
+function buildWeakSignalNote(
+  query: string,
+  topRawScore: number,
+  threshold: number,
+): string {
+  const score = topRawScore.toFixed(4);
+  const t = threshold.toFixed(4);
+  const queryPart = query ? `Query "${query}": ` : '';
+  return (
+    `${queryPart}top result is a weak match (raw signal ${score} below threshold ${t}). ` +
+    `Per-result relevance_score replaced with raw fused_score so callers see actual signal strength. ` +
+    `Tune WIGOLO_FIND_SIMILAR_COLD_START_THRESHOLD to adjust, or set it to 0 to disable.`
+  );
 }
 
 function safeNormalize(url: string): string {
@@ -653,11 +704,16 @@ export function generateSearchQueries(terms: string[], title: string): string[] 
   return unique.slice(0, WEB_SEARCH_QUERY_COUNT);
 }
 
+interface FuseOutput {
+  results: FindSimilarResult[];
+  topRawScore: number;
+}
+
 function fuseResults(
   rankedLists: Map<string, number>[],
   allResults: FindSimilarResult[],
   maxResults: number,
-): FindSimilarResult[] {
+): FuseOutput {
   const scores = reciprocalRankFusion(rankedLists);
   const sorted = sortByRRFScore(scores);
 
@@ -672,7 +728,9 @@ function fuseResults(
   // Raw RRF scores cap at ~2/60 ≈ 0.033 which reads as "low relevance" to
   // users. Normalize against the top score so the best match is 1.0 and the
   // rest are proportional; the absolute RRF value is preserved in
-  // match_signals.fused_score for clients that depend on it.
+  // match_signals.fused_score for clients that depend on it. The raw top
+  // score is returned alongside so the caller can decide whether the match
+  // is strong enough to trust or surface a cold_start (sub-ticket 2.8).
   const topScore = sorted.length > 0 ? sorted[0][1] : 0;
   const fused: FindSimilarResult[] = [];
   for (const [nUrl, score] of sorted) {
@@ -692,7 +750,7 @@ function fuseResults(
     });
   }
 
-  return fused;
+  return { results: fused, topRawScore: topScore };
 }
 
 function determineMethod(
