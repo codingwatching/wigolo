@@ -16,15 +16,32 @@
  *    to the stub rather than silently falling through to metadata.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { resetConfig } from '../../../src/config.js';
+import { _resetMigrationGuard } from '../../../src/cache/migrations/runner.js';
 
-vi.mock('../../../src/cache/db.js', () => ({
-  initDatabase: vi.fn(),
-  closeDatabase: vi.fn(),
-  getDatabase: vi.fn(() => null),
-}));
+// Slice B3 made the `watch` handler hit the real DB (via the cache/db.js
+// `getDatabase()` helper), so the schema-registration suite needs a real
+// in-memory SQLite. We can't keep the old `getDatabase: () => null` mock
+// or the migration runner has nowhere to apply the 004-watch-jobs table.
+//
+// Strategy: stub `cache/db.js` to bind every initDatabase call onto a
+// shared `:memory:` instance for the duration of the test file. The real
+// migration runner attaches to it and the watch tool reads/writes
+// normally. Other test files keep their own mocks.
+vi.mock('../../../src/cache/db.js', async () => {
+  const actual = await vi.importActual<typeof import('../../../src/cache/db.js')>(
+    '../../../src/cache/db.js',
+  );
+  return {
+    ...actual,
+    initDatabase: (_path?: string) => actual.initDatabase(':memory:'),
+  };
+});
 
 vi.mock('../../../src/fetch/browser-pool.js', () => {
   class MockMultiBrowserPool {
@@ -123,12 +140,19 @@ async function connectClient() {
 }
 
 describe('Slice A1 — diff + watch tool registration', () => {
+  let tmpDataDir: string;
+
   beforeEach(() => {
+    tmpDataDir = mkdtempSync(join(tmpdir(), 'wigolo-schema-reg-'));
+    process.env.WIGOLO_DATA_DIR = tmpDataDir;
     resetConfig();
+    _resetMigrationGuard();
     vi.clearAllMocks();
   });
   afterEach(() => {
+    delete process.env.WIGOLO_DATA_DIR;
     resetConfig();
+    try { rmSync(tmpDataDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
   it('tools/list exposes 10 tools including diff and watch', async () => {
@@ -170,13 +194,31 @@ describe('Slice A1 — diff + watch tool registration', () => {
     }
   });
 
-  it('tools/call watch returns the not_implemented_yet notice tagged with slice B3', async () => {
+  it('tools/call watch with no action returns a real error envelope (B3 shipped — no stub)', async () => {
+    // Slice B3 replaced the stub with the real handler, so an empty
+    // payload now yields a typed input-error envelope instead of the
+    // `not_implemented_yet` notice. The error path still proves the tool
+    // is wired into the dispatch chain.
     const { client, teardown } = await connectClient();
     try {
       const res = await client.callTool({ name: 'watch', arguments: {} });
       const block = (res.content as Array<{ type: string; text: string }>)[0];
       const payload = JSON.parse(block.text);
-      expect(payload).toMatchObject({ notice: 'not_implemented_yet', slice: 'B3' });
+      expect(payload.error).toBe('invalid_input');
+      expect(payload.stage).toBe('watch');
+      expect(payload.error_reason).toMatch(/action/);
+    } finally {
+      await teardown();
+    }
+  });
+
+  it('tools/call watch with action=list returns a jobs array (B3 shipped)', async () => {
+    const { client, teardown } = await connectClient();
+    try {
+      const res = await client.callTool({ name: 'watch', arguments: { action: 'list' } });
+      const block = (res.content as Array<{ type: string; text: string }>)[0];
+      const payload = JSON.parse(block.text);
+      expect(Array.isArray(payload.jobs)).toBe(true);
     } finally {
       await teardown();
     }

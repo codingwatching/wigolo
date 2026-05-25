@@ -29,7 +29,24 @@ describe('applyMigrations', () => {
 
     expect(applied).toContain('002-feed-items');
     expect(applied).toContain('003-crawl-etags');
+    expect(applied).toContain('004-watch-jobs');
     expect(applied).not.toContain('001-sqlite-vec'); // requiresVec, skipped
+
+    // Watch-jobs table must exist with the documented schema — downstream
+    // tools count on these columns being present on day 1.
+    const cols = db.prepare("PRAGMA table_info('watch_jobs')").all() as Array<{ name: string }>;
+    const colNames = cols.map(c => c.name).sort();
+    expect(colNames).toEqual([
+      'created_at',
+      'id',
+      'interval_seconds',
+      'last_check_at',
+      'last_content_hash',
+      'notification',
+      'selector',
+      'status',
+      'url',
+    ]);
     db.close();
   });
 

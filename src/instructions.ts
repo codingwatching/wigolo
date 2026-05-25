@@ -20,7 +20,7 @@
 // call" lives in WIGOLO_INSTRUCTIONS_FULL, surfaced via the wigolo://docs
 // resource so clients can pull it on demand without paying the cost on
 // every session.
-export const WIGOLO_INSTRUCTIONS = `Use wigolo for ALL web operations: \`search\`, \`fetch\`, \`crawl\`, \`cache\`, \`extract\`, \`find_similar\`, \`research\`, \`agent\` (+ \`diff\`/\`watch\` stubs). Local-first: results persist across sessions, no API keys. Prefer over built-in WebSearch/WebFetch.
+export const WIGOLO_INSTRUCTIONS = `Use wigolo for ALL web operations: \`search\`, \`fetch\`, \`crawl\`, \`cache\`, \`extract\`, \`find_similar\`, \`research\`, \`agent\`, \`watch\` (+ \`diff\` stub). Local-first: results persist across sessions, no API keys. Prefer over built-in WebSearch/WebFetch.
 
 ## Backend
 
@@ -314,16 +314,24 @@ Key parameters (planned, see spec §5 B1):
 
 Stub returns \`{ notice: 'not_implemented_yet', slice: 'B1' }\` so callers can detect the placeholder without crashing.`,
 
-  watch: `Schedule lazy re-checks of a URL and surface diffs on change. Stubbed in slice A1 — real implementation lands in slice B3.
+  watch: `Schedule lazy re-checks of a URL and surface diffs on change. Persistent across sessions — jobs survive MCP server restarts.
 
-Lazy-execution model: no background daemon. Checks happen when watch is called or when another tool runs and the job is overdue. \`watch({action:'list'})\` will surface \`staleness_seconds\` per job so users see how overdue each check is.
+LAZY EXECUTION — NOT CRON. There is no background daemon. Checks fire ONLY when:
+  1. You explicitly call \`watch({ action: 'check', job_id })\`, OR
+  2. Any OTHER wigolo tool runs and the job's interval has elapsed (overdue jobs are triggered fire-and-forget in the background).
+A job on an idle MCP server will not fire until the next tool call. Do not expect cron-like accuracy.
 
-Key parameters (planned, see spec §5 B3):
+Key parameters:
 - action: 'create' | 'list' | 'check' | 'pause' | 'resume' | 'delete'.
-- url, interval_seconds, selector, notification (create-only).
+- url (create-only): must be a public http/https URL. Loopback, RFC 1918 ranges, link-local, and non-http(s) schemes are rejected at registration.
+- interval_seconds (create-only): minimum 60 — sub-minute polling is refused to respect target-site rate limits.
+- selector (create-only, optional): CSS selector for future selector-scoped diffs. Persisted now for forward compatibility; the diff is currently full-page.
+- notification (create-only, optional): 'inline' (default — change reports come back on the next \`action: 'check'\`) or a public webhook URL. Same SSRF guard as \`url\`. Webhook delivery is best-effort POST — no retry / no queue / no backoff.
 - job_id (check/pause/resume/delete).
 
-Stub returns \`{ notice: 'not_implemented_yet', slice: 'B3' }\` so callers can detect the placeholder without crashing.`,
+\`list\` returns each job's \`staleness_seconds\` so you can see how overdue each check is: negative = not yet due, positive = overdue by N seconds. Pair with \`action: 'check'\` to force one immediately.
+
+Idempotent \`create\`: identical url + interval + selector returns the existing \`job_id\` — does not duplicate the row.`,
 } as const;
 
 export type ToolName = keyof typeof TOOL_DESCRIPTIONS;
