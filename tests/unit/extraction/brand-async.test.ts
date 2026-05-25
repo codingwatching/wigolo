@@ -28,6 +28,7 @@ import sharp from 'sharp';
 import {
   extractBrand,
   extractBrandAsync,
+  defaultImageFetcher,
   type BrandImageFetcher,
 } from '../../../src/extraction/brand.js';
 
@@ -257,6 +258,28 @@ describe('extractBrandAsync — graceful failure', () => {
     expect(out.provenance?.colors).toBe('unknown');
   });
 
+  it('short-circuits SVG even when the URL carries a query string', async () => {
+    // Security review (PR #72) flagged that `.endsWith('.svg')` on the
+    // raw URL string misses `…/logo.svg?v=2` and equivalent cache-busted
+    // forms. Without parsing pathname first, the fetcher gets invoked
+    // (waste of budget) and the post-fetch MIME guard becomes the only
+    // safety net. We pin the short-circuit to the pathname.
+    const html = wrap(`
+      <script type="application/ld+json">
+      {"@type":"Organization","name":"Acme","logo":"https://acme.example/logo.svg?v=2"}
+      </script>
+    `);
+    const fetcher: BrandImageFetcher = vi.fn(async () => null);
+
+    const out = await extractBrandAsync(html, {
+      baseUrl: 'https://acme.example/',
+      imageFetcher: fetcher,
+    });
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(out.provenance?.colors).toBe('unknown');
+  });
+
   it('skips palette extraction when neither logo_url nor og_image_url exists', async () => {
     // Bare page → no fetchable source. The extractor must not invent
     // a URL nor crash.
@@ -351,5 +374,207 @@ describe('extractBrandAsync — fixture-mirror coverage', () => {
     }
 
     expect(flipped).toBeGreaterThanOrEqual(3);
+  });
+});
+
+/**
+ * SSRF hardening (PR #72 security review).
+ *
+ * The `defaultImageFetcher` is the production wiring used when the caller
+ * does not inject a mock. `safeAbsoluteUrl` only filters dangerous schemes
+ * (javascript:, data:, file:, vbscript:, blob:) — it does NOT block
+ * loopback / RFC 1918 / link-local / IPv6 private hostnames. Without a
+ * dedicated guard, an attacker-controlled page can ship a JSON-LD
+ * `"logo": "http://169.254.169.254/latest/meta-data/"` and trick the
+ * server into making the request on their behalf.
+ *
+ * These tests pin:
+ *   - The fetcher rejects loopback IPv4 / link-local / IPv6 loopback /
+ *     non-http(s) schemes BEFORE any network call.
+ *   - The fetcher uses redirect:'manual' and re-validates each hop, so a
+ *     302 → 127.0.0.1 cannot smuggle around the guard.
+ *
+ * Failures here are bugs because the post-fetch MIME / content-length
+ * checks happen AFTER the request has already left the box — the SSRF
+ * has already executed.
+ */
+describe('defaultImageFetcher — SSRF guard', () => {
+  it('returns null for direct loopback IPv4 (http://127.0.0.1/logo.png) without fetching', async () => {
+    const calls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL) => {
+      calls.push(String(url));
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+    try {
+      const result = await defaultImageFetcher('http://127.0.0.1/logo.png');
+      expect(result).toBeNull();
+      expect(calls).toEqual([]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('returns null for AWS instance-metadata link-local (169.254.169.254) without fetching', async () => {
+    const calls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL) => {
+      calls.push(String(url));
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+    try {
+      const result = await defaultImageFetcher('http://169.254.169.254/latest/meta-data/');
+      expect(result).toBeNull();
+      expect(calls).toEqual([]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('returns null for IPv6 loopback (http://[::1]/x.png) without fetching', async () => {
+    const calls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL) => {
+      calls.push(String(url));
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+    try {
+      const result = await defaultImageFetcher('http://[::1]/x.png');
+      expect(result).toBeNull();
+      expect(calls).toEqual([]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('returns null for non-http(s) scheme (ftp://example.com/x.png) without fetching', async () => {
+    // safeAbsoluteUrl strips file:/data:/blob: but accepts ftp: — the
+    // guard catches it here.
+    const calls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL) => {
+      calls.push(String(url));
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+    try {
+      const result = await defaultImageFetcher('ftp://example.com/logo.png');
+      expect(result).toBeNull();
+      expect(calls).toEqual([]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('rejects a public URL that 302-redirects to loopback (manual-redirect guard)', async () => {
+    // The defaultImageFetcher must use redirect:'manual'. A naive
+    // `redirect:'follow'` would let the Node fetch implementation
+    // transparently chase the 302 — bypassing the SSRF guard.
+    // We assert: first call to public host returns 302, fetcher
+    // sees the Location header, runs guardUrl on it, sees loopback,
+    // returns null. Crucially: the second fetch (to 127.0.0.1) must
+    // never happen.
+    const calls: Array<{ url: string; redirect: string | undefined }> = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), redirect: init?.redirect });
+      if (String(url) === 'https://acme.example/logo.png') {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: 'http://127.0.0.1/evil.png' },
+        });
+      }
+      // This branch must never execute. If it does, the redirect was
+      // followed and the SSRF guard was bypassed.
+      return new Response(Buffer.from('PWNED'), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const result = await defaultImageFetcher('https://acme.example/logo.png');
+      expect(result).toBeNull();
+      // Exactly one fetch — the initial public hop. No follow-up.
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toBe('https://acme.example/logo.png');
+      expect(calls[0].redirect).toBe('manual');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('follows a 302 to another public URL and returns the body (legit redirect path)', async () => {
+    // Sanity: redirects to public hosts still resolve. The guard is
+    // strict on private space, permissive on public — a CDN-style
+    // redirect (origin → cdn) must still produce an image buffer.
+    const calls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL) => {
+      const u = String(url);
+      calls.push(u);
+      if (u === 'https://acme.example/logo.png') {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: 'https://cdn.example/v2/logo.png' },
+        });
+      }
+      // Final hop: serve a tiny PNG via sharp so the bytes are real.
+      const png = await sharp({
+        create: { width: 4, height: 4, channels: 3, background: { r: 99, g: 91, b: 255 } },
+      })
+        .png()
+        .toBuffer();
+      return new Response(png, {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      });
+    }) as typeof fetch;
+    try {
+      const result = await defaultImageFetcher('https://acme.example/logo.png');
+      expect(result).not.toBeNull();
+      expect(result!.contentType).toBe('image/png');
+      expect(calls).toEqual([
+        'https://acme.example/logo.png',
+        'https://cdn.example/v2/logo.png',
+      ]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('caps redirect chains at 3 hops', async () => {
+    // Open-redirect chains must terminate. We chain 4 hops; the fetcher
+    // must abort and return null after the 3rd follow, never reaching
+    // the 4th.
+    const calls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL) => {
+      const u = String(url);
+      calls.push(u);
+      // Each hop redirects to the next; the 4th hop would serve content
+      // but we should never reach it.
+      const order = [
+        'https://a.example/1.png',
+        'https://b.example/2.png',
+        'https://c.example/3.png',
+        'https://d.example/4.png',
+        'https://e.example/5.png',
+      ];
+      const idx = order.indexOf(u);
+      if (idx === -1) {
+        return new Response(Buffer.from('unreachable'), { status: 200 });
+      }
+      if (idx < order.length - 1) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: order[idx + 1] },
+        });
+      }
+      return new Response(Buffer.from('reached'), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const result = await defaultImageFetcher('https://a.example/1.png');
+      expect(result).toBeNull();
+      // Initial + 3 hops = 4 fetches max. We must not have made 5.
+      expect(calls.length).toBeLessThanOrEqual(4);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });

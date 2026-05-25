@@ -260,3 +260,150 @@ describe('hexToRgb / rgbToHex internals', () => {
     expect(__internal.rgbToHex(-10, 300, 128)).toBe('#00ff80');
   });
 });
+
+/**
+ * Sharp decode-options hardening (PR #72 security review).
+ *
+ * The default sharp call shape was `sharp(buffer, { failOn: 'none' })` —
+ * which leaves multi-frame / animated images decoding their full frame
+ * stack (memory amplification) and accepts arbitrarily large input
+ * resolutions (pixel-bomb amplification, libvips default cap is 0x7FFF^2
+ * ≈ 1B pixels).
+ *
+ * The fix pins:
+ *   - `pages: 1` + `animated: false` — only the first frame of a GIF/
+ *     WebP/AVIF animation is decoded; remaining frames cost nothing.
+ *   - `limitInputPixels: 50_000_000` — 50M pixels is comfortably above
+ *     the 5000×10000 case any real logo could need, well below the
+ *     pixel-bomb threshold a malicious server might serve.
+ */
+describe('extractPaletteFromBuffer — sharp options hardening', () => {
+  it('only decodes frame 1 of a multi-frame GIF — frame 2 pixels must not leak into palette', async () => {
+    // Construct a real 2-frame GIF89a: 16×16 canvas, global palette
+    // [red=(220,30,30), blue=(30,30,220)]. Frame 1 = all palette idx 0
+    // (red), Frame 2 = all palette idx 1 (blue).
+    //
+    // Why this is the right shape: when `animated: true` is enabled,
+    // sharp returns a buffer of height H×N (frames stacked vertically),
+    // exposing pixels from every frame to k-means. The palette then
+    // contains blue. With our pinned `pages: 1, animated: false`, only
+    // frame 1 pixels are exposed — palette must contain red and MUST
+    // NOT contain blue. We verified this test fails when the opts are
+    // reverted; it is load-bearing.
+    function lzwEncode(indices: number[], codeSize: number): number[] {
+      const clear = 1 << codeSize;
+      const eoi = clear + 1;
+      const codes = [clear, ...indices, eoi];
+      const bits = codeSize + 1;
+      const buf: number[] = [];
+      let cur = 0;
+      let curBits = 0;
+      for (const c of codes) {
+        cur |= c << curBits;
+        curBits += bits;
+        while (curBits >= 8) {
+          buf.push(cur & 0xff);
+          cur >>= 8;
+          curBits -= 8;
+        }
+      }
+      if (curBits > 0) buf.push(cur & 0xff);
+      return buf;
+    }
+    function subBlocks(data: number[]): number[] {
+      const out: number[] = [];
+      let i = 0;
+      while (i < data.length) {
+        const chunk = data.slice(i, i + 255);
+        out.push(chunk.length, ...chunk);
+        i += 255;
+      }
+      out.push(0);
+      return out;
+    }
+    const w = 16;
+    const h = 16;
+    const n = w * h;
+    const frame1 = lzwEncode(new Array(n).fill(0), 2);
+    const frame2 = lzwEncode(new Array(n).fill(1), 2);
+    const gif = Buffer.from([
+      0x47, 0x49, 0x46, 0x38, 0x39, 0x61,
+      w & 0xff, (w >> 8) & 0xff, h & 0xff, (h >> 8) & 0xff,
+      0xf0, 0x00, 0x00,
+      220, 30, 30,
+      30, 30, 220,
+      0x21, 0xff, 0x0b,
+      0x4e, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2e, 0x30,
+      0x03, 0x01, 0x00, 0x00, 0x00,
+      0x21, 0xf9, 0x04, 0x00, 0x64, 0x00, 0x00, 0x00,
+      0x2c, 0x00, 0x00, 0x00, 0x00,
+      w & 0xff, (w >> 8) & 0xff, h & 0xff, (h >> 8) & 0xff, 0x00,
+      0x02,
+      ...subBlocks(frame1),
+      0x21, 0xf9, 0x04, 0x00, 0x64, 0x00, 0x00, 0x00,
+      0x2c, 0x00, 0x00, 0x00, 0x00,
+      w & 0xff, (w >> 8) & 0xff, h & 0xff, (h >> 8) & 0xff, 0x00,
+      0x02,
+      ...subBlocks(frame2),
+      0x3b,
+    ]);
+
+    // Sanity check that the GIF is truly multi-frame at the format
+    // level — if the fixture broke, the rest of the assertion is moot.
+    const meta = await sharp(gif).metadata();
+    expect(meta.pages).toBe(2);
+
+    const result = await extractPaletteFromBuffer(gif, 'image/gif');
+    expect(result).not.toBeNull();
+    const colors = result!.colors;
+    // Dominant color must be red-family (frame 1).
+    const dom = __internal.hexToRgb(colors[0])!;
+    expect(dom.r).toBeGreaterThan(150);
+    expect(dom.b).toBeLessThan(80);
+    // Blue (frame 2) MUST NOT appear in any cluster. A blue cluster here
+    // would indicate the decoder picked up frame 2 — the regression
+    // class this test guards against.
+    for (const hex of colors) {
+      const rgb = __internal.hexToRgb(hex)!;
+      const isBlueDominant = rgb.b > 150 && rgb.b > rgb.r + 30;
+      expect(isBlueDominant).toBe(false);
+    }
+  });
+
+  it('rejects oversized pixel-bomb inputs (limitInputPixels guard)', async () => {
+    // sharp's default `limitInputPixels` cap is ~1B; the brand extractor
+    // ratchets it down to 50M. A buffer that declares a 10000×10000
+    // canvas (100M pixels) must trigger sharp's input-pixel guard and
+    // produce null. We construct via the `create` shape which writes a
+    // proper PNG header sharp can read.
+    //
+    // The image bytes themselves are small (PNG compresses a solid
+    // background extremely well), but the declared dimensions are over
+    // the cap — the cap is dimension-based, not byte-based.
+    let bomb: Buffer;
+    try {
+      bomb = await sharp({
+        create: {
+          width: 10000,
+          height: 10000,
+          channels: 3,
+          background: { r: 128, g: 128, b: 128 },
+        },
+      })
+        .png({ compressionLevel: 9 })
+        .toBuffer();
+    } catch {
+      // Some sharp builds cap `create` independently. If we can't even
+      // synthesize the bomb, the test is moot — skip.
+      return;
+    }
+    // Buffer must be under MAX_IMAGE_BYTES so the byte-cap doesn't fire
+    // first; we want to verify the pixel-cap path.
+    if (bomb.length > MAX_IMAGE_BYTES) {
+      // Could happen on some sharp builds. Document the choice and skip.
+      return;
+    }
+    const result = await extractPaletteFromBuffer(bomb, 'image/png');
+    expect(result).toBeNull();
+  });
+});

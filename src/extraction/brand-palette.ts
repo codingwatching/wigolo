@@ -28,6 +28,12 @@ const log = createLogger('extract');
 /** Hard cap on input image bytes. >2MB inputs blow the 2s round-trip budget. */
 export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 
+/** Hard cap on declared input pixels (width × height). 50M pixels covers any
+ *  realistic logo (5000×10000) while blocking pixel-bomb decode attacks that
+ *  declare absurd canvas sizes to exhaust memory. libvips would otherwise
+ *  default to ~1B pixels. */
+const MAX_INPUT_PIXELS = 50_000_000;
+
 /** Long-edge target for resize before quantization. 200px gives 40,000 pixels max — k-means converges fast. */
 const RESIZE_LONG_EDGE = 200;
 
@@ -302,7 +308,19 @@ export async function extractPaletteFromBuffer(
 
   let raw: { data: Buffer; info: sharp.OutputInfo };
   try {
-    raw = await sharp(buffer, { failOn: 'none' })
+    raw = await sharp(buffer, {
+      failOn: 'none',
+      // Decode only the first frame of animated GIF/WebP/AVIF inputs.
+      // Without these, a malicious 1000-frame GIF could blow the memory
+      // budget; even a legitimate animated logo would have its palette
+      // averaged across frames (the dominant color of a fade animation
+      // is not the brand color).
+      pages: 1,
+      animated: false,
+      // Cap declared pixels to block decode-bomb inputs. 50M = 7000×7000;
+      // any real logo fits well under that.
+      limitInputPixels: MAX_INPUT_PIXELS,
+    })
       .resize(RESIZE_LONG_EDGE, RESIZE_LONG_EDGE, {
         fit: 'inside',
         withoutEnlargement: true,
