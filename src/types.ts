@@ -372,7 +372,7 @@ export interface ResearchBrief {
       entities: string[];
       comparison_points: string[];
     };
-    gaps: string[];
+    gaps: Array<string | { entity: string; reason: string }>;
   };
   query_type: 'comparison' | 'how-to' | 'concept' | 'general';
   citation_graph?: CitationGraphEntry[];

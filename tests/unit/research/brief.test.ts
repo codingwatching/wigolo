@@ -198,7 +198,22 @@ describe('buildResearchBrief', () => {
     ];
     const brief = await buildResearchBrief('q', sources, ['quantum computing applications', 'blockchain scalability'], 3000, 40000);
     expect(brief.sections.gaps.length).toBeGreaterThan(0);
-    expect(brief.sections.gaps.some(g => g.includes('quantum'))).toBe(true);
+    expect(brief.sections.gaps.some(g => typeof g === 'string' && g.includes('quantum'))).toBe(true);
+  });
+
+  it('surfaces named entities not represented by any sub-query in sections.gaps', async () => {
+    const sources = [mkSource()];
+    const brief = await buildResearchBrief(
+      'tradeoffs between MCP, OpenAPI tool schemas, and A2A for agent interop in 2026',
+      sources,
+      ['MCP comparison for agent interop', 'OpenAPI tool schema overview'],
+      3000,
+      40000,
+    );
+    const entityGaps = brief.sections.gaps.filter(
+      (g): g is { entity: string; reason: string } => typeof g === 'object',
+    );
+    expect(entityGaps).toContainEqual({ entity: 'A2A', reason: 'no sub-query planned' });
   });
 });
 

@@ -2,6 +2,7 @@ import type { ResearchBrief, ResearchSource, SearchResultItem, CrossReference } 
 import type { QueryType } from './decompose.js';
 import { extractHighlights } from '../search/highlights.js';
 import { buildCitationGraph } from './citation-graph.js';
+import { detectEntityGaps } from './entity-extractor.js';
 
 const MAX_HIGHLIGHTS = 12;
 const MAX_KEY_FINDING_LEN = 280;
@@ -39,7 +40,10 @@ export async function buildResearchBrief(
   const topics = buildTopics(subQueries, fetched);
   const keyFindings = buildKeyFindings(fetched);
   const crossReferences = detectCrossReferences(fetched);
-  const gaps = detectGaps(subQueries, fetched);
+  const gaps: Array<string | { entity: string; reason: string }> = [
+    ...detectGaps(subQueries, fetched),
+    ...detectEntityGaps(question, subQueries),
+  ];
 
   const comparison = queryType === 'comparison' && comparisonEntities.length >= 2
     ? buildComparisonSection(comparisonEntities, fetched)
