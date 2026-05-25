@@ -221,6 +221,19 @@ export interface EngineOutcomeSummary {
   skipped?: boolean;
 }
 
+export type FreshnessConfidence =
+  | 'extracted'
+  | 'inferred-url'
+  | 'inferred-html'
+  | 'inferred-llm'
+  | 'unknown';
+
+export interface FreshnessSignal {
+  published_date?: string;
+  inferred: boolean;
+  confidence: FreshnessConfidence;
+}
+
 export interface SearchResultItem {
   title: string;
   url: string;
@@ -233,6 +246,9 @@ export interface SearchResultItem {
   cached?: boolean;
   cached_at?: string;
   stale?: boolean;
+  /** Per-result freshness signal: extracted date or inferred from URL/HTML
+   * patterns, with a confidence tag callers can pivot on. */
+  freshness_signal?: FreshnessSignal;
   /** Debug-only — emitted when input.include_engine_outcomes is true. */
   _score_breakdown?: ScoreBreakdown;
 }

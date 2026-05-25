@@ -17,6 +17,7 @@ import type {
 import { runV1Search } from './orchestrator.js';
 import { applyContextRank } from './context-rank.js';
 import { dedupAgainstRecentUrls } from './recent-cache-dedup.js';
+import { computeFreshnessSignal } from './freshness.js';
 import { runSynthesis } from '../answer-synthesis.js';
 import { applyEvidenceDefault, renderCitationsXml } from '../evidence.js';
 import { fetchContentForResults } from '../content-fetch.js';
@@ -245,6 +246,7 @@ export class CoreSearchProvider implements SearchProvider {
         snippet: r.snippet,
         relevance_score: r.relevance_score,
         ...(r.published_date ? { published_date: r.published_date } : {}),
+        freshness_signal: computeFreshnessSignal(r.url, r.published_date),
         ...(r._score_breakdown ? { _score_breakdown: r._score_breakdown } : {}),
       }));
 
