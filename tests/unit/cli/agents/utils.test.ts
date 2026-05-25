@@ -23,7 +23,7 @@ afterEach(() => {
 // mergeBlock
 // ---------------------------------------------------------------------------
 
-import { mergeBlock, removeBlock, mergeMcpJson, removeMcpJson } from '../../../../src/cli/agents/utils.js';
+import { mergeBlock, removeBlock, mergeMcpJson, removeMcpJson, detectFirecrawlSkills } from '../../../../src/cli/agents/utils.js';
 
 const BLOCK = '<!-- wigolo:start v1 -->\n## Wigolo\nContent here.\n<!-- wigolo:end -->';
 
@@ -195,6 +195,31 @@ describe('removeMcpJson', () => {
 
   it('is noop when file does not exist', () => {
     expect(() => removeMcpJson(join(tmpDir, 'missing.json'), ['mcpServers', 'wigolo'])).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectFirecrawlSkills
+// ---------------------------------------------------------------------------
+
+describe('detectFirecrawlSkills', () => {
+  it('returns [] when skills dir does not exist', () => {
+    expect(detectFirecrawlSkills(join(tmpDir, 'no-skills'))).toEqual([]);
+  });
+
+  it('returns names of firecrawl skill directories', () => {
+    mkdirSync(join(tmpDir, 'skills', 'firecrawl'), { recursive: true });
+    mkdirSync(join(tmpDir, 'skills', 'firecrawl-search'), { recursive: true });
+    mkdirSync(join(tmpDir, 'skills', 'firecrawl-crawl'), { recursive: true });
+    mkdirSync(join(tmpDir, 'skills', 'wigolo'), { recursive: true });
+    mkdirSync(join(tmpDir, 'skills', 'unrelated'), { recursive: true });
+    const found = detectFirecrawlSkills(join(tmpDir, 'skills'));
+    expect(found).toEqual(['firecrawl', 'firecrawl-crawl', 'firecrawl-search']);
+  });
+
+  it('ignores names that merely contain "firecrawl" without the prefix', () => {
+    mkdirSync(join(tmpDir, 'skills', 'my-firecrawl-fork'), { recursive: true });
+    expect(detectFirecrawlSkills(join(tmpDir, 'skills'))).toEqual([]);
   });
 });
 

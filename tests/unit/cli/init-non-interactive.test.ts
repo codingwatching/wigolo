@@ -1,12 +1,16 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
-const { runWarmupMock, detectAgentsMock, selectAgentsMock, applyConfigsMock, runVerifyMock, systemCheckMock } = vi.hoisted(() => ({
+const { runWarmupMock, detectAgentsMock, selectAgentsMock, applyConfigsMock, runVerifyMock, systemCheckMock, getAgentHandlerMock } = vi.hoisted(() => ({
   runWarmupMock: vi.fn(),
   detectAgentsMock: vi.fn(),
   selectAgentsMock: vi.fn(),
   applyConfigsMock: vi.fn(),
   runVerifyMock: vi.fn(),
   systemCheckMock: vi.fn(),
+  getAgentHandlerMock: vi.fn(),
 }));
 
 vi.mock('../../../src/cli/warmup.js', () => ({
@@ -33,6 +37,9 @@ vi.mock('../../../src/cli/tui/system-check.js', () => ({
 vi.mock('../../../src/config.js', () => ({
   getConfig: () => ({ dataDir: '/tmp/data' }),
 }));
+vi.mock('../../../src/cli/agents/registry.js', () => ({
+  getAgentHandler: getAgentHandlerMock,
+}));
 
 import { runInit } from '../../../src/cli/init.js';
 
@@ -53,6 +60,15 @@ beforeEach(() => {
     docker: { ok: true, version: '29.0.0' },
     disk: { ok: true, freeMb: 50000 },
     hardFailure: false,
+  });
+  getAgentHandlerMock.mockReset().mockReturnValue({
+    id: 'claude-code',
+    displayName: 'Claude Code',
+    supportsSkills: true,
+    supportsCommands: true,
+    installInstructions: vi.fn().mockResolvedValue(undefined),
+    installSkills: vi.fn().mockResolvedValue(undefined),
+    installCommand: vi.fn().mockResolvedValue(undefined),
   });
 });
 
@@ -96,5 +112,69 @@ describe('runInit --non-interactive', () => {
     writeMock.mockRestore();
     expect(code).toBe(0);
     expect(runWarmupMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('runInit --non-interactive firecrawl-collision notice', () => {
+  let tmpHome: string;
+  let originalHome: string | undefined;
+
+  beforeEach(() => {
+    tmpHome = join(tmpdir(), `wigolo-init-fc-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(tmpHome, { recursive: true });
+    originalHome = process.env.HOME;
+    process.env.HOME = tmpHome;
+    detectAgentsMock.mockReturnValue([
+      { id: 'claude-code', displayName: 'Claude Code', detected: true, installType: 'cli-command', configPath: null },
+    ]);
+    applyConfigsMock.mockResolvedValue([
+      { id: 'claude-code', displayName: 'Claude Code', ok: true, code: 'OK', configPath: null },
+    ]);
+  });
+
+  afterEach(() => {
+    rmSync(tmpHome, { recursive: true, force: true });
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+  });
+
+  it('prints a notice when firecrawl skills are present in the host skills dir', async () => {
+    mkdirSync(join(tmpHome, '.claude', 'skills', 'firecrawl-search'), { recursive: true });
+    writeFileSync(join(tmpHome, '.claude', 'skills', 'firecrawl-search', 'SKILL.md'), 'stub', 'utf-8');
+
+    const stdoutWrites: string[] = [];
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: any) => {
+      stdoutWrites.push(String(chunk));
+      return true;
+    });
+
+    try {
+      await runInit(['--non-interactive', '--agents=claude-code', '--skip-verify']);
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    const out = stdoutWrites.join('');
+    expect(out).toMatch(/Detected firecrawl skills/);
+    expect(out).toMatch(/firecrawl-search/);
+  });
+
+  it('does not print the notice when no firecrawl skills exist', async () => {
+    mkdirSync(join(tmpHome, '.claude', 'skills'), { recursive: true });
+
+    const stdoutWrites: string[] = [];
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: any) => {
+      stdoutWrites.push(String(chunk));
+      return true;
+    });
+
+    try {
+      await runInit(['--non-interactive', '--agents=claude-code', '--skip-verify']);
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    const out = stdoutWrites.join('');
+    expect(out).not.toMatch(/Detected firecrawl skills/);
   });
 });

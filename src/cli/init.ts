@@ -175,6 +175,20 @@ async function runInitPlain(flags: InitFlagsResolved): Promise<number> {
   // the others to be reported as "skipped".
   {
     const { getAgentHandler } = await import('./agents/registry.js');
+    const { detectFirecrawlSkills } = await import('./agents/utils.js');
+    const { homedir } = await import('node:os');
+    const { join: pathJoin } = await import('node:path');
+
+    if (selected.includes('claude-code' as AgentId)) {
+      const firecrawl = detectFirecrawlSkills(pathJoin(homedir(), '.claude', 'skills'));
+      if (firecrawl.length > 0) {
+        out();
+        out(`  ${info(`Detected firecrawl skills (${firecrawl.join(', ')}).`)}`);
+        out(`    ${chalk.gray('Wigolo will be preferred for local/cached/transparent searches.')}`);
+        out(`    ${chalk.gray('See ~/.claude/skills/wigolo-search/SKILL.md for the boundaries.')}`);
+      }
+    }
+
     for (const id of selected) {
       const handler = getAgentHandler(id);
       if (!handler) continue;
