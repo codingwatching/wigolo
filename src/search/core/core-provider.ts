@@ -245,6 +245,8 @@ export class CoreSearchProvider implements SearchProvider {
         snippet: r.snippet,
         relevance_score: r.relevance_score,
         ...(r.published_date ? { published_date: r.published_date } : {}),
+        ...(r.image_url ? { image_url: r.image_url } : {}),
+        ...(r.image_alt ? { image_alt: r.image_alt } : {}),
         ...(r._score_breakdown ? { _score_breakdown: r._score_breakdown } : {}),
       }));
 
@@ -286,6 +288,16 @@ export class CoreSearchProvider implements SearchProvider {
       fetch_time_ms: fetchElapsed,
       ...(engineOutcomes ? { engine_outcomes: engineOutcomes } : {}),
     };
+
+    if (input.include_images) {
+      data.images = items
+        .filter((it) => typeof it.image_url === 'string' && it.image_url.length > 0)
+        .map((it) => ({
+          url: it.image_url!,
+          ...(it.image_alt ? { alt: it.image_alt } : {}),
+          source_url: it.url,
+        }));
+    }
 
     if (allDegraded) {
       data.warning = 'all engines failed or no results';

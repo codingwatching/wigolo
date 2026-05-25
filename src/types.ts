@@ -210,6 +210,16 @@ export interface SearchInput {
   /** When true, the response carries per-engine timing + result counts under
    * engine_outcomes. Opt-in because the field is debug-shaped and noisy. */
   include_engine_outcomes?: boolean;
+  /** When true, the response carries a top-level `images` array aggregated
+   * from per-result image hints emitted by engines that expose them. */
+  include_images?: boolean;
+}
+
+export interface ImageItem {
+  url: string;
+  alt?: string;
+  /** URL of the result the image came from. */
+  source_url: string;
 }
 
 export interface EngineOutcomeSummary {
@@ -233,6 +243,10 @@ export interface SearchResultItem {
   cached?: boolean;
   cached_at?: string;
   stale?: boolean;
+  /** Carried through from RawSearchResult.image_url so the orchestrator
+   * can aggregate top-level images when input.include_images is true. */
+  image_url?: string;
+  image_alt?: string;
   /** Debug-only — emitted when input.include_engine_outcomes is true. */
   _score_breakdown?: ScoreBreakdown;
 }
@@ -269,6 +283,10 @@ export interface SearchOutput {
    * `"include_domains_over_filter+top1_high_score_low_overlap"`); the
    * result merges core + searxng via RRF. Absent on `core`/`searxng` paths. */
   fallback_signal?: string | null;
+  /** Top-level image inventory aggregated from per-result image hints when
+   * input.include_images is true. Empty array means the request asked for
+   * images but no engine surfaced any. */
+  images?: ImageItem[];
 }
 
 // Wire shape for format=stream_answer (sub-ticket 2.12). The MCP content
@@ -449,6 +467,11 @@ export interface RawSearchResult {
   relevance_score: number;
   engine: string;
   published_date?: string; // ISO date string, when engine provides it
+  /** Thumbnail/preview image URL surfaced by engines that expose one
+   * (e.g. Brave API thumbnail). Aggregated into SearchOutput.images when
+   * the caller sets include_images=true. */
+  image_url?: string;
+  image_alt?: string;
   /** Debug-only — present when the core orchestrator was asked to emit
    * score breakdowns (via include_engine_outcomes on the public surface). */
   _score_breakdown?: ScoreBreakdown;

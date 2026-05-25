@@ -10,6 +10,7 @@ interface BraveWebResult {
   description?: string;
   age?: string;
   page_age?: string;
+  thumbnail?: { src?: string; original?: string };
 }
 
 interface BraveSearchResponse {
@@ -65,6 +66,7 @@ export class BraveEngine implements SearchEngine {
       const item = items[i];
       if (!item?.url || !item?.title) continue;
       const ageIso = parsePageAge(item.page_age ?? item.age);
+      const thumb = item.thumbnail?.src ?? item.thumbnail?.original;
       out.push({
         title: item.title,
         url: item.url,
@@ -72,6 +74,7 @@ export class BraveEngine implements SearchEngine {
         relevance_score: 1 - i / Math.max(items.length, 1),
         engine: 'brave',
         ...(ageIso ? { published_date: ageIso } : {}),
+        ...(thumb ? { image_url: thumb } : {}),
       });
     }
     return out;
