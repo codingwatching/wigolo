@@ -1,4 +1,9 @@
-import type { RawSearchResult, ScoreBreakdown, SearchEngineOptions } from '../../types.js';
+import type {
+  EvidenceScore,
+  RawSearchResult,
+  ScoreBreakdown,
+  SearchEngineOptions,
+} from '../../types.js';
 import { createLogger } from '../../logger.js';
 import { classifyIntentDetailed, type Vertical } from './intent-router.js';
 import {
@@ -19,6 +24,22 @@ import { getConfig } from '../../config.js';
 // the intended technical subject. Heuristic; only fires on short queries.
 const RETAIL_TLD_RE = /\.(?:co\.uk|shop|store|deals|sale|boutique|fashion)$/i;
 const BRAND_COLLISION_PENALTY = 0.3;
+
+function explainEvidence(parts: {
+  base: number;
+  dq: number;
+  la: number;
+  recencyMul: number;
+  engineConsensus: number;
+}): string {
+  const tokens: string[] = [];
+  tokens.push(`base=${parts.base.toFixed(3)}`);
+  tokens.push(`domain=${parts.dq.toFixed(2)}`);
+  tokens.push(`lex=${parts.la.toFixed(2)}`);
+  if (parts.recencyMul !== 1) tokens.push(`recency=${parts.recencyMul.toFixed(2)}`);
+  tokens.push(`engines=${parts.engineConsensus}`);
+  return tokens.join(', ');
+}
 
 function applyBrandCollisionGuard(query: string, results: RawSearchResult[]): RawSearchResult[] {
   const tokens = query.trim().split(/\s+/).filter(Boolean);
@@ -309,17 +330,17 @@ export async function runV1Search(
   const breakdowns = input.includeScoreBreakdown
     ? new Map<string, ScoreBreakdown>()
     : undefined;
+  // Sub-ticket 3.8: explainable per-result score breakdown, always emitted.
+  const evidenceScores = new Map<string, EvidenceScore>();
   merged = merged.map((r) => {
     const base = r.relevance_score;
     const dq = domainQualityScore(r.url, vertical, query);
     const la = lexicalAlignment(query, r.title, r.snippet);
-    // Sub-ticket 2.2: a URL contributed only by secondary engines gets an
-    // extra demotion when lexical alignment is weak. Primary contributors
-    // shield a URL from this penalty.
     const primaryCount = urlPrimaryCount.get(r.url) ?? 0;
     const secondaryCount = urlSecondaryCount.get(r.url) ?? 0;
     const isSecondaryOnly = primaryCount === 0 && secondaryCount > 0;
     const secondaryPenalty = isSecondaryOnly && la < 0.5 ? 0.3 : 1.0;
+    const recencyMul = wantsRecency ? recencyMultiplier(r.published_date) : 1.0;
     const final = base * dq * (0.5 + 0.5 * la) * secondaryPenalty;
     if (breakdowns) {
       breakdowns.set(r.url, {
@@ -329,6 +350,24 @@ export async function runV1Search(
         final,
       });
     }
+    evidenceScores.set(r.url, {
+      final,
+      components: {
+        base_rrf: base,
+        context_cosine: 0,
+        domain_quality: dq,
+        lexical_alignment: la,
+        recency_boost: recencyMul,
+        engine_consensus: primaryCount + secondaryCount,
+      },
+      explanation: explainEvidence({
+        base,
+        dq,
+        la,
+        recencyMul,
+        engineConsensus: primaryCount + secondaryCount,
+      }),
+    });
     return { ...r, relevance_score: final };
   });
 
@@ -376,6 +415,14 @@ export async function runV1Search(
       return bd ? { ...r, _score_breakdown: bd } : r;
     });
   }
+
+  // Attach evidence_score using the final renormalised relevance_score so
+  // the explainability matches what callers see in relevance_score.
+  results = results.map((r) => {
+    const ev = evidenceScores.get(r.url);
+    if (!ev) return r;
+    return { ...r, evidence_score: { ...ev, final: r.relevance_score } };
+  });
 
   const enginesUsed = outcomes
     .filter((o) => o.ok && o.results.length > 0)
