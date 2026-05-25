@@ -4,7 +4,7 @@ import {
   filterDecorativeImages,
   resolveRelativeUrls,
 } from './markdown.js';
-import { extractMetadata } from './extract.js';
+import { extractMetadata } from './metadata.js';
 import { stripBoilerplateMarkdown } from './boilerplate.js';
 import { sanitizeExtractedMarkdown } from './markdown-sanitize.js';
 import type { ExtractionResult, Extractor } from '../types.js';

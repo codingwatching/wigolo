@@ -65,6 +65,31 @@ describe('extractMetadata', () => {
     expect(result.og_type).toBe('article');
   });
 
+  it('falls back to twitter:image when og:image missing', () => {
+    // Bench E2 (verdict §5 #10): some sites (e.g. pgedge.com) ship a
+    // twitter:image card without og:image. Surface it as og_image so the
+    // extract path matches what site-specific extractors and downstream
+    // consumers expect.
+    const html = '<html><head><meta name="twitter:image" content="https://example.com/tw.png"></head><body></body></html>';
+    const result = extractMetadata(html);
+    expect(result.og_image).toBe('https://example.com/tw.png');
+  });
+
+  it('prefers og:image over twitter:image when both present', () => {
+    const html = `<html><head>
+      <meta property="og:image" content="https://example.com/og.png">
+      <meta name="twitter:image" content="https://example.com/tw.png">
+    </head><body></body></html>`;
+    const result = extractMetadata(html);
+    expect(result.og_image).toBe('https://example.com/og.png');
+  });
+
+  it('falls back to og:image:secure_url when og:image missing', () => {
+    const html = '<html><head><meta property="og:image:secure_url" content="https://example.com/secure.png"></head><body></body></html>';
+    const result = extractMetadata(html);
+    expect(result.og_image).toBe('https://example.com/secure.png');
+  });
+
   it('extracts canonical url from link[rel=canonical]', () => {
     const html = '<html><head><link rel="canonical" href="https://example.com/page"></head><body></body></html>';
     const result = extractMetadata(html);
