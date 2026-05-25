@@ -436,6 +436,84 @@ describe('findSimilar', () => {
     }
   });
 
+  it('emits weak-signal cold_start with raw scores when top fused_score is below threshold', async () => {
+    // Bench FS3 (verdict §5 #6): concept "obscure niche topic xyzzy quantum
+    // widget framework" returned 5 cache hits with normalized relevance_score
+    // 0.94-1.0 even though raw signals were weak. fuseResults normalizes the
+    // top RRF score to 1.0 regardless of its absolute strength, so callers
+    // saw confident-looking matches for a query that had only token-overlap.
+    //
+    // Fix: when the top raw RRF score is below WIGOLO_FIND_SIMILAR_COLD_START_THRESHOLD,
+    // emit cold_start AND replace per-result relevance_score with the raw
+    // fused_score so callers see the truth instead of the normalization lie.
+    //
+    // Setup: seed cache so a single overlapping token ('framework') matches
+    // five otherwise-unrelated pages. Concept query reuses that token plus
+    // nonsense tokens. FTS5 (OR query) returns five rank-1..5 hits; embeddings
+    // are unavailable in test env, so only one RRF list contributes. Top raw
+    // score = 1/(60+1) ≈ 0.0164, well below the 0.02 default threshold.
+    for (let i = 0; i < 5; i++) {
+      seedCache(
+        `https://noise-${i}.example`,
+        `Framework Note ${i}`,
+        `# Framework Note ${i}\n\nA short note about an unrelated **framework** in another domain.`,
+      );
+    }
+
+    const result = await findSimilar(
+      {
+        concept: 'obscure niche topic xyzzy quantum widget framework',
+        include_cache: true,
+        include_web: false,
+      },
+      [mockSearchEngine],
+      mockRouter,
+    );
+
+    expect(result.results.length).toBeGreaterThan(0);
+    expect(result.cold_start).toBeDefined();
+    expect(result.cold_start).toMatch(/weak|low confidence|below threshold|raw signal/i);
+    expect(result.cold_start).toContain('obscure niche topic xyzzy quantum widget framework');
+
+    // Top result's relevance_score must reflect the raw fused_score, not the
+    // normalized 1.0 that fuseResults emits by default.
+    const top = result.results[0];
+    expect(top.match_signals.fused_score).toBeGreaterThan(0);
+    expect(top.relevance_score).toBeCloseTo(top.match_signals.fused_score, 6);
+    expect(top.relevance_score).toBeLessThan(0.5);
+  });
+
+  it('honors WIGOLO_FIND_SIMILAR_COLD_START_THRESHOLD override', async () => {
+    // Threshold=0 disables the weak-signal cold_start path entirely; the
+    // top result reverts to the normalized relevance_score of 1.0.
+    process.env.WIGOLO_FIND_SIMILAR_COLD_START_THRESHOLD = '0';
+    resetConfig();
+    for (let i = 0; i < 5; i++) {
+      seedCache(
+        `https://noise-${i}.example`,
+        `Framework Note ${i}`,
+        `# Framework Note ${i}\n\nA short note about an unrelated **framework** in another domain.`,
+      );
+    }
+
+    const result = await findSimilar(
+      {
+        concept: 'obscure niche topic xyzzy quantum widget framework',
+        include_cache: true,
+        include_web: false,
+      },
+      [mockSearchEngine],
+      mockRouter,
+    );
+
+    if (result.results.length > 0) {
+      expect(result.results[0].relevance_score).toBeCloseTo(1.0, 3);
+    }
+    if (result.cold_start) {
+      expect(result.cold_start).not.toMatch(/weak|low confidence|below threshold|raw signal/i);
+    }
+  });
+
   it('sets cold_start when cache has many pages but none match this query and results come from web search', async () => {
     // Bench: cache had 39 pages but the find_similar query returned 0 cache
     // hits and the result was silently web-only — cold_start was documented
