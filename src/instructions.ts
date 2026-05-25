@@ -255,12 +255,12 @@ Persists across sessions. No remote round-trip.`,
   extract: `Extract structured data from a URL or raw HTML. Use for specific data points (tables, prices, schema fields) rather than whole-page markdown.
 
 Key parameters:
-- mode: "selector" (CSS → text) | "tables" | "metadata" (title/author/date/og_* + JSON-LD) | "schema" (pass a JSON Schema) | "structured" (one-shot: tables + <dl> definitions + JSON-LD + chart hints + key-value pairs).
+- mode: "selector" (CSS → text) | "tables" | "metadata" (title/author/date/og_* + JSON-LD) | "schema" (pass a JSON Schema) | "structured" (one-shot: tables + <dl> definitions + JSON-LD + chart hints + key-value pairs) | "brand" (name/tagline/description/logo_url/favicon_url/og_image_url/social_links/fonts + CSS-var colors, each with explainable provenance).
 - css_selector: required for mode="selector".
 - schema: required for mode="schema".
 - multiple: return all matches (mode="selector" only).
 
-Prefer mode="structured" over chaining multiple extract calls — one response carries \`{ tables, definitions, jsonld, chart_hints, key_value_pairs }\`. chart_hints surfaces SVG titles, aria-labels, figcaptions for charts whose data is JS-rendered. Metadata parity with \`fetch\` (same og_/canonical_url shape).`,
+Prefer mode="structured" over chaining multiple extract calls — one response carries \`{ tables, definitions, jsonld, chart_hints, key_value_pairs }\`. chart_hints surfaces SVG titles, aria-labels, figcaptions for charts whose data is JS-rendered. Metadata parity with \`fetch\` (same og_/canonical_url shape). \`mode: "brand"\` walks JSON-LD Organization/Brand/WebSite → OG/Twitter Card meta → \`<link rel=icon>\` → CSS custom properties (\`--brand-primary\`, \`--color-primary\`) → heuristic header/footer DOM; \`provenance\` records the winning source for logo/colors/fonts so callers can trust the values. Pixel-based palette extraction lands in a follow-up slice — \`provenance.colors\` is \`'css-vars'\` or \`'unknown'\` today.`,
 
   find_similar: `Find content related to a URL or concept. Best after a successful crawl/fetch — the local cache makes recommendations cheap.
 

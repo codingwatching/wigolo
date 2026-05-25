@@ -182,7 +182,12 @@ describe('Slice A1 — diff + watch tool registration', () => {
     }
   });
 
-  it('extract mode=brand returns the not_implemented_yet notice tagged with slice B2a', async () => {
+  it('extract mode=brand routes through the real B2a extractor and returns a BrandExtractionOutput envelope', async () => {
+    // After B2a landed, brand mode no longer returns the
+    // `not_implemented_yet` stub envelope; it dispatches to
+    // `src/extraction/brand.ts` and returns a structured payload with
+    // `provenance` always present. The mocked router serves a minimal page
+    // so we just assert the envelope shape, not specific brand fields.
     const { client, teardown } = await connectClient();
     try {
       const res = await client.callTool({
@@ -191,7 +196,14 @@ describe('Slice A1 — diff + watch tool registration', () => {
       });
       const block = (res.content as Array<{ type: string; text: string }>)[0];
       const payload = JSON.parse(block.text);
-      expect(payload).toMatchObject({ notice: 'not_implemented_yet', slice: 'B2a' });
+      expect(payload.mode).toBe('brand');
+      expect(payload).not.toHaveProperty('notice');
+      expect(payload).not.toHaveProperty('slice');
+      expect(payload.data).toBeDefined();
+      // Provenance is always emitted by the brand extractor — its absence
+      // would mean we accidentally fell back to the stub or the metadata
+      // path.
+      expect((payload.data as Record<string, unknown>).provenance).toBeDefined();
     } finally {
       await teardown();
     }

@@ -17,6 +17,7 @@ import {
   NAMED_SCHEMAS,
 } from '../extraction/v1/schemas/index.js';
 import { isLocalLlmEnabled, extractWithLocalLlm } from '../extraction/v1/local-llm.js';
+import { extractBrand } from '../extraction/brand.js';
 
 const log = createLogger('extract');
 
@@ -156,25 +157,6 @@ export async function handleExtract(
   const mode = input.mode ?? 'metadata';
   const _start = Date.now();
 
-  // Slice A1 stub — `mode: 'brand'` is registered here so callers receive a
-  // structured not-implemented notice instead of falling through to metadata.
-  // Slice B2a wires the real extractor at src/extraction/brand.ts. The notice
-  // is emitted at the top level (alongside `mode`/`source_url`) for parity
-  // with the diff/watch stub envelopes — callers detect the placeholder via
-  // `notice === 'not_implemented_yet'` without having to peek into `data`.
-  if (mode === 'brand') {
-    return {
-      ok: true,
-      data: {
-        data: {},
-        source_url: input.url,
-        mode: 'brand',
-        notice: 'not_implemented_yet',
-        slice: 'B2a',
-      },
-    };
-  }
-
   if (!input.url && !input.html) {
     return {
       ok: false,
@@ -274,6 +256,15 @@ export async function handleExtract(
       case 'structured':
         data = extractStructured(html);
         break;
+      case 'brand': {
+        // B2a: DOM/meta sources only (JSON-LD, OG, favicon, CSS vars,
+        // heuristic DOM). Palette extraction lands in B2b. Pass the
+        // resolved source URL as the base so relative logo/favicon hrefs
+        // resolve correctly; falls back to the user-supplied url when
+        // resolveHtml didn't surface a final URL (raw-html path).
+        data = extractBrand(html, { baseUrl: sourceUrl ?? input.url }) as Record<string, unknown>;
+        break;
+      }
       case 'schema': {
         const schema = input.schema!;
         if (Array.isArray(schema.required) && schema.required.length > 0) {
