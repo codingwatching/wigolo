@@ -219,6 +219,41 @@ describe('runDoctor', () => {
       expect(outBuffer).toMatch(/cache TTL:\s+14 days/);
       expect(outBuffer).toMatch(/per-request:\s+3 call/);
     });
+
+    it('warns when GOOGLE_API_KEY is set with a gemini pro model (free-tier footgun)', async () => {
+      process.env.GOOGLE_API_KEY = 'k';
+      process.env.WIGOLO_LLM_MODEL_GEMINI = 'gemini-2.5-pro';
+      try {
+        await runDoctor('/tmp/.wigolo');
+        expect(outBuffer).toMatch(/gemini-2\.5-pro/);
+        expect(outBuffer).toMatch(/pro.*free.?tier|free.?tier.*pro/i);
+        expect(outBuffer).toMatch(/gemini-2\.5-flash/i);
+      } finally {
+        delete process.env.WIGOLO_LLM_MODEL_GEMINI;
+      }
+    });
+
+    it('does not warn when gemini model is a flash variant', async () => {
+      process.env.GOOGLE_API_KEY = 'k';
+      process.env.WIGOLO_LLM_MODEL_GEMINI = 'gemini-2.5-flash';
+      try {
+        await runDoctor('/tmp/.wigolo');
+        expect(outBuffer).not.toMatch(/free.?tier.*pro|pro.*free.?tier/i);
+      } finally {
+        delete process.env.WIGOLO_LLM_MODEL_GEMINI;
+      }
+    });
+
+    it('does not warn for pro model when GOOGLE_API_KEY is not set', async () => {
+      delete process.env.GOOGLE_API_KEY;
+      process.env.WIGOLO_LLM_MODEL_GEMINI = 'gemini-2.5-pro';
+      try {
+        await runDoctor('/tmp/.wigolo');
+        expect(outBuffer).not.toMatch(/free.?tier.*pro|pro.*free.?tier/i);
+      } finally {
+        delete process.env.WIGOLO_LLM_MODEL_GEMINI;
+      }
+    });
   });
 
   describe('V1 extension checks', () => {
