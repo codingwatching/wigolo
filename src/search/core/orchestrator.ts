@@ -68,6 +68,11 @@ export interface OrchestratorInput {
    * passed to engines; results older than the window are post-filtered
    * out (unless they have no published_date — kept conservatively). */
   timeRange?: TimeRange;
+  /** When true, the query is wrapped in double quotes before dispatch
+   * (engines that honour `"..."` treat it as a phrase match) and any
+   * result whose title+snippet does not contain the unquoted query as a
+   * case-insensitive substring is dropped post-rerank. */
+  exactMatch?: boolean;
 }
 
 export interface OrchestratorOutput {
@@ -188,6 +193,15 @@ export async function runV1Search(
     };
   }
 
+  // exact_match: quote the query for engines that honour `"..."`. Strip any
+  // existing surrounding quotes so we don't double-wrap.
+  const engineQuery = input.exactMatch
+    ? `"${query.replace(/^"|"$/g, '')}"`
+    : query;
+  const exactPhrase = input.exactMatch
+    ? query.replace(/^"|"$/g, '').toLowerCase()
+    : '';
+
   const timeRangeHint = resolveTimeRange(input.timeRange);
   const callerHasDateBound = !!(input.fromDate || input.toDate || timeRangeHint);
   const classification = classifyIntentDetailed(query, {
@@ -231,7 +245,7 @@ export async function runV1Search(
     hasDateBound,
   });
 
-  const outcomes = await runEnginesParallel(entries, query, options);
+  const outcomes = await runEnginesParallel(entries, engineQuery, options);
 
   const wantsRecency =
     vertical === 'news' || hasDateBound || hasTemporalIntent(query);
@@ -328,6 +342,12 @@ export async function runV1Search(
     merged = merged.filter((r) => {
       if (!r.published_date) return true;
       return r.published_date <= effectiveToDate;
+    });
+  }
+  if (exactPhrase) {
+    merged = merged.filter((r) => {
+      const hay = `${r.title} ${r.snippet}`.toLowerCase();
+      return hay.includes(exactPhrase);
     });
   }
 

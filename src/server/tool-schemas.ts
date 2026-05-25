@@ -137,6 +137,10 @@ export const SEARCH_TOOL_SCHEMA = {
       enum: ['day', 'week', 'month', 'year'],
       description: 'Freshness filter relative to now (day=last 24h, week=last 7d, month=last 30d, year=last 365d). Overrides any inferred date hint in the query text; engines that support date filtering receive the resolved range, and results older than the window are dropped post-rerank (results with no published_date are kept conservatively).',
     },
+    exact_match: {
+      type: 'boolean',
+      description: 'Treat the query as a quoted phrase. Engines that honour `"..."` filter to phrase matches, and results without the exact phrase in title or snippet are dropped.',
+    },
     search_engines: { type: 'array', items: { type: 'string' }, description: 'Override engine selection' },
     language: { type: 'string', description: 'Language preference' },
     include_domains: {

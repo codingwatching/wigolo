@@ -141,6 +141,7 @@ export class CoreSearchProvider implements SearchProvider {
       to_date: input.to_date,
       language: input.language,
       time_range: input.time_range,
+      exact_match: input.exact_match,
     });
 
     let items: SearchResultItem[] = [];
@@ -195,6 +196,7 @@ export class CoreSearchProvider implements SearchProvider {
             excludeDomains: input.exclude_domains,
             includeScoreBreakdown: input.include_engine_outcomes,
             timeRange: input.time_range,
+            exactMatch: input.exact_match,
           }),
         ),
       );
