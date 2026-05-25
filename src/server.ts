@@ -25,6 +25,7 @@ import { handleResearch } from './tools/research.js';
 import { handleAgent } from './tools/agent.js';
 import { handleDiff } from './tools/diff.js';
 import { handleWatch } from './tools/watch.js';
+import { scheduleOverdueCheck } from './watch/scheduler.js';
 import type { SamplingCapableServer } from './search/sampling.js';
 import { SearxngClient } from './search/searxng.js';
 import { DuckDuckGoEngine } from './search/engines/duckduckgo.js';
@@ -367,6 +368,16 @@ export function createMcpServer(subsystems: Subsystems): Server {
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
 
+    // Lazy-execution hook for the `watch` tool. Every non-watch tool call
+    // gives us a chance to run overdue watch jobs in the background. This
+    // is intentional: wigolo has no daemon — checks only fire when the
+    // server is doing other work. `scheduleOverdueCheck` defers via
+    // setImmediate and swallows errors, so it never blocks or fails the
+    // primary tool call.
+    if (name !== 'watch') {
+      scheduleOverdueCheck(router);
+    }
+
     // If the client supplied a progressToken in request._meta, build a
     // callback that forwards progress updates as notifications/progress.
     // Used by stream_answer to emit pipeline-phase progress.
@@ -503,11 +514,8 @@ export function createMcpServer(subsystems: Subsystems): Server {
       };
     }
 
-    // Slice A1 stubs — registration-only. Real diff implementation lands in
-    // slice B1; real watch implementation lands in slice B3. Both return a
-    // structured `{ notice: 'not_implemented_yet', slice }` payload so
-    // dependent slices can detect successful wiring before they ship the
-    // real handlers.
+    // Slice A1 stub — `diff` real engine lands in slice B1. Watch shipped in
+    // B3 (this file), so it takes a router and does real work.
     if (name === 'diff') {
       const input = (args ?? {}) as Record<string, unknown>;
       const r = await handleDiff(input);
@@ -519,9 +527,9 @@ export function createMcpServer(subsystems: Subsystems): Server {
 
     if (name === 'watch') {
       const input = (args ?? {}) as unknown as WatchJobInput;
-      const r = await handleWatch(input);
+      const r = await handleWatch(input, router);
       return {
-        content: [{ type: 'text', text: JSON.stringify(r.ok ? r.data : { error: r.error, error_reason: r.error_reason, stage: r.stage }, null, 2) }],
+        content: [{ type: 'text', text: JSON.stringify(r.ok ? r.data : { error: r.error, error_reason: r.error_reason, stage: r.stage, ...((r as { hint?: string }).hint ? { hint: (r as { hint?: string }).hint } : {}) }, null, 2) }],
         isError: !r.ok,
       };
     }

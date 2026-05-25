@@ -888,7 +888,10 @@ export interface WatchJob {
 
 export interface WatchJobOutput {
   jobs: WatchJob[];
-  changes_since_last?: DiffOutput[];
+  /** Per-job change report emitted by `action: 'check'`. The shape mirrors
+   * the existing fetch/cache change-detector envelope so consumers can read
+   * a single shape regardless of which surface ran the diff. */
+  changes_since_last?: ChangeReport[];
   /** Stub-only marker — present while the slice is still a placeholder. */
   notice?: string;
   /** Stub-only marker — names the slice that will complete this surface. */

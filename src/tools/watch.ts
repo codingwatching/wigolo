@@ -1,25 +1,137 @@
-import type { WatchJobInput, WatchJobOutput, StageResult } from '../types.js';
+import type {
+  ChangeReport,
+  StageResult,
+  WatchJobInput,
+  WatchJobOutput,
+} from '../types.js';
+import type { SmartRouter } from '../fetch/router.js';
+import {
+  createJob,
+  deleteJob,
+  getJob,
+  listJobs,
+  setJobStatus,
+} from '../watch/store.js';
+import { runCheck } from '../watch/scheduler.js';
+import { guardUrl } from '../watch/ssrf.js';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('cache');
+
+const MIN_INTERVAL_SECONDS = 60;
+
+function badInput(reason: string, hint?: string): StageResult<WatchJobOutput> {
+  return {
+    ok: false,
+    error: 'invalid_input',
+    error_reason: reason,
+    stage: 'watch',
+    ...(hint ? { hint } : {}),
+  };
+}
+
+function missing(field: string, action: string): StageResult<WatchJobOutput> {
+  return badInput(`watch action=${action} requires "${field}"`, `Set "${field}" on the input.`);
+}
 
 /**
- * Slice A1 stub — registers the `watch` MCP surface so dependent slices can
- * fan out in parallel without contending on `src/server.ts`. The real
- * scheduler + persistent store land in slice B3 (see
- * docs/superpowers/specs/2026-05-26-webclaw-gap-closure-design.md §5 B3)
- * along with migration `src/cache/migrations/004-watch-jobs.sql`.
+ * Lazy-execution model: there is no background daemon. A job's check fires
+ * only when:
+ *   1. `watch({ action: 'check', job_id })` is called explicitly, OR
+ *   2. Any other tool runs and the job is overdue — the server dispatch
+ *      chain calls `scheduleOverdueCheck(router)` after handling the
+ *      caller's primary request.
  *
- * Lazy execution is intentional: no background daemon. Checks fire when
- * `watch({action:'check'})` is called or when any other tool runs and the
- * job's `last_check_at + interval` has elapsed.
+ * SSRF guards are applied at registration time so a bad URL can never
+ * land in persistent state. The webhook URL receives the same guard.
  */
 export async function handleWatch(
-  _input: Record<string, unknown> | WatchJobInput,
+  input: WatchJobInput,
+  router: SmartRouter,
 ): Promise<StageResult<WatchJobOutput>> {
-  return {
-    ok: true,
-    data: {
-      jobs: [],
-      notice: 'not_implemented_yet',
-      slice: 'B3',
-    },
-  };
+  const action = input?.action;
+  if (!action) {
+    return badInput('watch input requires "action"', 'Set "action" to create | list | check | pause | resume | delete.');
+  }
+
+  if (action === 'list') {
+    return { ok: true, data: { jobs: listJobs() } };
+  }
+
+  if (action === 'create') {
+    if (!input.url) return missing('url', 'create');
+    if (typeof input.interval_seconds !== 'number' || !Number.isFinite(input.interval_seconds)) {
+      return missing('interval_seconds', 'create');
+    }
+    if (input.interval_seconds < MIN_INTERVAL_SECONDS) {
+      return badInput(
+        `interval_seconds must be >= ${MIN_INTERVAL_SECONDS}`,
+        'Raise interval_seconds to at least 60 to respect target-site rate limits.',
+      );
+    }
+
+    const urlCheck = guardUrl(input.url, 'url');
+    if (!urlCheck.ok) {
+      return badInput(urlCheck.reason, urlCheck.hint);
+    }
+
+    const notification = input.notification ?? 'inline';
+    if (notification !== 'inline') {
+      const webhookCheck = guardUrl(notification, 'notification');
+      if (!webhookCheck.ok) {
+        return badInput(webhookCheck.reason, webhookCheck.hint);
+      }
+    }
+
+    const job = createJob({
+      url: urlCheck.url.toString(),
+      intervalSeconds: input.interval_seconds,
+      selector: input.selector,
+      notification,
+    });
+    return { ok: true, data: { jobs: [job] } };
+  }
+
+  if (action === 'check') {
+    if (!input.job_id) return missing('job_id', 'check');
+    const job = getJob(input.job_id);
+    if (!job) {
+      return badInput(`watch job not found: ${input.job_id}`, 'Run action=list to enumerate known job_ids.');
+    }
+    const report = await runCheck(job, router);
+    const after = getJob(job.id) ?? job;
+    const data: WatchJobOutput = { jobs: [after], changes_since_last: [report] };
+    return { ok: true, data };
+  }
+
+  if (action === 'pause' || action === 'resume') {
+    if (!input.job_id) return missing('job_id', action);
+    const next = setJobStatus(input.job_id, action === 'pause' ? 'paused' : 'active');
+    if (!next) {
+      return badInput(`watch job not found: ${input.job_id}`, 'Run action=list to enumerate known job_ids.');
+    }
+    return { ok: true, data: { jobs: [next] } };
+  }
+
+  if (action === 'delete') {
+    if (!input.job_id) return missing('job_id', 'delete');
+    const before = getJob(input.job_id);
+    if (!before) {
+      return badInput(`watch job not found: ${input.job_id}`, 'Run action=list to enumerate known job_ids.');
+    }
+    deleteJob(input.job_id);
+    log.debug('watch job removed', { id: input.job_id });
+    return { ok: true, data: { jobs: [before] } };
+  }
+
+  return badInput(`unknown watch action: ${String(action)}`, 'Use one of: create | list | check | pause | resume | delete.');
+}
+
+/**
+ * Surrogate ChangeReport for action paths that need to express "no change
+ * yet" without hitting the network — kept as a helper for tests + future
+ * docs surfaces.
+ */
+export function _emptyChangeReport(url: string): ChangeReport {
+  return { url, changed: false };
 }

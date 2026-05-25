@@ -90,10 +90,28 @@ CREATE TABLE IF NOT EXISTS crawl_etags (
 CREATE INDEX IF NOT EXISTS idx_crawl_etags_origin ON crawl_etags(origin);
 `;
 
+const MIGRATION_004_WATCH_JOBS = `
+CREATE TABLE IF NOT EXISTS watch_jobs (
+  id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  interval_seconds INTEGER NOT NULL,
+  selector TEXT,
+  last_check_at INTEGER,
+  last_content_hash TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  notification TEXT NOT NULL DEFAULT 'inline',
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_watch_jobs_status ON watch_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_watch_jobs_url ON watch_jobs(url);
+`;
+
 export const MIGRATIONS: Migration[] = [
   { name: '001-sqlite-vec', sql: MIGRATION_001_SQLITE_VEC, requiresVec: true },
   { name: '002-feed-items', sql: MIGRATION_002_FEED_ITEMS },
   { name: '003-crawl-etags', sql: MIGRATION_003_CRAWL_ETAGS },
+  { name: '004-watch-jobs', sql: MIGRATION_004_WATCH_JOBS },
 ];
 
 function isReadOnlyError(err: unknown): boolean {
