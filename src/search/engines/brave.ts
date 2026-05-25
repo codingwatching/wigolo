@@ -39,6 +39,7 @@ export class BraveEngine implements SearchEngine {
     });
     const lang = (options.language ?? '').slice(0, 2).toLowerCase();
     if (lang) params.set('search_lang', lang);
+    if (options.country) params.set('country', options.country.toUpperCase());
 
     const url = `https://api.search.brave.com/res/v1/web/search?${params}`;
 
