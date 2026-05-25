@@ -210,6 +210,12 @@ export interface SearchInput {
   /** When true, the response carries per-engine timing + result counts under
    * engine_outcomes. Opt-in because the field is debug-shaped and noisy. */
   include_engine_outcomes?: boolean;
+  /** Depth tier:
+   *  - 'ultra-fast': cache-only, no engine dispatch (targets ≤ 300ms)
+   *  - 'fast': direct engines, no fetch / no rerank / no enrichment (≤ 1s)
+   *  - 'balanced' (default): current core behaviour
+   *  - 'deep': balanced + full enrichment (slower, more accurate) */
+  search_depth?: 'ultra-fast' | 'fast' | 'balanced' | 'deep';
 }
 
 export interface EngineOutcomeSummary {
@@ -269,6 +275,9 @@ export interface SearchOutput {
    * `"include_domains_over_filter+top1_high_score_low_overlap"`); the
    * result merges core + searxng via RRF. Absent on `core`/`searxng` paths. */
   fallback_signal?: string | null;
+  /** Set by search_depth=ultra-fast on a cache miss; tells the caller to
+   * retry with a higher depth. */
+  notice?: string;
 }
 
 // Wire shape for format=stream_answer (sub-ticket 2.12). The MCP content
