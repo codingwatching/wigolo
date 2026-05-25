@@ -127,6 +127,25 @@ describe('removeBlock', () => {
     const content = readFileSync(filePath, 'utf-8');
     expect(content).toBe('# No block here\n');
   });
+
+  it('unlinks the file when the wigolo block was the only content', () => {
+    // A CLAUDE.md that wigolo created on first install contains only the
+    // wigolo block. After uninstall the file would otherwise be left as a
+    // 0-byte stub — user-visible noise that needs manual cleanup.
+    const filePath = join(tmpDir, 'wigolo-only.md');
+    writeFileSync(filePath, BLOCK + '\n', 'utf-8');
+    const removed = removeBlock(filePath);
+    expect(removed).toBe(true);
+    expect(existsSync(filePath)).toBe(false);
+  });
+
+  it('does not unlink the file when non-wigolo content remains', () => {
+    const filePath = join(tmpDir, 'mixed.md');
+    writeFileSync(filePath, '# Header\n\n' + BLOCK + '\n', 'utf-8');
+    removeBlock(filePath);
+    expect(existsSync(filePath)).toBe(true);
+    expect(readFileSync(filePath, 'utf-8')).toContain('# Header');
+  });
 });
 
 // ---------------------------------------------------------------------------

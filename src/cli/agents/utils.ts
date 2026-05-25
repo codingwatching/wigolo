@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, unlinkSync, lstatSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
@@ -111,7 +111,13 @@ export function mergeBlock(filePath: string, block: string): void {
   writeFileSync(filePath, trimmed + '\n\n' + block.trimEnd() + '\n', 'utf-8');
 }
 
-/** Remove the wigolo block from a file. Returns true if a block was removed. */
+/**
+ * Remove the wigolo block from a file. Returns true if a block was removed.
+ *
+ * If the block was the file's only content, the file is unlinked rather than
+ * left as a 0-byte stub. Symlinks are never unlinked — they may resolve to
+ * user content outside the file we own.
+ */
 export function removeBlock(filePath: string): boolean {
   if (!existsSync(filePath)) return false;
 
@@ -127,7 +133,27 @@ export function removeBlock(filePath: string): boolean {
   const after = content.slice(endIdx + END.length).trimStart();
   const parts = [before, after].filter(Boolean);
   const newContent = parts.join('\n\n');
-  writeFileSync(filePath, newContent ? newContent + '\n' : '', 'utf-8');
+
+  if (!newContent) {
+    let isSymlink = false;
+    try {
+      isSymlink = lstatSync(filePath).isSymbolicLink();
+    } catch {
+      isSymlink = false;
+    }
+    if (!isSymlink) {
+      try {
+        unlinkSync(filePath);
+        return true;
+      } catch {
+        // fall through to truncate
+      }
+    }
+    writeFileSync(filePath, '', 'utf-8');
+    return true;
+  }
+
+  writeFileSync(filePath, newContent + '\n', 'utf-8');
   return true;
 }
 
