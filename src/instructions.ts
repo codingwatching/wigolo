@@ -219,7 +219,7 @@ Returns title, markdown, links, images, metadata, \`fetch_method\` (cache/http/t
 Key parameters:
 - query: string or string[] array (3-5 keyword variants; deduplicated).
 - include_domains / exclude_domains: scope sites. Always scope library/framework queries.
-- category: "general" | "news" | "code" | "docs" | "papers" | "images". Image search is supported on the default core backend (DDG Image zero-key + Brave Image when BRAVE_API_KEY is set); results carry image_url + thumbnail_url + width/height.
+- category: "general" | "news" | "code" | "docs" | "papers" | "images". Image results carry image_url + thumbnail_url + width/height.
 - from_date / to_date: ISO YYYY-MM-DD. time_range: 'day' | 'week' | 'month' | 'year'.
 - country: ISO 3166-1 alpha-2 ("us", "gb") — geographic boost.
 - exact_match: quoted-phrase search.
