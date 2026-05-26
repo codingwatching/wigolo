@@ -135,7 +135,7 @@ export const SEARCH_TOOL_SCHEMA = {
     time_range: {
       type: 'string',
       enum: ['day', 'week', 'month', 'year'],
-      description: 'Freshness filter relative to now (day=last 24h, week=last 7d, month=last 30d, year=last 365d). Overrides any inferred date hint in the query text; engines that support date filtering receive the resolved range, and results older than the window are dropped post-rerank (results with no published_date are kept conservatively).',
+      description: 'Freshness filter (day/week/month/year). Conservative: only drops results with a confidently-extracted published_date — pages with no parseable date pass through, so this is a precision-boost not a hard bound. For strict ranges use from_date+to_date with a date-aware category (news, papers).',
     },
     exact_match: {
       type: 'boolean',
@@ -528,12 +528,12 @@ export const DIFF_TOOL_SCHEMA = {
     output: {
       type: 'string',
       enum: ['unified', 'hunks', 'summary'],
-      description: 'Diff output shape. unified=git-style patch, hunks=structured per-section, summary=line counts only. Default: unified.',
+      description: 'Diff output shape. unified=git-style patch, hunks=structured per-section, summary=counts only (added_lines / removed_lines / modified_lines / total_changed_chars where total_changed_chars = sum of added_line_chars + removed_line_chars across the LCS edit script). Default: unified.',
     },
     granularity: {
       type: 'string',
       enum: ['line', 'word', 'section'],
-      description: 'Diff granularity. section walks H1/H2/H3 boundaries. Default: line.',
+      description: 'Diff granularity. line=per-line LCS (default). word=token-level LCS — hunks contain only the changed tokens, tighter than line for intra-line edits. section walks H1/H2/H3 boundaries.',
     },
   },
 };
@@ -552,7 +552,12 @@ export const WATCH_TOOL_SCHEMA = {
     },
     url: {
       type: 'string',
-      description: 'Required for action=create. The URL to watch.',
+      description: 'Single-URL create: the URL to watch. Response carries `job` (singular) and `jobs:[job]` (legacy). Mutually exclusive with `urls`.',
+    },
+    urls: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Batch create: register multiple jobs in one call. Response carries `jobs[]` only (no `job`). Mutually exclusive with `url`.',
     },
     interval_seconds: {
       type: 'number',

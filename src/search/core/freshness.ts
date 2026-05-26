@@ -37,7 +37,7 @@ function inferFromUrl(url: string): string | undefined {
 export function computeFreshnessSignal(
   url: string,
   publishedDate: string | undefined,
-): FreshnessSignal {
+): FreshnessSignal | undefined {
   if (publishedDate) {
     return {
       published_date: publishedDate,
@@ -53,5 +53,11 @@ export function computeFreshnessSignal(
       confidence: 'inferred-url',
     };
   }
-  return { inferred: false, confidence: 'unknown' };
+  // Slice 8 / L2: return undefined (rather than `{confidence: 'unknown'}`)
+  // when we have nothing to say. The unknown branch fires on the vast
+  // majority of web results (no parseable date), so emitting an object
+  // there just adds noise to every search response. Callers reading
+  // `result.freshness_signal === undefined` get the same signal more
+  // cheaply, and the response stays cleaner.
+  return undefined;
 }

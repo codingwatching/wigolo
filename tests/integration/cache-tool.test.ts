@@ -79,6 +79,22 @@ describe('cache tool integration', () => {
     expect(result.stats!.total_size_mb).toBeGreaterThanOrEqual(0);
   });
 
+  // Slice 8 / M19: the tool-boundary version of the cached_at <-> newest
+  // equality. A caller who runs `cache stats` immediately after a
+  // `cache search` must see `stats.newest` matching the fetched_at of the
+  // search-row hit. Pre-fix these read from different time sources and
+  // could disagree.
+  it('stats.newest matches fetched_at of the most recent cache search result (M19)', async () => {
+    cacheContent(makeRaw('https://example.com/m19'), makeExtraction({ title: 'M19', markdown: 'Hello world content for M19' }));
+    const searchR = await handleCache({ query: 'M19' });
+    expect(searchR.results).toHaveLength(1);
+    const fetchedAtFromSearch = searchR.results![0].fetched_at;
+    expect(fetchedAtFromSearch).toBeTruthy();
+
+    const statsR = await handleCache({ stats: true });
+    expect(statsR.stats?.newest).toBe(fetchedAtFromSearch);
+  });
+
   it('clears matching entries and returns count', async () => {
     cacheContent(makeRaw('https://example.com/a'), makeExtraction({}));
     cacheContent(makeRaw('https://other.com/b'), makeExtraction({}));

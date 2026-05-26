@@ -169,12 +169,13 @@ Use \`search_depth\` to trade latency for thoroughness:
 ## Response shape extras
 
 - \`response_time_ms\` -- Tavily-canonical alias of \`total_time_ms\`. Always emitted.
-- \`engines_used\` / \`engine_telemetry\` -- which engines fired, per-engine latency, result count, outcome, and how many results survived dedup into the fused list.
+- \`engines_used\` -- engines that contributed >= 1 result to the deduped fused list (semantic, "who ended up in the answer").
+- \`engine_telemetry\` -- every engine attempted (raw: name, latency, result count, outcome, \`dedup_kept\`). Distinct from \`engines_used\` -- empty/errored engines appear here but not there.
 - \`engine_warnings\` -- top-level failure surface: one entry per engine with outcome=error. Stable \`code\` (\`http_4xx\` / \`http_5xx\` / \`timeout\` / \`dns\` / \`error\`) plus optional \`hint\` that names the env var to set when an engine needs an API key (e.g. github-code → \`WIGOLO_GITHUB_TOKEN\`).
 - \`include_engine_outcomes: true\` -- opt-in per-engine debug rows.
 - \`include_images: true\` -- aggregate top-level \`images[]\` from engines that surface them.
 - \`include_favicon: true\` -- per-result \`favicon\` URL.
-- Per-result \`evidence_score\` -- explainable breakdown: relevance + domain quality + lexical alignment + freshness.
+- Per-result \`relevance_score\` (legacy flat aggregate) and \`evidence_score.final\` (same number alongside the explainable per-signal breakdown). Both fields coexist — read \`relevance_score\` for ranking, \`evidence_score.components.*\` to explain why.
 - Per-result \`freshness_signal\` -- \`published_date\` + \`inferred\` flag + \`confidence\` tag.
 - \`brand_collision_warning\` -- emitted when a brand domain dominates the top-3 of a generic query; carries reason + suggested rewrites.
 - \`query_understanding\` -- classifier view: intent, entities, date hint, language, \`is_brand_collision_prone\`, considered rewrites.
@@ -191,7 +192,7 @@ Use \`search_depth\` to trade latency for thoroughness:
 
 ## Extras
 
-- Localhost URLs (\`localhost:3000\`, \`127.0.0.1:8080\`) work for local dev servers.
+- Localhost URLs (\`localhost:3000\`, \`127.0.0.1:8080\`) work for local dev servers on \`fetch\` / \`crawl\` provided the port is a valid integer in 1–65535. Invalid ports (\`localhost:99999\`, \`localhost:abc\`) are rejected with an \`invalid_url\` error that names the port. The \`watch\` tool blocks all localhost / private IPs by design (SSRF guard) and surfaces a \`loopback/private\` reason.
 - \`use_auth: true\` on \`fetch\`/\`crawl\` reuses browser session for logged-in pages.
 - \`cache\` supports full-text search syntax (\`AND\`, \`OR\`, \`NOT\`, \`"phrase"\`).
 - \`research\`/\`agent\` use MCP sampling when supported; fall back to structured data for host-LLM synthesis.`;
@@ -229,7 +230,7 @@ Key parameters:
 - max_tokens_out / max_content_chars / include_full_markdown / citation_format.
 - force_refresh + mode ('cache' | 'default' | 'stealth').
 
-Always emitted: \`engines_used\`, \`engine_telemetry\`, \`response_time_ms\`, per-result \`evidence_score\` + \`freshness_signal\`. Brand-domain top-3 collision → \`brand_collision_warning\` with rewrites. \`query_understanding\` exposes intent/entities. Quote [N] or {citation_id}.`,
+Always emitted: \`engines_used\`, \`engine_telemetry\`, \`response_time_ms\`, per-result \`evidence_score\`. Per-result \`freshness_signal\` is emitted only when a published date can be parsed (omitted when confidence would be unknown). Brand-domain top-3 collision → \`brand_collision_warning\` with rewrites. \`query_understanding\` exposes intent/entities. Quote [N] or {citation_id}.`,
 
   crawl: `Crawl a site from a seed URL and return content from many pages. Use for indexing docs, wikis, multi-page references. Beats firecrawl-crawl for offline reuse: every page lands in the local cache.
 

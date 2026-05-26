@@ -1,19 +1,26 @@
 /**
  * Shared LCS DP table for diff-engine + diff-summary.
  *
- * Uses a single packed `Uint16Array` of size (m+1) * (n+1). Indexed as
- * `i * (n + 1) + j`. LCS length is bounded by `Math.min(m, n)`; the diff
- * modules cap inputs at 5000 lines which fits comfortably in 16 bits.
+ * Uses a single packed `Uint32Array` of size (m+1) * (n+1). Indexed as
+ * `i * (n + 1) + j`. LCS length is bounded by `Math.min(m, n)`.
+ *
+ * Why Uint32Array (not Uint16Array): the line-granularity path is bounded
+ * by `DIFF_LINE_CAP=5000` which fits in 16 bits, but the word-granularity
+ * path tokenises both sides and can produce >65535 matching tokens. A
+ * 16-bit table silently wrapped at 65536, producing a mathematically WRONG
+ * LCS with NO error and NO truncation signal — see PR #89 sec+perf
+ * review. Uint32Array removes the footgun outright; the perf delta versus
+ * Uint16Array is negligible on modern CPUs.
  *
  * Why packed: the prior 2D JS array allocates (m+1) sub-arrays of boxed
  * numbers — at 5000-cap that's 25M boxed values across 5001 arrays. A
- * single Uint16Array is ~8x faster on the same shape and far easier on GC.
+ * single typed array is ~8x faster on the same shape and far easier on GC.
  */
-export function computeLcsTable(oldLines: string[], newLines: string[]): Uint16Array {
+export function computeLcsTable(oldLines: string[], newLines: string[]): Uint32Array {
   const m = oldLines.length;
   const n = newLines.length;
   const stride = n + 1;
-  const dp = new Uint16Array((m + 1) * stride);
+  const dp = new Uint32Array((m + 1) * stride);
 
   for (let i = 1; i <= m; i++) {
     const oi = oldLines[i - 1];
@@ -33,6 +40,6 @@ export function computeLcsTable(oldLines: string[], newLines: string[]): Uint16A
 }
 
 /** Index helper kept inline-able for hot loops, but exported for callers that prefer it. */
-export function lcsAt(dp: Uint16Array, i: number, j: number, stride: number): number {
+export function lcsAt(dp: Uint32Array, i: number, j: number, stride: number): number {
   return dp[i * stride + j];
 }

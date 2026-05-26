@@ -73,6 +73,91 @@ describe('watch handler', () => {
       expect(r.jobs[0].status).toBe('active');
     });
 
+    // Slice 8 / M17: single-URL create returns `{ job }` (singular) alongside
+    // the legacy `{ jobs[0] }` shape. Batch (urls[]) returns `{ jobs }`
+    // without a `job` field. The audit observed the singular path always
+    // emitted `jobs[]` which read as "this MAY be plural" to callers.
+    it('returns a singular `job` field when one URL is passed (M17)', async () => {
+      const router = mockRouter('hello');
+      const r = mustOk(await handleWatch(
+        { action: 'create', url: 'https://example.com/m17-single', interval_seconds: 60 },
+        router,
+      ));
+      expect(r.job).toBeDefined();
+      expect(r.job!.url).toBe('https://example.com/m17-single');
+      // Legacy `jobs[]` is still emitted for back-compat.
+      expect(r.jobs).toHaveLength(1);
+      expect(r.jobs[0].id).toBe(r.job!.id);
+    });
+
+    it('returns `jobs[]` without a `job` field when batch urls[] are passed (M17)', async () => {
+      const router = mockRouter('hello');
+      const r = mustOk(await handleWatch(
+        {
+          action: 'create',
+          urls: ['https://example.com/m17-batch-a', 'https://example.com/m17-batch-b'],
+          interval_seconds: 60,
+        },
+        router,
+      ));
+      expect(r.jobs).toHaveLength(2);
+      expect(r.job).toBeUndefined();
+      const urls = r.jobs.map((j) => j.url).sort();
+      expect(urls).toEqual([
+        'https://example.com/m17-batch-a',
+        'https://example.com/m17-batch-b',
+      ]);
+    });
+
+    // PR #89 sec reviewer (LOW): the batch urls[] path runs guardUrl +
+    // createJob (which is a SQLite INSERT) per URL. With no upper bound,
+    // a caller passing 100k URLs eats 100k inserts. Fail-closed here is
+    // cheap and matches the existing badInput envelope for bad URLs.
+    it('rejects an oversized batch (urls.length > MAX_WATCH_BATCH_SIZE)', async () => {
+      const router = mockRouter('');
+      const tooMany = Array.from({ length: 1001 }, (_, i) => `https://example.com/m17-cap-${i}`);
+      const r = await handleWatch(
+        { action: 'create', urls: tooMany, interval_seconds: 60 },
+        router,
+      );
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.error).toBe('invalid_input');
+        expect(r.error_reason).toMatch(/batch|limit|too many|1000/i);
+      }
+      // Defence in depth: no jobs should have been persisted.
+      const after = mustOk(await handleWatch({ action: 'list' }, router));
+      expect(after.jobs).toHaveLength(0);
+    });
+
+    it('accepts a batch at exactly MAX_WATCH_BATCH_SIZE (cap is inclusive)', async () => {
+      const router = mockRouter('');
+      const atLimit = Array.from({ length: 1000 }, (_, i) => `https://example.com/m17-atcap-${i}`);
+      const r = await handleWatch(
+        { action: 'create', urls: atLimit, interval_seconds: 60 },
+        router,
+      );
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.data.jobs).toHaveLength(1000);
+      }
+    });
+
+    it('rejects passing both url and urls (ambiguous intent)', async () => {
+      const router = mockRouter('hello');
+      const r = await handleWatch(
+        {
+          action: 'create',
+          url: 'https://example.com/x',
+          urls: ['https://example.com/y'],
+          interval_seconds: 60,
+        },
+        router,
+      );
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error_reason).toMatch(/url.*urls|urls.*url/i);
+    });
+
     it('rejects interval_seconds below 60', async () => {
       const router = mockRouter('');
       const r = await handleWatch(

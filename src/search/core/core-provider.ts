@@ -18,7 +18,7 @@ import type {
 import { runV1Search } from './orchestrator.js';
 import { applyContextRank } from './context-rank.js';
 import { dedupAgainstRecentUrls } from './recent-cache-dedup.js';
-import { detectBrandCollision } from './brand-collision.js';
+import { detectBrandCollision, detectLexicalCollision } from './brand-collision.js';
 import { computeFreshnessSignal } from './freshness.js';
 import { buildQueryUnderstanding } from './query-understanding.js';
 import { buildEngineWarnings } from './engine-warnings.js';
@@ -220,11 +220,6 @@ export class CoreSearchProvider implements SearchProvider {
           ? dispatches[0].results
           : fuseRankedLists(dispatches.map((d) => d.results));
 
-      const enginesUsedSet = new Set<string>();
-      for (const d of dispatches) {
-        for (const e of d.enginesUsed) enginesUsedSet.add(e);
-      }
-      enginesUsed = [...enginesUsedSet];
       allDegraded = dispatches.every((d) => d.degraded);
 
       if (input.include_engine_outcomes) {
@@ -281,6 +276,29 @@ export class CoreSearchProvider implements SearchProvider {
       }
       engineTelemetry = [...telemetryByEngine.values()];
 
+      // Slice 8 / M1: `engines_used` = engines that contributed >= 1 result
+      // to the deduped fused list (semantic — "who ended up in the answer").
+      // `engine_telemetry` already carries the per-engine dedup_kept count;
+      // deriving `engines_used` from it here keeps the two surfaces in sync
+      // and rules out empty/errored engines that the old code would still
+      // list because they "fired ok" but contributed nothing.
+      //
+      // Fall back to the union of `dispatch.enginesUsed` only when the
+      // dispatch layer didn't surface any telemetry rows (mocks in tests,
+      // legacy paths) — that path mirrors the pre-M1 behavior so the
+      // top-level array is never empty when engines actually fired.
+      if (engineTelemetry.length > 0) {
+        enginesUsed = engineTelemetry
+          .filter((t) => t.dedup_kept > 0)
+          .map((t) => t.name);
+      } else {
+        const enginesUsedSet = new Set<string>();
+        for (const d of dispatches) {
+          for (const e of d.enginesUsed) enginesUsedSet.add(e);
+        }
+        enginesUsed = [...enginesUsedSet];
+      }
+
       let processed = fused;
 
       // fast tier skips embedding rerank + agent_context rerank for latency.
@@ -294,18 +312,24 @@ export class CoreSearchProvider implements SearchProvider {
       }
 
       const maxResults = input.max_results ?? processed.length;
-      items = processed.slice(0, maxResults).map((r) => ({
-        title: r.title,
-        url: r.url,
-        snippet: r.snippet,
-        relevance_score: r.relevance_score,
-        ...(r.published_date ? { published_date: r.published_date } : {}),
-        freshness_signal: computeFreshnessSignal(r.url, r.published_date),
-        ...(r.evidence_score ? { evidence_score: r.evidence_score } : {}),
-        ...(r.image_url ? { image_url: r.image_url } : {}),
-        ...(r.image_alt ? { image_alt: r.image_alt } : {}),
-        ...(r._score_breakdown ? { _score_breakdown: r._score_breakdown } : {}),
-      }));
+      items = processed.slice(0, maxResults).map((r) => {
+        const freshness = computeFreshnessSignal(r.url, r.published_date);
+        return {
+          title: r.title,
+          url: r.url,
+          snippet: r.snippet,
+          relevance_score: r.relevance_score,
+          ...(r.published_date ? { published_date: r.published_date } : {}),
+          // Slice 8 / L2: omit the field entirely when the freshness
+          // helper returns undefined (the "no parseable date" case) so the
+          // response shape stays clean.
+          ...(freshness ? { freshness_signal: freshness } : {}),
+          ...(r.evidence_score ? { evidence_score: r.evidence_score } : {}),
+          ...(r.image_url ? { image_url: r.image_url } : {}),
+          ...(r.image_alt ? { image_alt: r.image_alt } : {}),
+          ...(r._score_breakdown ? { _score_breakdown: r._score_breakdown } : {}),
+        };
+      });
 
       searchElapsed = Date.now() - start;
 
@@ -340,10 +364,15 @@ export class CoreSearchProvider implements SearchProvider {
 
     // category 'images' is rejected above, so by this point `category` is
     // either undefined or a vertical the orchestrator accepts.
+    // Slice 8 / M7: `rewrites` reports LLM-/heuristic-generated query
+    // expansions. When the caller hands us an array, they ARE the rewriter
+    // — echoing their own input back as "rewrites" is misleading. Leave
+    // it empty in that case. (queries_executed already surfaces what was
+    // actually dispatched.)
     const queryUnderstanding = buildQueryUnderstanding(displayQuery, {
       category,
       language: input.language,
-      rewrites: isArray ? (input.query as string[]).slice(1) : [],
+      rewrites: [],
     });
 
     if (input.include_favicon) {
@@ -374,10 +403,13 @@ export class CoreSearchProvider implements SearchProvider {
       ...(engineTelemetry ? { engine_warnings: engineWarnings } : {}),
     };
 
-    const collisionWarning = detectBrandCollision(
-      displayQuery,
-      items.map((i) => i.url),
-    );
+    // Slice 8 / M9: try the brand-domain check first (cheap, requires
+    // top-3 to actually carry a brand TLD). Fall back to the lexical
+    // dev-term collision check — fires on "useState" etc. even when the
+    // top-3 has no brand domain. Either path emits the same warning shape.
+    const collisionWarning =
+      detectBrandCollision(displayQuery, items.map((i) => i.url)) ??
+      detectLexicalCollision(displayQuery);
     if (collisionWarning) data.brand_collision_warning = collisionWarning;
 
     if (input.include_images) {

@@ -373,6 +373,15 @@ export interface SearchResultItem {
   markdown_content?: string;
   fetch_failed?: string;
   content_truncated?: boolean;
+  /** Legacy aggregate score in [0, 1]. Equals `evidence_score.final` when
+   * the core path emits both; coexists for back-compat with callers that
+   * read this field directly. Slice 8 / M13: `relevance_score` and
+   * `evidence_score.final` are intentionally NOT unified — `relevance_score`
+   * is the flat field every caller has consumed since v0.0.x, while
+   * `evidence_score` carries the explainable component breakdown (RRF
+   * base + domain quality + lexical alignment + recency + engine consensus
+   * + context-cosine). Read `relevance_score` for ranking, read
+   * `evidence_score.components.*` to explain WHY a result ranked. */
   relevance_score: number;
   published_date?: string; // ISO date string, when engine provides it
   cached?: boolean;
@@ -381,7 +390,10 @@ export interface SearchResultItem {
   /** Per-result freshness signal: extracted date or inferred from URL/HTML
    * patterns, with a confidence tag callers can pivot on. */
   freshness_signal?: FreshnessSignal;
-  /** Always emitted by the core path: explainable score breakdown. */
+  /** Always emitted by the core path: explainable score breakdown. Slice
+   * 8 / M13: `.final` mirrors the flat `relevance_score` for back-compat;
+   * `.components.*` carries the per-signal breakdown that powers the
+   * explanation. Both fields coexist — see `relevance_score` JSDoc. */
   evidence_score?: EvidenceScore;
   /** Per-host favicon URL, emitted when input.include_favicon is true. */
   favicon?: string;
@@ -396,6 +408,12 @@ export interface SearchResultItem {
 export interface SearchOutput {
   results: SearchResultItem[];
   query: string;
+  /** Semantic view: engines that contributed >= 1 result to the deduped
+   * fused list (i.e. "who ended up in the answer"). Empty engines and
+   * errored engines are excluded — see `engine_telemetry` for the raw
+   * attempt log of every engine that fired. The two arrays answer
+   * different questions and intentionally disagree when an engine
+   * returned nothing or got fully de-duped out. */
   engines_used: string[];
   total_time_ms: number;
   /** Tavily-canonical alias of total_time_ms. Always emitted. */
@@ -415,9 +433,12 @@ export interface SearchOutput {
   /** Present only when input.include_engine_outcomes is true and the call
    * went to the engine pool (cache hits don't populate it). */
   engine_outcomes?: EngineOutcomeSummary[];
-  /** Always emitted on the engine-pool path. Richer view of `engines_used`:
-   * per-engine name, latency, result count, outcome, and how many of that
-   * engine's results survived dedup into the final fused list. */
+  /** Raw attempt log: every engine that was dispatched, regardless of
+   * whether it returned results, succeeded, or errored. Each row carries
+   * name, latency, result_count, outcome, and `dedup_kept` (how many of
+   * that engine's results survived dedup into the final fused list).
+   * Distinct from `engines_used`, which is the SEMANTIC view (contributors
+   * only, derived from rows where `dedup_kept > 0`). */
   engine_telemetry?: EngineTelemetry[];
   /** Slice S1 (M2): top-level failure surface, always emitted on the
    * engine-pool path (empty array when no engine errored). Promotes
@@ -641,7 +662,11 @@ export interface ScoreBreakdown {
 }
 
 export interface EvidenceScore {
-  /** 0..1, what callers usually consume. Matches `relevance_score`. */
+  /** [0, 1] aggregate. Mirrors `SearchResultItem.relevance_score` so a
+   * caller can read either field for ranking. Slice 8 / M13: the two
+   * fields coexist (relevance_score = legacy flat aggregate;
+   * evidence_score.final = same number alongside the component breakdown).
+   * Do not unify — both surfaces are still on the API contract. */
   final: number;
   components: {
     /** RRF score before any boost (small, ~0.016 range raw). */
@@ -952,9 +977,17 @@ export interface DiffHunk {
 }
 
 export interface DiffSummary {
+  /** Number of pure-addition lines (no paired removal). */
   added_lines: number;
+  /** Number of pure-removal lines (no paired addition). */
   removed_lines: number;
+  /** Number of paired delete+insert lines (git's "modified" semantics). */
   modified_lines: number;
+  /** Slice 8 / M12: sum of `added_line_chars + removed_line_chars` across
+   * the LCS edit script (i.e. total character cost of the change before
+   * pairing modified runs). Stays comparable across line / word / section
+   * granularities so callers can rank diffs by size without re-parsing
+   * the hunks. */
   total_changed_chars: number;
 }
 
@@ -983,7 +1016,12 @@ export type WatchJobStatus = 'active' | 'paused' | 'errored';
 
 export interface WatchJobInput {
   action: WatchAction;
+  /** Single-URL create: use `url`. The handler returns `{ job }` (singular). */
   url?: string;
+  /** Slice 8 / M17: batch-create. Pass an array of URLs to register multiple
+   * jobs in a single call. The handler returns `{ jobs[] }`. Mutually
+   * exclusive with `url` — passing both is rejected. */
+  urls?: string[];
   interval_seconds?: number;
   selector?: string;
   /** 'inline' (return on next check) or a webhook URL. */
@@ -1006,6 +1044,13 @@ export interface WatchJob {
 }
 
 export interface WatchJobOutput {
+  /** Slice 8 / M17: emitted by `action:'create'` when exactly one URL was
+   * passed (the single-URL path). The handler also keeps `jobs[]` for
+   * back-compat; new callers should prefer `job`. */
+  job?: WatchJob;
+  /** Always emitted: list/check/pause/resume/delete operate on a job set
+   * (even when size=1). create-batch (input.urls[]) emits jobs[] without
+   * a `job` field. */
   jobs: WatchJob[];
   /** Per-job change report emitted by `action: 'check'`. The shape mirrors
    * the existing fetch/cache change-detector envelope so consumers can read

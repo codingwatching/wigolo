@@ -12,6 +12,18 @@ const log = createLogger('cache');
  */
 export const DIFF_LINE_CAP = 5000;
 
+/**
+ * Token cap for word-granularity LCS. The LCS DP table is O(m*n) — at
+ * 5000-line cap a page averaging ~25 tokens/line could reach ~125k tokens
+ * per side, producing a ~15.6-billion-cell table (~62 GB at 4 bytes/cell)
+ * that crashes the MCP server outright. PR #89 sec+perf reviewers flagged
+ * this as HIGH. At 50k tokens per side the table is ~10 GB-virtual /
+ * realistic-sparse-write — still a lot, but inside what V8 can lazily
+ * back. Inputs over the cap fall back to line-granularity hunks and the
+ * envelope carries `truncated: true` so callers see the degrade.
+ */
+export const DIFF_TOKEN_CAP = 50_000;
+
 const UNIFIED_CONTEXT = 3;
 
 function normalizeLineEndings(text: string): string {
@@ -355,10 +367,16 @@ export function computeHunks(
     return computeSectionHunks(oldText, newText);
   }
 
-  // line + word granularities share the LCS walk; word currently produces
-  // line-grouped hunks because the spec only requires it to land in the API
-  // surface — finer-grained per-word diff is a future enhancement once the
-  // section walker lands.
+  // Slice 8 / M11: dispatch word granularity to a token-level LCS. Pre-fix
+  // word fell through to line-LCS, so a single intra-line edit produced a
+  // hunk containing the entire line. The word path tokenises both sides
+  // on whitespace + punctuation, runs LCS over tokens, and emits per-run
+  // hunks containing only the changed tokens — what callers asking for
+  // "word granularity" actually expect.
+  if (granularity === 'word') {
+    return computeWordHunks(oldText, newText);
+  }
+
   const ops = buildEditScript(oldLines, newLines);
   const hunks: DiffHunk[] = [];
   let i = 0;
@@ -391,6 +409,104 @@ export function computeHunks(
     removed_lines: counts.removed,
     modified_lines: counts.modified,
     total_changed_chars: changedCharsFromOps(ops),
+  };
+  return { hunks, truncated: false, summary };
+}
+
+// Slice 8 / M11: word-granularity hunks. Splits on whitespace/punctuation
+// boundaries — emits whitespace and word tokens separately so we can
+// reconstruct readable hunk text without inventing spaces. Empty tokens
+// are dropped; the result is the same sequence a human would read.
+function tokenizeWords(text: string): string[] {
+  if (!text) return [];
+  // Group runs of whitespace + runs of non-whitespace separately. Keeps
+  // intra-line spacing intact and produces sensible LCS alignments.
+  return text.match(/\s+|[^\s]+/g) ?? [];
+}
+
+function computeWordHunks(oldText: string, newText: string): HunksResult {
+  const oldTokens = tokenizeWords(oldText);
+  const newTokens = tokenizeWords(newText);
+
+  // PR #89 sec+perf reviewers (HIGH): word-LCS is O(m*n) in token count.
+  // Without this cap a caller passing a few hundred KB of text can OOM the
+  // server (table cells = (m+1)*(n+1) × 4 bytes). Fall back to
+  // line-granularity hunks — still useful, never throws — and signal
+  // truncation so the caller sees the degrade.
+  if (oldTokens.length > DIFF_TOKEN_CAP || newTokens.length > DIFF_TOKEN_CAP) {
+    log.debug('diff-engine: word-token cap exceeded, falling back to line granularity', {
+      oldTokenCount: oldTokens.length,
+      newTokenCount: newTokens.length,
+      cap: DIFF_TOKEN_CAP,
+    });
+    const oldLines = splitLines(oldText);
+    const newLines = splitLines(newText);
+    // Line cap might also bite — if so emit an approximate summary like
+    // the line path does. Otherwise run line-LCS to produce real hunks.
+    if (oldLines.length > DIFF_LINE_CAP || newLines.length > DIFF_LINE_CAP) {
+      return {
+        hunks: [],
+        truncated: true,
+        summary: approximateSummaryForTruncated(oldLines, newLines),
+      };
+    }
+    const lineFallback = computeHunks(oldText, newText, 'line');
+    return {
+      hunks: lineFallback.hunks,
+      truncated: true,
+      summary: lineFallback.summary,
+    };
+  }
+
+  const ops = buildEditScript(oldTokens, newTokens);
+
+  // Group consecutive non-equal ops into a single hunk. Each hunk's
+  // before/after concatenates the changed tokens — no padding context, to
+  // contrast with line-granularity which carries the full line for any
+  // intra-line change.
+  const hunks: DiffHunk[] = [];
+  let i = 0;
+  while (i < ops.length) {
+    if (ops[i].type === 'equal') {
+      i++;
+      continue;
+    }
+    const removes: string[] = [];
+    const adds: string[] = [];
+    while (i < ops.length && ops[i].type !== 'equal') {
+      const op = ops[i];
+      if (op.type === 'delete') removes.push(op.oldLine);
+      else if (op.type === 'insert') adds.push(op.newLine);
+      i++;
+    }
+    // Skip pure-whitespace flips (only whitespace-token runs changed) — these
+    // are usually re-flow noise the caller doesn't want as a hunk.
+    const beforeStr = removes.join('');
+    const afterStr = adds.join('');
+    if (beforeStr.trim().length === 0 && afterStr.trim().length === 0) continue;
+    if (removes.length > 0 && adds.length > 0) {
+      hunks.push({ before: beforeStr, after: afterStr, change_type: 'modified' });
+    } else if (removes.length > 0) {
+      hunks.push({ before: beforeStr, after: '', change_type: 'removed' });
+    } else if (adds.length > 0) {
+      hunks.push({ before: '', after: afterStr, change_type: 'added' });
+    }
+  }
+
+  // Reuse the existing line-granularity summary so total_changed_chars
+  // semantics remain consistent across granularities (sum of changed
+  // characters in delete + insert ops). Computed on the line edit-script
+  // — the word path's character cost equals the line path's for the
+  // changed lines, so the field stays comparable across runs.
+  const oldLines = splitLines(oldText);
+  const newLines = splitLines(newText);
+  const lineOps = buildEditScript(oldLines, newLines);
+  const counts = countsFromOps(lineOps);
+  const summary: DiffSummary = {
+    added_lines: counts.added,
+    removed_lines: counts.removed,
+    modified_lines: counts.modified,
+    total_changed_chars: changedCharsFromOps(lineOps),
   };
   return { hunks, truncated: false, summary };
 }

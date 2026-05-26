@@ -100,11 +100,13 @@ describe('computeFreshnessSignal (sub-ticket 3.11)', () => {
     expect(fs.published_date).toBe('2024-03-15');
   });
 
-  it('unknown when no signal', () => {
+  // Slice 8 / L2: when nothing can be inferred we omit the signal entirely.
+  // Pre-fix this returned { confidence: 'unknown', inferred: false } which
+  // added noise to every result lacking a parseable date (the majority of
+  // the web). undefined is the more honest signal: "we have nothing here".
+  it('returns undefined when no signal can be extracted or inferred', () => {
     const fs = computeFreshnessSignal('https://example.com/page', undefined);
-    expect(fs.confidence).toBe('unknown');
-    expect(fs.published_date).toBeUndefined();
-    expect(fs.inferred).toBe(false);
+    expect(fs).toBeUndefined();
   });
 });
 
@@ -138,5 +140,24 @@ describe('SearchResultItem.freshness_signal (sub-ticket 3.11)', () => {
     if (!out.ok) return;
     expect(out.data.results[0].freshness_signal?.confidence).toBe('inferred-url');
     expect(out.data.results[0].freshness_signal?.published_date).toBe('2024-05-01');
+  });
+
+  // Slice 8 / L2: at the provider boundary too — when a result has no
+  // parseable date the field must be omitted, not emitted as
+  // `{confidence: 'unknown'}`. The audit observed the noisy variant on
+  // every non-news search.
+  it('omits freshness_signal entirely when no date can be extracted or inferred', async () => {
+    verticalState.general = [
+      // No published_date in the result, no date in the URL — pure unknown.
+      makeEntry('bing', [makeResult('bing', 'https://example.com/no-date-page')]),
+    ];
+    const provider = new CoreSearchProvider();
+    const out = await provider.search(
+      { query: 'q', include_content: false },
+      { router: undefined as never, samplingServer: undefined as never, engines: [], backendStatus: undefined as never },
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect('freshness_signal' in out.data.results[0]).toBe(false);
   });
 });

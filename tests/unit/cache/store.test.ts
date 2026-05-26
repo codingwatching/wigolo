@@ -380,6 +380,26 @@ describe('getCacheStats', () => {
     expect(stats.newest).toBeTruthy();
     expect(stats.oldest <= stats.newest).toBe(true);
   });
+
+  // Slice 8 / M19: the audit observed `cached_at` (returned by
+  // fetch/getCachedContent) disagreeing with `stats.newest`. They are the
+  // same column read from the same row, so they MUST match string-for-
+  // string. Pin both ends so a future change can't silently drift them
+  // (e.g. by reading `fetched_at` for cached_at but `created_at` for
+  // newest).
+  it('cached_at of the most recently cached entry equals stats.newest (M19)', () => {
+    cacheContent(makeRaw('https://example.com/a'), makeExtraction({ markdown: 'A content' }));
+    // Sleep tick so the second row gets a strictly later second-precision
+    // timestamp (toIsoSeconds drops sub-second). Without this, both rows
+    // share the same second and `newest` matches both rows; we want to
+    // pin that newest tracks the LATEST insert.
+    const cachedA = getCachedContent('https://example.com/a');
+    expect(cachedA?.fetchedAt).toBeTruthy();
+
+    const stats = getCacheStats();
+    // newest must equal the fetchedAt of the most-recently-cached row.
+    expect(stats.newest).toBe(cachedA!.fetchedAt);
+  });
 });
 
 describe('searchCacheFiltered', () => {

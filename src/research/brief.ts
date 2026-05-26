@@ -49,12 +49,25 @@ export async function buildResearchBrief(
     ? buildComparisonSection(comparisonEntities, fetched)
     : undefined;
 
-  const citationGraph = synthesisText && synthesisText.trim().length > 0 && fetched.length > 0
-    ? buildCitationGraph(
-        synthesisText,
-        fetched.map((s) => ({ url: s.url, title: s.title, markdown: s.markdown_content })),
-      )
-    : undefined;
+  // Slice 8 / M5: citation_graph source_indices must align with the output
+  // `sources` array (0-based, full list including unfetched rows). We build
+  // the graph against the `fetched` view (only documents we have content
+  // for), then remap each index back into the original `sources` array so
+  // a caller can index `sources[entry.source_indices[i]]` directly.
+  let citationGraph: ReturnType<typeof buildCitationGraph> | undefined;
+  if (synthesisText && synthesisText.trim().length > 0 && fetched.length > 0) {
+    const rawGraph = buildCitationGraph(
+      synthesisText,
+      fetched.map((s) => ({ url: s.url, title: s.title, markdown: s.markdown_content })),
+    );
+    const fetchedToFullIndex = fetched.map((s) => sources.indexOf(s));
+    citationGraph = rawGraph.map((entry) => ({
+      ...entry,
+      source_indices: entry.source_indices
+        .map((idx) => fetchedToFullIndex[idx])
+        .filter((idx) => idx >= 0),
+    }));
+  }
 
   return {
     topics,
@@ -234,12 +247,32 @@ function firstSubstantiveParagraph(markdown: string): string | null {
 
 // Flatten markdown link/image syntax to plain text so a downstream char-slice
 // can't chop mid-link and leak `](/?source=post_page...` into key_findings.
+// Slice 8 / M4: extended to cover reference-style links (`[label][1]`),
+// bare http(s) URLs in prose, and HTML <a> tags. The audit observed all
+// three shapes leaking into key_findings as link artifacts; the finding is
+// meant to be prose evidence, not a pointer.
 export function stripMarkdownLinks(text: string): string {
   return text
+    // Markdown image: `![alt](url)`
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    // Image-wrapped-in-link: `[![alt](img)](url)`
     .replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g, '')
+    // Inline link: `[label](url)` → `label`
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    // Reference-style link: `[label][id]` → `label`. Must come AFTER the
+    // inline replace so we don't strip the `(url)` half of a real link.
+    .replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1')
+    // HTML anchor: `<a ...>label</a>` → `label`. Greedy-safe via non-greedy
+    // body match.
+    .replace(/<a\b[^>]*>([\s\S]*?)<\/a>/gi, '$1')
+    // Auto-link: `<https://...>`
     .replace(/<https?:\/\/[^>]+>/g, '')
+    // Bare http(s) URLs left over after the above. The audit's failure
+    // mode was a tracking URL pasted directly into prose; drop it.
+    .replace(/https?:\/\/\S+/g, '')
+    // Collapse the double-spaces a removal leaves behind so the finding
+    // reads naturally instead of "X  Y".
+    .replace(/\s{2,}/g, ' ')
     .trim();
 }
 
