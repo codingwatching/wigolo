@@ -82,6 +82,14 @@ export function cacheContent(result: RawFetchResult, extraction: ExtractionResul
     const normalizedUrl = normalizeUrl(result.finalUrl || result.url);
     const contentHash = createHash('sha256').update(extraction.markdown).digest('hex');
 
+    // Slice 8 / M19: SINGLE source of truth for `now` in this write. Both
+    // `fetched_at` (returned to callers as `cached_at`) and the derived
+    // `expires_at` use this same Date instance. `getCacheStats().newest`
+    // reads MAX(fetched_at) — same column, same value, no clock drift.
+    // Future writers MUST NOT swap one of these for SQLite's
+    // `datetime('now')` (which has its own clock + timezone surface)
+    // unless the OTHER also moves; mixing JS + SQL clocks is what produced
+    // the audit's mismatch.
     const now = new Date();
     const expiresAt = new Date(now.getTime() + config.cacheTtlContent * 1000);
 
