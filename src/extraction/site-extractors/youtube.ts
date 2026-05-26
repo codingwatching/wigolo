@@ -15,6 +15,37 @@ import type { Extractor, ExtractionResult } from '../../types.js';
 // fetcher can resolve those URLs out-of-band.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Hard caps on the inline-JSON scanner. YouTube's real blobs are well under
+// 2 MB; anything larger is either a network anomaly or a malicious payload.
+// Without these caps a never-closing `{` walks the entire HTML body and the
+// final `html.slice()` allocates a multi-MB string before `JSON.parse` rejects.
+const MAX_BLOB_BYTES = 5_000_000;
+const MAX_SCAN_BYTES = 10_000_000;
+
+// Caption track `baseUrl` is taken from inline JSON that YouTube emits, but a
+// spoofed page (or future MITM scenario) could supply file://, internal IPs,
+// or attacker-controlled hosts. Until a real consumer fetches these, treat
+// them as untrusted and emit only the legitimate timedtext / googlevideo
+// origins YouTube actually uses.
+function isYoutubeOrGooglevideoHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  if (h === 'youtube.com' || h === 'www.youtube.com') return true;
+  if (h.endsWith('.youtube.com')) return true;
+  if (h === 'googlevideo.com' || h.endsWith('.googlevideo.com')) return true;
+  return false;
+}
+
+function isSafeCaptionUrl(raw: string): boolean {
+  if (!raw) return false;
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'https:') return false;
+    return isYoutubeOrGooglevideoHost(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
 interface CaptionTrack {
   language_code: string;
   base_url: string;
@@ -76,12 +107,16 @@ function extractJsonBlob(html: string, marker: string): unknown | null {
   const braceStart = html.indexOf('{', idx);
   if (braceStart === -1) return null;
 
+  // Outer scan budget: a runaway/never-closing `{` must not walk a multi-MB
+  // body. Cap absolute distance from braceStart at MAX_SCAN_BYTES.
+  const scanEnd = Math.min(html.length, braceStart + MAX_SCAN_BYTES);
+
   let depth = 0;
   let inString = false;
   let escaped = false;
   let end = -1;
 
-  for (let i = braceStart; i < html.length; i++) {
+  for (let i = braceStart; i < scanEnd; i++) {
     const ch = html[i];
     if (escaped) {
       escaped = false;
@@ -107,6 +142,9 @@ function extractJsonBlob(html: string, marker: string): unknown | null {
   }
 
   if (end === -1) return null;
+
+  // Inner cap: bail before allocating a multi-MB substring for JSON.parse.
+  if (end - braceStart > MAX_BLOB_BYTES) return null;
 
   try {
     return JSON.parse(html.slice(braceStart, end + 1));
@@ -154,6 +192,10 @@ function parseCaptionTracks(player: Record<string, unknown>): CaptionTrack[] {
     const t = raw as Record<string, unknown>;
     const baseUrl = toString(t.baseUrl);
     if (!baseUrl) continue;
+    // Drop entries whose baseUrl is not a legitimate youtube / googlevideo
+    // HTTPS endpoint. Spoofed pages could otherwise inject file://, internal
+    // IPs, or attacker-controlled hosts via the emitted `base_url`.
+    if (!isSafeCaptionUrl(baseUrl)) continue;
     const nameObj = t.name as Record<string, unknown> | undefined;
     const name = nameObj ? toString(nameObj.simpleText) : '';
     out.push({

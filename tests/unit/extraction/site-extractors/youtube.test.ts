@@ -259,3 +259,109 @@ describe('youtubeExtractor — pipeline registration', () => {
     expect(names).toContain('youtube');
   });
 });
+
+// WHY: canHandle uses hostname semantics — substring or path-based "youtube.com"
+// matches would let attacker-controlled subdomains hijack the extractor and
+// feed spoofed JSON. Pin the exact-hostname contract.
+describe('youtubeExtractor.canHandle — spoofed-host regressions', () => {
+  it('does not match spoofed subdomain suffix (youtube.com.evil.com)', () => {
+    expect(youtubeExtractor.canHandle('https://youtube.com.evil.com/watch?v=abc')).toBe(false);
+  });
+
+  it('does not match URLs that put youtube.com in the path or query', () => {
+    expect(youtubeExtractor.canHandle('https://evil.com/?youtube.com/watch?v=abc')).toBe(false);
+  });
+});
+
+// WHY: the brace-balanced JSON scanner reads from `html` into JSON.parse — a
+// malicious or oversized inline blob can blow up memory before parse even
+// starts. Size cap MUST stop the scan before allocating a multi-MB substring.
+describe('youtubeExtractor — JSON blob size cap', () => {
+  it('returns null when the inline ytInitialPlayerResponse blob exceeds 5 MB', () => {
+    // Build a synthetic inline blob whose closing brace is > 5 MB after the open brace.
+    const padding = 'x'.repeat(6_000_000);
+    const html = `<script>var ytInitialPlayerResponse = {"pad":"${padding}"};</script>`;
+    // Must not OOM, must not throw, and must surface as no-extraction.
+    expect(() =>
+      youtubeExtractor.extract(html, 'https://www.youtube.com/watch?v=abc'),
+    ).not.toThrow();
+    expect(youtubeExtractor.extract(html, 'https://www.youtube.com/watch?v=abc')).toBeNull();
+  });
+
+  it('returns null when an inline blob never closes within the outer scan budget', () => {
+    // 11 MB of `{` characters: scan budget is 10 MB, so we must bail out and not
+    // walk the entire body looking for a matching close brace.
+    const runaway = '{'.repeat(11_000_000);
+    const html = `<script>var ytInitialPlayerResponse = ${runaway}</script>`;
+    expect(() =>
+      youtubeExtractor.extract(html, 'https://www.youtube.com/watch?v=abc'),
+    ).not.toThrow();
+    expect(youtubeExtractor.extract(html, 'https://www.youtube.com/watch?v=abc')).toBeNull();
+  });
+});
+
+// WHY: caption_tracks[].base_url is taken straight from parsed JSON and emitted
+// to callers. Spoofed YouTube HTML could supply file://, http://169.254.169.254
+// (AWS metadata), or attacker-controlled hosts. Even if no current consumer
+// fetches them, the latent SSRF foot-gun must be closed at the extractor.
+describe('youtubeExtractor — caption_tracks URL allow-list', () => {
+  const url = 'https://www.youtube.com/watch?v=spoofed1';
+
+  const makeFixture = (baseUrl: string): string => {
+    const player = {
+      videoDetails: { videoId: 'spoofed1', title: 'Spoofed', author: 'Channel', lengthSeconds: 60 },
+      playabilityStatus: { status: 'OK' },
+      captions: {
+        playerCaptionsTracklistRenderer: {
+          captionTracks: [
+            {
+              baseUrl,
+              languageCode: 'en',
+              kind: 'asr',
+              name: { simpleText: 'English' },
+            },
+          ],
+        },
+      },
+    };
+    return `<script>var ytInitialPlayerResponse = ${JSON.stringify(player)};</script>`;
+  };
+
+  it('allows https://www.youtube.com/api/timedtext URLs', () => {
+    const html = makeFixture('https://www.youtube.com/api/timedtext?v=spoofed1&lang=en');
+    const result = youtubeExtractor.extract(html, url)!;
+    const tracks = (result.metadata as Record<string, unknown>).caption_tracks as Array<{
+      base_url: string;
+    }>;
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0].base_url).toBe('https://www.youtube.com/api/timedtext?v=spoofed1&lang=en');
+  });
+
+  it('allows https://*.googlevideo.com URLs', () => {
+    const html = makeFixture('https://r1---sn-abc.googlevideo.com/api/timedtext?v=spoofed1');
+    const result = youtubeExtractor.extract(html, url)!;
+    const tracks = (result.metadata as Record<string, unknown>).caption_tracks as Array<{
+      base_url: string;
+    }>;
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0].base_url).toContain('googlevideo.com');
+  });
+
+  it('drops caption tracks pointing at AWS metadata (http://169.254.169.254/...)', () => {
+    const html = makeFixture('http://169.254.169.254/latest/meta-data/');
+    const result = youtubeExtractor.extract(html, url)!;
+    expect((result.metadata as Record<string, unknown>).caption_tracks).toEqual([]);
+  });
+
+  it('drops caption tracks pointing at file:// URLs', () => {
+    const html = makeFixture('file:///etc/passwd');
+    const result = youtubeExtractor.extract(html, url)!;
+    expect((result.metadata as Record<string, unknown>).caption_tracks).toEqual([]);
+  });
+
+  it('drops caption tracks whose host merely contains youtube.com (https://attacker.com/youtube.com/...)', () => {
+    const html = makeFixture('https://attacker.com/youtube.com/api/timedtext?v=spoofed1');
+    const result = youtubeExtractor.extract(html, url)!;
+    expect((result.metadata as Record<string, unknown>).caption_tracks).toEqual([]);
+  });
+});
