@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { GithubCodeEngine } from '../../../../src/search/engines/github-code.js';
+import { resetConfig } from '../../../../src/config.js';
 
 interface FetchCall {
   url: string;
@@ -24,8 +25,15 @@ function captureFetch(body: unknown, ok = true, status = 200): {
 }
 
 describe('GithubCodeEngine', () => {
+  beforeEach(() => {
+    delete process.env.WIGOLO_GITHUB_TOKEN;
+    resetConfig();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
+    delete process.env.WIGOLO_GITHUB_TOKEN;
+    resetConfig();
   });
 
   it('has name set to github-code', () => {
@@ -101,5 +109,37 @@ describe('GithubCodeEngine', () => {
     const { calls } = captureFetch({ items: [] });
     await new GithubCodeEngine().search('q', { maxResults: 15 });
     expect(calls[0].url).toContain('per_page=15');
+  });
+
+  // Slice S11b: the audit found github-code returning 401 without any hint
+  // about the env-var fix. The engine_warnings registry already maps 401 →
+  // WIGOLO_GITHUB_TOKEN; this test asserts the adapter actually reads the
+  // token from config when it is set, so authenticated users avoid the 401
+  // altogether (and the hint stays useful for the unauthenticated path).
+  it('audit: github-code 401 — attaches Bearer auth when WIGOLO_GITHUB_TOKEN is set', async () => {
+    process.env.WIGOLO_GITHUB_TOKEN = 'ghp_test_token_value';
+    resetConfig();
+    const { calls } = captureFetch({ items: [] });
+    await new GithubCodeEngine().search('q');
+    const headers = calls[0].init?.headers as Record<string, string> | undefined;
+    expect(headers?.Authorization).toBe('Bearer ghp_test_token_value');
+  });
+
+  it('audit: github-code 401 — does NOT attach Authorization header when token unset', async () => {
+    // Unauthed mode is still supported (the engine_warnings hint covers the
+    // 401 path). The adapter must not fabricate an empty Bearer header.
+    const { calls } = captureFetch({ items: [] });
+    await new GithubCodeEngine().search('q');
+    const headers = calls[0].init?.headers as Record<string, string> | undefined;
+    expect(headers?.Authorization).toBeUndefined();
+  });
+
+  it('audit: github-code 401 — error message still matches the engine_warnings registry regex', async () => {
+    // The engine_warnings module extracts the HTTP status from the engine
+    // error string. If the adapter's error shape drifts, the 401-hint test
+    // in engine-warnings.test.ts would still pass while real callers see
+    // no hint. Lock the shape here.
+    captureFetch({ message: 'bad credentials' }, false, 401);
+    await expect(new GithubCodeEngine().search('q')).rejects.toThrow(/GitHub code returned 401/);
   });
 });
