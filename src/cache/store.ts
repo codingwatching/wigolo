@@ -209,6 +209,35 @@ export function getHttpStatusForNormalizedUrl(normalizedUrl: string): number | n
   }
 }
 
+/**
+ * Slice S1 follow-up: read content_hash and http_status in a single
+ * prepared SELECT. Change-detection needs both on the hot path and
+ * coalescing them halves the index lookup cost. Returns `{ hash: null,
+ * status: null }` when the URL is absent; `status` is also `null` for
+ * legacy rows persisted before migration 006 added the http_status
+ * column. Defensive try/catch mirrors getHttpStatusForNormalizedUrl —
+ * an unexpected schema state (column missing on a half-migrated DB)
+ * degrades to "no cached entry" instead of throwing through the hot
+ * path.
+ */
+export function getHashAndStatusForNormalizedUrl(
+  normalizedUrl: string,
+): { hash: string | null; status: number | null } {
+  try {
+    const db = getDatabase();
+    const row = db.prepare(
+      'SELECT content_hash, http_status FROM url_cache WHERE normalized_url = ? LIMIT 1',
+    ).get(normalizedUrl) as { content_hash: string | null; http_status: number | null } | undefined;
+    if (!row) return { hash: null, status: null };
+    return {
+      hash: row.content_hash ?? null,
+      status: row.http_status ?? null,
+    };
+  } catch {
+    return { hash: null, status: null };
+  }
+}
+
 export function getMarkdownForNormalizedUrl(normalizedUrl: string): string | null {
   const db = getDatabase();
   const row = db.prepare(

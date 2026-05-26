@@ -2,9 +2,8 @@ import { createHash } from 'node:crypto';
 import { createLogger } from '../logger.js';
 import {
   normalizeUrl,
-  getHashForNormalizedUrl,
+  getHashAndStatusForNormalizedUrl,
   getMarkdownForNormalizedUrl,
-  getHttpStatusForNormalizedUrl,
 } from './store.js';
 import { computeDiffSummary } from './diff-summary.js';
 
@@ -30,7 +29,9 @@ export interface ChangeResult {
 export function detectChange(url: string, newMarkdown: string, newHttpStatus?: number): ChangeResult {
   try {
     const normalizedUrl = normalizeUrl(url);
-    const previousHash = getHashForNormalizedUrl(normalizedUrl);
+    // Slice S1 follow-up: one SELECT for both columns, not two.
+    const { hash: previousHash, status: previousStatus } =
+      getHashAndStatusForNormalizedUrl(normalizedUrl);
 
     if (previousHash === null) {
       log.debug('no cached entry for change detection', { url: normalizedUrl });
@@ -38,7 +39,6 @@ export function detectChange(url: string, newMarkdown: string, newHttpStatus?: n
     }
 
     const newHash = createHash('sha256').update(newMarkdown).digest('hex');
-    const previousStatus = getHttpStatusForNormalizedUrl(normalizedUrl);
     const statusChanged =
       previousStatus !== null &&
       typeof newHttpStatus === 'number' &&
