@@ -408,6 +408,10 @@ export const FIND_SIMILAR_TOOL_SCHEMA = {
       type: 'number',
       description: 'Hard post-filter on match_signals.fused_score. Results below this raw fused score are dropped (empty array is correct when nothing qualifies). Default 0 (no filtering). Note: filters on the raw RRF/embedding score, not the normalized relevance_score.',
     },
+    include_ranking_debug: {
+      type: 'boolean',
+      description: "Attach per-result ranking_debug { fts5_rank, embedding_rank, web_rank, rrf_score } so callers can audit disagreement between the three ranking sources. Off by default. Concept-mode results improve materially with a warm cache — run wigolo_crawl on the relevant docs before relying on concept-only retrieval.",
+    },
   },
 };
 

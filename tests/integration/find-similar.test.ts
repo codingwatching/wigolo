@@ -363,4 +363,51 @@ describe('find_similar integration', () => {
     expect(result.cold_start).toBeDefined();
     expect(result.cold_start).toMatch(/thin|too few|weak|sparse|cold|1 cache match|few cache match/i);
   });
+
+  // Slice S7 (M10): integration-boundary regression guard for the opt-in
+  // ranking_debug field. Default off, on when input flag is true.
+  it('end-to-end M10: ranking_debug is OMITTED by default', async () => {
+    seedCache(
+      'https://react.dev/hooks',
+      'React Hooks',
+      '# React Hooks\n\nHooks for **state** management.',
+    );
+
+    const __r_result = await handleFindSimilar(
+      { concept: 'React hooks state management', include_web: false },
+      [searchEngine],
+      mockRouter,
+    );
+    const result = __r_result.ok ? __r_result.data : ({ ...__r_result } as any);
+
+    expect(result.results.length).toBeGreaterThan(0);
+    for (const r of result.results) {
+      expect(r.ranking_debug).toBeUndefined();
+    }
+  });
+
+  it('end-to-end M10: ranking_debug is EMITTED per result when include_ranking_debug=true', async () => {
+    seedCache(
+      'https://react.dev/hooks',
+      'React Hooks',
+      '# React Hooks\n\nHooks for **state** management.',
+    );
+
+    const __r_result = await handleFindSimilar(
+      {
+        concept: 'React hooks state management',
+        include_web: false,
+        include_ranking_debug: true,
+      },
+      [searchEngine],
+      mockRouter,
+    );
+    const result = __r_result.ok ? __r_result.data : ({ ...__r_result } as any);
+
+    expect(result.results.length).toBeGreaterThan(0);
+    for (const r of result.results) {
+      expect(r.ranking_debug).toBeDefined();
+      expect(typeof r.ranking_debug.rrf_score).toBe('number');
+    }
+  });
 });

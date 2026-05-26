@@ -612,4 +612,83 @@ describe('findSimilar', () => {
       expect(result.cold_start).toMatch(/no cache matches/i);
     }
   });
+
+  // Slice S7 (M10): audit found fts5_rank and embedding_rank disagree
+  // without any way for the caller to inspect the disagreement. Add an
+  // opt-in `ranking_debug` field per result, off by default.
+  describe('ranking_debug (audit M10)', () => {
+    it('omits ranking_debug by default (no shape regression)', async () => {
+      seedCache(
+        'https://react.dev/hooks',
+        'React Hooks',
+        '# React Hooks\n\nHooks for **state** management.',
+      );
+
+      const result = await findSimilar(
+        { concept: 'React hooks', include_web: false },
+        [mockSearchEngine],
+        mockRouter,
+      );
+
+      expect(result.results.length).toBeGreaterThan(0);
+      for (const r of result.results) {
+        expect(r.ranking_debug).toBeUndefined();
+      }
+    });
+
+    it('emits ranking_debug with fts5_rank + rrf_score when include_ranking_debug=true on cache-only results', async () => {
+      seedCache(
+        'https://react.dev/hooks',
+        'React Hooks',
+        '# React Hooks\n\nHooks for **state** management.',
+      );
+      seedCache(
+        'https://vuejs.org/guide',
+        'Vue Guide',
+        '# Vue Guide\n\nReactive **state** management.',
+      );
+
+      const result = await findSimilar(
+        {
+          concept: 'state management',
+          include_web: false,
+          include_ranking_debug: true,
+        },
+        [mockSearchEngine],
+        mockRouter,
+      );
+
+      expect(result.results.length).toBeGreaterThan(0);
+      for (const r of result.results) {
+        expect(r.ranking_debug).toBeDefined();
+        expect(typeof r.ranking_debug!.rrf_score).toBe('number');
+        // Every cache result must surface its fts5_rank in the debug block;
+        // the audit's complaint is that the disagreement between fts5 and
+        // embedding ranks was opaque.
+        expect(typeof r.ranking_debug!.fts5_rank).toBe('number');
+      }
+    });
+
+    it('emits ranking_debug with web_rank when include_ranking_debug=true and results come from web search', async () => {
+      const result = await findSimilar(
+        {
+          concept: 'quantum computing latest research',
+          include_cache: false,
+          include_web: true,
+          include_ranking_debug: true,
+        },
+        [mockSearchEngine],
+        mockRouter,
+      );
+
+      expect(result.search_hits).toBeGreaterThan(0);
+      for (const r of result.results) {
+        if (r.source === 'search') {
+          expect(r.ranking_debug).toBeDefined();
+          expect(typeof r.ranking_debug!.web_rank).toBe('number');
+          expect(typeof r.ranking_debug!.rrf_score).toBe('number');
+        }
+      }
+    });
+  });
 });

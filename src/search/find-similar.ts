@@ -247,6 +247,31 @@ export async function findSimilar(
       }
     }
 
+    // Slice S7 (M10): opt-in ranking_debug — emit per-result fts5_rank /
+    // embedding_rank / web_rank plus raw rrf_score so the caller can audit
+    // disagreement between the three ranking sources. Off by default so the
+    // standard response shape stays slim.
+    if (input.include_ranking_debug) {
+      for (const r of finalResults) {
+        const key = safeNormalize(r.url);
+        const debug: {
+          fts5_rank?: number;
+          embedding_rank?: number;
+          web_rank?: number;
+          rrf_score: number;
+        } = {
+          rrf_score: r.match_signals.fused_score,
+        };
+        const fts = fts5RankMap.get(key);
+        if (fts !== undefined) debug.fts5_rank = fts;
+        const emb = embeddingRankMap.get(key);
+        if (emb !== undefined) debug.embedding_rank = emb;
+        const web = searchRankMap.get(key);
+        if (web !== undefined) debug.web_rank = web;
+        r.ranking_debug = debug;
+      }
+    }
+
     const queryForNote = (input.concept?.trim() || input.url?.trim() || '').slice(0, 200);
     const conceptMode = !!input.concept?.trim() && !input.url?.trim();
     const baseNote = buildColdStartNote(
