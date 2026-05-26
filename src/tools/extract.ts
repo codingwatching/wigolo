@@ -117,7 +117,8 @@ const TABLES_DEFAULT_MAX_CHARS = 30000;
 
 // Trim a tables payload to fit within `maxChars`. Drops rows tail-first while
 // preserving the table's header so the structural shape stays intact.
-function clampTablesToChars(
+// Exported for direct testing (perf guard against O(N²) re-serialization).
+export function clampTablesToChars(
   data: ExtractOutput['data'],
   maxChars: number,
 ): { data: ExtractOutput['data']; truncated: boolean } {
@@ -132,13 +133,23 @@ function clampTablesToChars(
     rows: [...t.rows],
   })) as TableData[];
 
+  // Track a running length to avoid O(N²) re-serialization on each pop.
+  // The +1 approximates the comma/whitespace separator that JSON.stringify
+  // would emit between adjacent elements; exact accuracy isn't required
+  // because the cap is a soft target and the final shape stays valid.
+  let currentSize = JSON.stringify(tables).length;
+
   // Pop rows from the last table first; if it empties, pop the table itself.
-  while (JSON.stringify(tables).length > maxChars && tables.length > 0) {
+  while (currentSize > maxChars && tables.length > 0) {
     const last = tables[tables.length - 1];
     if (last.rows.length > 0) {
-      last.rows.pop();
+      const popped = last.rows.pop();
+      currentSize -= JSON.stringify(popped).length + 1;
     } else {
+      // Capture the table's serialized cost before removing it.
+      const poppedSize = JSON.stringify(tables[tables.length - 1]).length + 1;
       tables.pop();
+      currentSize -= poppedSize;
     }
   }
   return { data: tables, truncated: true };
