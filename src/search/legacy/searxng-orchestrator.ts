@@ -44,10 +44,16 @@ function filterByExactPhrases<T extends { title: string; snippet: string }>(
 // H2: when format=answer/stream_answer, the synthesized answer + citations are
 // the contract. Per-result markdown_content is pure overhead (~3× cost in the
 // bench) — drop it unless the caller explicitly asked for include_full_markdown.
-function stripMarkdownBodiesForAnswerMode(
+// Exported for direct unit testing — keeps the strip behavior pinned across
+// all current and future legacy call sites.
+export function stripMarkdownBodiesForAnswerMode(
   input: SearchInput,
   results: SearchResultItem[],
 ): void {
+  // Self-protect: only strip in answer mode. All current call sites are
+  // already gated by `format === 'answer' || 'stream_answer'`, but the guard
+  // here keeps the function safe to call from any future legacy path.
+  if (input.format !== 'answer' && input.format !== 'stream_answer') return;
   if (input.include_full_markdown) return;
   for (const r of results) {
     if (r.markdown_content !== undefined) r.markdown_content = undefined;
