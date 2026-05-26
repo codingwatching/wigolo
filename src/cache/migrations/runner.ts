@@ -15,6 +15,12 @@ export interface Migration {
   sql: string;
   /** True if the migration depends on sqlite-vec being loaded. */
   requiresVec?: boolean;
+  /**
+   * Optional follow-up step run inside the same transaction as `sql`. Used
+   * for migrations whose idempotency requires JS-level inspection (e.g.
+   * conditional ADD COLUMN) that pure SQL can't express on SQLite.
+   */
+  postStep?: (db: Database.Database) => void;
 }
 
 const MIGRATION_001_SQLITE_VEC = `
@@ -107,11 +113,45 @@ CREATE INDEX IF NOT EXISTS idx_watch_jobs_status ON watch_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_watch_jobs_url ON watch_jobs(url);
 `;
 
+// Slice D2: TLS-impersonation routing columns on domain_routing. The base
+// table is created inline in src/cache/db.ts; tests and bare callers get a
+// safety-net CREATE here. ALTERs are skipped (per-statement) when the column
+// already exists so the migration is idempotent against existing installs
+// that may have been hand-patched.
+const MIGRATION_005_TLS_ROUTING = `
+CREATE TABLE IF NOT EXISTS domain_routing (
+  domain TEXT PRIMARY KEY,
+  prefer_playwright INTEGER DEFAULT 0,
+  http_failures INTEGER DEFAULT 0,
+  last_updated TEXT
+);
+`;
+
 export const MIGRATIONS: Migration[] = [
   { name: '001-sqlite-vec', sql: MIGRATION_001_SQLITE_VEC, requiresVec: true },
   { name: '002-feed-items', sql: MIGRATION_002_FEED_ITEMS },
   { name: '003-crawl-etags', sql: MIGRATION_003_CRAWL_ETAGS },
   { name: '004-watch-jobs', sql: MIGRATION_004_WATCH_JOBS },
+  {
+    name: '005-tls-routing',
+    sql: MIGRATION_005_TLS_ROUTING,
+    /**
+     * Post-step adds the TLS-impersonation columns to domain_routing using
+     * pragma table_info to skip already-present columns. SQLite has no
+     * `ADD COLUMN IF NOT EXISTS` so we gate at the JS layer to keep the
+     * migration idempotent if a column was added out-of-band.
+     */
+    postStep: (db) => {
+      const cols = db.pragma('table_info(domain_routing)') as Array<{ name: string }>;
+      const names = new Set(cols.map((c) => c.name));
+      if (!names.has('prefer_tls_impersonation')) {
+        db.exec('ALTER TABLE domain_routing ADD COLUMN prefer_tls_impersonation INTEGER DEFAULT 0');
+      }
+      if (!names.has('tls_success_count')) {
+        db.exec('ALTER TABLE domain_routing ADD COLUMN tls_success_count INTEGER DEFAULT 0');
+      }
+    },
+  },
 ];
 
 function isReadOnlyError(err: unknown): boolean {
@@ -178,6 +218,9 @@ export function applyMigrations(db: Database.Database, opts: { vecLoaded: boolea
     try {
       db.transaction(() => {
         db.exec(migration.sql);
+        if (migration.postStep) {
+          migration.postStep(db);
+        }
         recordStmt.run(migration.name, Date.now());
       })();
       log.info('migration applied', { name: migration.name });

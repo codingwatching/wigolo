@@ -89,7 +89,13 @@ export interface RawFetchResult {
   html: string;
   contentType: string;
   statusCode: number;
-  method: 'http' | 'playwright';
+  /**
+   * Which fetch tier produced the bytes:
+   *   - 'http'              : default httpFetch via node fetch
+   *   - 'tls-impersonation' : Slice D2 TLS-fingerprinted HTTP tier (opt-in)
+   *   - 'playwright'        : full browser fallback
+   */
+  method: 'http' | 'tls-impersonation' | 'playwright';
   headers: Record<string, string>;
   rawBuffer?: Buffer;
   screenshot?: string;

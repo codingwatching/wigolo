@@ -4,6 +4,18 @@ import { contentAppearsEmpty } from './content-check.js';
 import { getAuthOptions } from './auth.js';
 import { fetchWithPlaywright, shouldEscalate } from './playwright-tier.js';
 import { describeFetchError } from './error-describe.js';
+import {
+  tlsFetch,
+  isAntiBotSignal,
+  looksJsRequired,
+  describeAntiBot,
+  TlsTierUnavailableError,
+  type TlsFetchResult,
+} from './tls-tier.js';
+import {
+  getDomainRouting,
+  recordTlsImpersonationSuccess,
+} from '../cache/store.js';
 import type { RawFetchResult, BrowserAction, Mode, StageError } from '../types.js';
 
 // Domains we know up-front are heavily client-rendered. HTTP-first detection
@@ -83,11 +95,31 @@ export type PlaywrightFetcher = (
   options?: { timeoutMs?: number },
 ) => Promise<{ html: string; text: string }>;
 
+/**
+ * Slice D2: injectable TLS-impersonation fetcher. Same shape as `tlsFetch`
+ * from tls-tier.ts; left injectable so unit tests can stub without touching
+ * the wreq-js native binary.
+ */
+export type TlsFetcher = (
+  url: string,
+  options?: { headers?: Record<string, string>; timeoutMs?: number },
+) => Promise<TlsFetchResult>;
+
+/** Pluggable hooks to learning/persistence layer so router tests don't need a DB. */
+export interface TlsRoutingPersistence {
+  getPreferTls(domain: string): boolean;
+  recordSuccess(domain: string): void;
+}
+
 export interface SmartRouterOptions {
   httpClient?: HttpClient;
   browserPool?: BrowserPoolInterface;
   httpFetcher?: HttpFetcher;
   playwrightFetcher?: PlaywrightFetcher;
+  /** Slice D2 — when provided, overrides the default lazy-loaded wreq backend. */
+  tlsFetcher?: TlsFetcher;
+  /** Slice D2 — persistence for `prefer_tls_impersonation` learning. */
+  tlsPersistence?: TlsRoutingPersistence;
 }
 
 interface DomainStats {
@@ -111,6 +143,8 @@ export class SmartRouter {
   private readonly browserPool?: BrowserPoolInterface;
   private readonly httpFetcher: HttpFetcher;
   private readonly playwrightFetcher: PlaywrightFetcher;
+  private readonly tlsFetcher: TlsFetcher;
+  private readonly tlsPersistence: TlsRoutingPersistence;
 
   constructor(httpClient: HttpClient, browserPool: BrowserPoolInterface);
   constructor(options: SmartRouterOptions);
@@ -127,7 +161,9 @@ export class SmartRouter {
       ('httpClient' in httpClientOrOptions ||
         'browserPool' in httpClientOrOptions ||
         'httpFetcher' in httpClientOrOptions ||
-        'playwrightFetcher' in httpClientOrOptions)
+        'playwrightFetcher' in httpClientOrOptions ||
+        'tlsFetcher' in httpClientOrOptions ||
+        'tlsPersistence' in httpClientOrOptions)
     ) {
       const opts = httpClientOrOptions as SmartRouterOptions;
       if (!opts.httpFetcher && !opts.httpClient) {
@@ -137,6 +173,8 @@ export class SmartRouter {
       this.browserPool = opts.browserPool;
       this.httpFetcher = opts.httpFetcher ?? this.makeDefaultHttpFetcher();
       this.playwrightFetcher = opts.playwrightFetcher ?? fetchWithPlaywright;
+      this.tlsFetcher = opts.tlsFetcher ?? tlsFetch;
+      this.tlsPersistence = opts.tlsPersistence ?? defaultTlsPersistence();
       return;
     } else {
       // Backwards-compat: single HttpClient positional (unusual but safe)
@@ -144,6 +182,8 @@ export class SmartRouter {
     }
     this.httpFetcher = this.makeDefaultHttpFetcher();
     this.playwrightFetcher = fetchWithPlaywright;
+    this.tlsFetcher = tlsFetch;
+    this.tlsPersistence = defaultTlsPersistence();
   }
 
   private makeDefaultHttpFetcher(): HttpFetcher {
@@ -272,6 +312,25 @@ export class SmartRouter {
       return this.browserPool.fetchWithBrowser(url, { headers, screenshot });
     }
 
+    // Slice D2: when the TLS tier is enabled, decide whether to try TLS
+    // before HTTP. We try TLS-first when:
+    //   - WIGOLO_TLS_TIER=on, or
+    //   - WIGOLO_TLS_TIER=auto AND the domain has been promoted via
+    //     repeated success (prefer_tls_impersonation=1 in domain_routing)
+    const tlsMode = config.tlsTier;
+    const tlsTierEnabled = tlsMode !== 'off';
+    const tlsDomainPreferred = tlsTierEnabled && this.tlsPersistence.getPreferTls(domain);
+    const tryTlsFirst = tlsMode === 'on' || tlsDomainPreferred;
+
+    if (tryTlsFirst) {
+      const tlsTry = await this.tryTlsTier(url, domain, headers);
+      if (tlsTry.ok) {
+        return tlsTry.result;
+      }
+      // TLS failed → fall through to HTTP, then to Playwright if needed.
+      logger.debug('tls-first miss, falling back to http', { url, domain, reason: tlsTry.reason });
+    }
+
     // Try HTTP first
     try {
       if (!this.httpClient) throw new Error('SmartRouter: httpClient not configured');
@@ -280,6 +339,25 @@ export class SmartRouter {
       // 304 = unchanged: pass through; never escalate to a browser.
       if (result.statusCode === 304) {
         return this.toRawFetchResult(result);
+      }
+
+      // Slice D2: anti-bot signal (403/429/503 or challenge body) escalates
+      // to the TLS tier first when WIGOLO_TLS_TIER is auto/on; if the TLS
+      // tier also fails or isn't installed, fall through to Playwright.
+      if (tlsTierEnabled && !tryTlsFirst && isAntiBotSignal(result.statusCode, result.html)) {
+        const tlsTry = await this.tryTlsTier(url, domain, headers);
+        if (tlsTry.ok) {
+          return tlsTry.result;
+        }
+        if (!this.browserPool) throw new Error('SmartRouter: browserPool not configured');
+        logger.info('anti-bot signal: tls tier failed, escalating to playwright', {
+          url,
+          domain,
+          httpStatus: result.statusCode,
+          tlsReason: tlsTry.reason,
+        });
+        stats.preferPlaywright = true;
+        return this.browserPool.fetchWithBrowser(url, { headers, screenshot });
       }
 
       // Check for SPA shell / empty content
@@ -349,4 +427,103 @@ export class SmartRouter {
       rawBuffer: result.rawBuffer,
     };
   }
+
+  // --- Slice D2: TLS-impersonation tier helpers ---
+
+  /**
+   * Attempt the TLS-impersonation tier for `url`. Returns:
+   *  - { ok: true, result } when the tier completed AND the response does
+   *    not look like a still-blocking challenge / JS-required page
+   *  - { ok: false, reason } when the tier is unavailable (missing native
+   *    binary, network error) OR the response still looks anti-bot / JS-
+   *    required so the router should escalate to Playwright.
+   *
+   * Records success against the domain on every healthy response. The
+   * `prefer_tls_impersonation` flip is performed by the persistence layer
+   * once the success threshold is reached.
+   */
+  private async tryTlsTier(
+    url: string,
+    domain: string,
+    headers?: Record<string, string>,
+  ): Promise<{ ok: true; result: RawFetchResult } | { ok: false; reason: 'unavailable' | 'still_blocked' | 'js_required' | 'error'; error?: unknown }>
+  {
+    const logger = createLogger('fetch');
+    let r: TlsFetchResult;
+    try {
+      r = await this.tlsFetcher(url, { headers });
+    } catch (err) {
+      if (err instanceof TlsTierUnavailableError) {
+        logger.debug('tls tier unavailable, escalating', { url, domain });
+        return { ok: false, reason: 'unavailable', error: err };
+      }
+      logger.warn('tls tier error, escalating', {
+        url,
+        domain,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return { ok: false, reason: 'error', error: err };
+    }
+
+    if (isAntiBotSignal(r.statusCode, r.html)) {
+      logger.info('tls tier returned anti-bot signal, escalating to playwright', {
+        url,
+        domain,
+        statusCode: r.statusCode,
+        signal: describeAntiBot(r.statusCode, r.html),
+      });
+      return { ok: false, reason: 'still_blocked' };
+    }
+    if (looksJsRequired(r.html) && r.html.length < 2000) {
+      // "Please enable JS" with tiny body → page is asking for a browser.
+      logger.info('tls tier landed on JS-required page, escalating', { url, domain });
+      return { ok: false, reason: 'js_required' };
+    }
+
+    // Healthy response. Record the success so future visits can prefer TLS.
+    try {
+      this.tlsPersistence.recordSuccess(domain);
+    } catch {
+      // Persistence is best-effort — never block a successful fetch.
+    }
+
+    return {
+      ok: true,
+      result: {
+        url: r.url,
+        finalUrl: r.finalUrl,
+        html: r.html,
+        contentType: r.contentType,
+        statusCode: r.statusCode,
+        method: 'tls-impersonation',
+        headers: r.headers,
+        rawBuffer: r.rawBuffer,
+      },
+    };
+  }
+}
+
+/**
+ * Default persistence wires straight to the cache store. Created lazily by
+ * the SmartRouter constructor so tests that never touch the DB never
+ * trigger a `getDatabase()` call.
+ */
+function defaultTlsPersistence(): TlsRoutingPersistence {
+  return {
+    getPreferTls(domain) {
+      try {
+        const row = getDomainRouting(domain);
+        return row?.preferTlsImpersonation ?? false;
+      } catch {
+        return false;
+      }
+    },
+    recordSuccess(domain) {
+      try {
+        recordTlsImpersonationSuccess(domain, getConfig().tlsSuccessThreshold);
+      } catch {
+        // Best-effort — swallow.
+      }
+    },
+  };
 }

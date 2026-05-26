@@ -576,6 +576,88 @@ export interface StoredEmbedding {
   dims: number;
 }
 
+// --- Domain routing (Slice D2: TLS-impersonation learning) ---
+
+export interface DomainRoutingRow {
+  domain: string;
+  preferPlaywright: boolean;
+  httpFailures: number;
+  preferTlsImpersonation: boolean;
+  tlsSuccessCount: number;
+  lastUpdated?: string;
+}
+
+interface DomainRoutingRawRow {
+  domain: string;
+  prefer_playwright: number | null;
+  http_failures: number | null;
+  prefer_tls_impersonation: number | null;
+  tls_success_count: number | null;
+  last_updated: string | null;
+}
+
+export function getDomainRouting(domain: string): DomainRoutingRow | null {
+  try {
+    const db = getDatabase();
+    const row = db.prepare(
+      `SELECT domain, prefer_playwright, http_failures,
+              prefer_tls_impersonation, tls_success_count, last_updated
+       FROM domain_routing WHERE domain = ? LIMIT 1`,
+    ).get(domain) as DomainRoutingRawRow | undefined;
+    if (!row) return null;
+    return {
+      domain: row.domain,
+      preferPlaywright: (row.prefer_playwright ?? 0) === 1,
+      httpFailures: row.http_failures ?? 0,
+      preferTlsImpersonation: (row.prefer_tls_impersonation ?? 0) === 1,
+      tlsSuccessCount: row.tls_success_count ?? 0,
+      lastUpdated: row.last_updated ?? undefined,
+    };
+  } catch (err) {
+    log.warn('getDomainRouting failed', { domain, error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+/**
+ * Record a successful TLS-impersonation fetch for the domain and flip the
+ * `prefer_tls_impersonation` bit once `tls_success_count` reaches `threshold`.
+ * Atomic so concurrent callers can't double-count.
+ */
+export function recordTlsImpersonationSuccess(domain: string, threshold: number): DomainRoutingRow | null {
+  try {
+    const db = getDatabase();
+    // The INSERT path sets prefer_tls_impersonation=1 when the threshold
+    // is <=1 (rare; only used in tests/aggressive opt-in). The ON CONFLICT
+    // UPDATE path computes the flip atomically against the post-increment
+    // count to avoid a read-modify-write race between concurrent requests
+    // for the same domain.
+    const preferOnInsert = threshold <= 1 ? 1 : 0;
+    db.prepare(`
+      INSERT INTO domain_routing (
+        domain, prefer_playwright, http_failures,
+        prefer_tls_impersonation, tls_success_count, last_updated
+      )
+      VALUES (?, 0, 0, ?, 1, datetime('now'))
+      ON CONFLICT(domain) DO UPDATE SET
+        tls_success_count = tls_success_count + 1,
+        last_updated = datetime('now'),
+        prefer_tls_impersonation = CASE
+          WHEN tls_success_count + 1 >= ?
+          THEN 1
+          ELSE prefer_tls_impersonation
+        END
+    `).run(domain, preferOnInsert, threshold);
+    return getDomainRouting(domain);
+  } catch (err) {
+    log.warn('recordTlsImpersonationSuccess failed', {
+      domain,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
 export function getAllEmbeddings(modelId?: string): StoredEmbedding[] {
   try {
     const db = getDatabase();

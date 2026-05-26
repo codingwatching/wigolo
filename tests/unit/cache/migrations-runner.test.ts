@@ -30,7 +30,14 @@ describe('applyMigrations', () => {
     expect(applied).toContain('002-feed-items');
     expect(applied).toContain('003-crawl-etags');
     expect(applied).toContain('004-watch-jobs');
+    expect(applied).toContain('005-tls-routing');
     expect(applied).not.toContain('001-sqlite-vec'); // requiresVec, skipped
+
+    // Slice D2: domain_routing now carries the TLS-impersonation columns.
+    const drCols = db.prepare("PRAGMA table_info('domain_routing')").all() as Array<{ name: string }>;
+    const drNames = drCols.map((c) => c.name).sort();
+    expect(drNames).toContain('prefer_tls_impersonation');
+    expect(drNames).toContain('tls_success_count');
 
     // Watch-jobs table must exist with the documented schema — downstream
     // tools count on these columns being present on day 1.
@@ -91,6 +98,27 @@ describe('applyMigrations', () => {
     expect(hasTable).toBeUndefined();
     otherDb.close();
     rmSync(other, { recursive: true, force: true });
+  });
+
+  it('migration 005 is idempotent against a domain_routing that already has the columns', () => {
+    // Simulate a hand-patched install: domain_routing already has the new columns.
+    const db = new Database(dbPath);
+    db.exec(`
+      CREATE TABLE domain_routing (
+        domain TEXT PRIMARY KEY,
+        prefer_playwright INTEGER DEFAULT 0,
+        http_failures INTEGER DEFAULT 0,
+        last_updated TEXT,
+        prefer_tls_impersonation INTEGER DEFAULT 0,
+        tls_success_count INTEGER DEFAULT 0
+      );
+    `);
+
+    expect(() => applyMigrations(db, { vecLoaded: false })).not.toThrow();
+    const applied = (db.prepare('SELECT name FROM schema_migrations').all() as Array<{ name: string }>)
+      .map((r) => r.name);
+    expect(applied).toContain('005-tls-routing');
+    db.close();
   });
 
   it('_resetMigrationGuard clears the read-only flag for the next test', () => {

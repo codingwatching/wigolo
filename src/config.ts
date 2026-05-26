@@ -66,6 +66,17 @@ export interface Config {
   llmProvider: string | null;
   llmCacheTtlDays: number;
   llmMaxCallsPerRequest: number;
+  /**
+   * TLS-impersonation HTTP tier mode (slice D2):
+   *   - 'off'  : tier disabled, current pipeline unchanged (DEFAULT)
+   *   - 'auto' : only invoked on anti-bot signal (403/429/503 or challenge body)
+   *   - 'on'   : tried first for cold domains, then HTTP, then Playwright
+   */
+  tlsTier: 'off' | 'auto' | 'on';
+  /** Browser fingerprint profile passed to the TLS-impersonation backend. */
+  tlsBrowser: string;
+  /** Successes required before a domain is auto-promoted to TLS-first routing. */
+  tlsSuccessThreshold: number;
 }
 
 function envStr(key: string, fallback: string | null = null): string | null {
@@ -91,6 +102,30 @@ function envBool(key: string, fallback: boolean): boolean {
   const val = process.env[key];
   if (val === undefined) return fallback;
   return val.toLowerCase() !== 'false' && val !== '0';
+}
+
+/**
+ * Allowlist guard for `WIGOLO_TLS_BROWSER`. The TLS-impersonation backend
+ * passes this string into a Rust napi binding; an unvalidated value can
+ * crash the binding on unknown profiles. Accept only the documented browser
+ * families (`chrome|firefox|safari|edge|opera`) followed by a numeric
+ * version. On mismatch, log a warning to stderr and return the safe default.
+ *
+ * Exported for tests; the production call site lives in `getConfig()`.
+ */
+const TLS_BROWSER_PATTERN = /^(chrome|firefox|safari|edge|opera)_\d+$/;
+
+export function validateTlsBrowser(raw: string | null | undefined, fallback: string): string {
+  if (!raw) return fallback;
+  if (TLS_BROWSER_PATTERN.test(raw)) return raw;
+  // Use stderr directly: the logger module imports config, so taking a
+  // logger here would create a cycle. A single warning at startup is
+  // intentional.
+  process.stderr.write(
+    `[wigolo] WIGOLO_TLS_BROWSER=${JSON.stringify(raw)} is not in the allowlist ` +
+      `(${TLS_BROWSER_PATTERN.source}); falling back to ${fallback}\n`,
+  );
+  return fallback;
 }
 
 let cachedConfig: Config | null = null;
@@ -183,6 +218,18 @@ export function getConfig(): Config {
     llmProvider: envStr('WIGOLO_LLM_PROVIDER'),
     llmCacheTtlDays: envInt('WIGOLO_LLM_CACHE_TTL_DAYS', 7),
     llmMaxCallsPerRequest: envInt('WIGOLO_LLM_MAX_CALLS_PER_REQUEST', 1),
+    tlsTier: (() => {
+      const raw = (envStr('WIGOLO_TLS_TIER') ?? 'off').toLowerCase();
+      return raw === 'auto' || raw === 'on' ? (raw as 'auto' | 'on') : 'off';
+    })(),
+    // The TLS-impersonation backend accepts a `<browser>_<version>` profile
+    // string and forwards it into a Rust napi binding. Passing an unvalidated
+    // value risks a panic / abort in native code if the env var is a typo
+    // (`chrme_142`) or hostile input. Restrict to the documented wreq-js
+    // browser families; on mismatch we warn (to stderr via the logger) and
+    // fall back to the safe default.
+    tlsBrowser: validateTlsBrowser(envStr('WIGOLO_TLS_BROWSER'), 'chrome_142'),
+    tlsSuccessThreshold: envInt('WIGOLO_TLS_SUCCESS_THRESHOLD', 3),
   };
 
   return cachedConfig;
