@@ -508,6 +508,45 @@ describe('Crawler — canonical output URLs', () => {
     expect(introHits[0].url).toBe('https://docs.example.com/intro');
   });
 
+  it('M14: dedupes anchor-fragment URLs in the link graph', async () => {
+    // Audit M14: docs claimed the crawl link graph deduped anchor fragments,
+    // but a page that linked to /foo, /foo#section-a, /foo#section-b created
+    // three separate edges. The link graph must collapse those into a single
+    // entry per (from, canonical-to) pair.
+    const fetchSpy: FetchFn = vi.fn(async (url: string) => {
+      if (url === 'https://docs.example.com') {
+        return makeFetchOutput(url, 'Home', '# Home', [
+          'https://docs.example.com/foo',
+          'https://docs.example.com/foo#section-a',
+          'https://docs.example.com/foo#section-b',
+        ]);
+      }
+      return makeFetchOutput(url, 'Foo', '# Foo', []);
+    });
+    const rawFetch: RawFetchFn = vi.fn(async () => ({
+      url: '', finalUrl: '', html: '', contentType: 'text/plain', statusCode: 200, method: 'http' as const, headers: {},
+    }));
+
+    const crawler = new Crawler(fetchSpy, rawFetch);
+    const result = await crawler.crawl({
+      url: 'https://docs.example.com',
+      strategy: 'bfs',
+      max_depth: 1,
+      max_pages: 5,
+      extract_links: true,
+    });
+
+    expect(result.links).toBeDefined();
+    const fooEdges = result.links!.filter((e) =>
+      e.from === 'https://docs.example.com' &&
+      e.to.startsWith('https://docs.example.com/foo'),
+    );
+    // Same canonical target — one edge, not three.
+    expect(fooEdges).toHaveLength(1);
+    // The retained edge points at the fragment-stripped form.
+    expect(fooEdges[0].to).toBe('https://docs.example.com/foo');
+  });
+
   it('strips trailing slash on emitted non-root paths', async () => {
     const fetch: FetchFn = vi.fn(async (url) => {
       if (url === 'https://docs.example.com/intro') {

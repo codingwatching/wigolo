@@ -1,5 +1,5 @@
 import type { FetchOutput, CrawlInput, CrawlOutput, CrawlResultItem, LinkEdge, RawFetchResult } from '../types.js';
-import { matchesPatterns, canonicalForCrawl, canonicalForOutput } from './url-utils.js';
+import { matchesPatterns, canonicalForCrawl, canonicalForOutput, stripFragment } from './url-utils.js';
 import { RateLimiter } from './rate-limiter.js';
 import { RobotsParser } from './robots.js';
 import {
@@ -94,6 +94,9 @@ export class Crawler {
     const visited = new Set<string>();
     const pages: CrawlResultItem[] = [];
     const allLinks: LinkEdge[] = [];
+    // M14: track which (from, fragment-stripped to) pairs we've already emitted
+    // into the link graph so /foo, /foo#a, /foo#b collapse to ONE edge.
+    const seenEdges = new Set<string>();
     const indexing = isIndexingEnabled();
 
     // Queue: [url, depth]
@@ -156,9 +159,10 @@ export class Crawler {
         }
 
         if (input.extract_links) {
-          for (const link of fetchResult.links) {
-            allLinks.push({ from: url, to: link });
-          }
+          // M14: anchor fragments are intra-page navigation, not page
+          // identity. Strip `#section-a` / `#section-b` before adding to
+          // the link graph so /foo, /foo#a, /foo#b collapse to ONE edge.
+          addUniqueEdges(allLinks, seenEdges, url, fetchResult.links);
         }
       }
     }
@@ -249,6 +253,9 @@ export class Crawler {
     const toFetch = filtered.slice(0, maxPages);
     const pages: CrawlResultItem[] = [];
     const allLinks: LinkEdge[] = [];
+    // M14: see crawlTraversal — same dedup key used here so the sitemap path
+    // emits one edge per (from, canonical-to) pair.
+    const seenEdges = new Set<string>();
     const indexing = isIndexingEnabled();
 
     for (const url of toFetch) {
@@ -269,9 +276,8 @@ export class Crawler {
           if (indexing) await enqueueIndexCrawl(item);
 
           if (input.extract_links) {
-            for (const link of result.links) {
-              allLinks.push({ from: url, to: link });
-            }
+            // M14: dedupe fragment variants in the link graph.
+            addUniqueEdges(allLinks, seenEdges, url, result.links);
           }
         }
       } catch (err) {
@@ -342,4 +348,22 @@ const DOC_PATH_PATTERNS = ['/docs/', '/guide/', '/api/', '/reference/'];
 function isDocPage(url: string): boolean {
   const path = new URL(url).pathname.toLowerCase();
   return DOC_PATH_PATTERNS.some(p => path.includes(p));
+}
+
+// M14: emit one LinkEdge per (from, fragment-stripped to). Bench audit:
+// /foo, /foo#section-a, /foo#section-b previously created three distinct
+// edges; collapse to one by keying off the fragment-stripped target.
+function addUniqueEdges(
+  edges: LinkEdge[],
+  seen: Set<string>,
+  from: string,
+  links: string[],
+): void {
+  for (const link of links) {
+    const canonicalTo = stripFragment(link);
+    const key = `${from} ${canonicalTo}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    edges.push({ from, to: canonicalTo });
+  }
 }
