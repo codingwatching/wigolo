@@ -328,4 +328,86 @@ describe('find_similar integration', () => {
     expect(resultA.error).toBeUndefined();
     expect(resultB.error).toBeUndefined();
   });
+
+  // Slice S7 (H9): integration-boundary regression guard for the audit's
+  // RAG case. Concept mode + thin cache + no web fallback must emit
+  // cold_start through the handleFindSimilar boundary.
+  it('end-to-end H9: cold_start fires when concept mode returns only 1-2 weak cache hits', async () => {
+    // Audit case shape: populated cache (>= 3 pages) but only 1 weak hit on
+    // the actual concept query — the per-query thinness must surface.
+    seedCache(
+      'https://example.com/deployment',
+      'Deployment environment',
+      '# Deployment environment\n\nA deployment environment is used in the next generation of software deployment.',
+    );
+    for (let i = 0; i < 4; i++) {
+      seedCache(
+        `https://unrelated-${i}.example`,
+        `Unrelated ${i}`,
+        `# Unrelated topic ${i}\n\nNot related to the query.`,
+      );
+    }
+
+    const __r_result = await handleFindSimilar(
+      {
+        concept: 'retrieval augmented generation',
+        include_cache: true,
+        include_web: false,
+      },
+      [searchEngine],
+      mockRouter,
+    );
+    const result = __r_result.ok ? __r_result.data : ({ ...__r_result } as any);
+
+    expect(result.results.length).toBeLessThanOrEqual(2);
+    expect(result.cold_start).toBeDefined();
+    expect(result.cold_start).toMatch(/thin|too few|weak|sparse|cold|1 cache match|few cache match/i);
+  });
+
+  // Slice S7 (M10): integration-boundary regression guard for the opt-in
+  // ranking_debug field. Default off, on when input flag is true.
+  it('end-to-end M10: ranking_debug is OMITTED by default', async () => {
+    seedCache(
+      'https://react.dev/hooks',
+      'React Hooks',
+      '# React Hooks\n\nHooks for **state** management.',
+    );
+
+    const __r_result = await handleFindSimilar(
+      { concept: 'React hooks state management', include_web: false },
+      [searchEngine],
+      mockRouter,
+    );
+    const result = __r_result.ok ? __r_result.data : ({ ...__r_result } as any);
+
+    expect(result.results.length).toBeGreaterThan(0);
+    for (const r of result.results) {
+      expect(r.ranking_debug).toBeUndefined();
+    }
+  });
+
+  it('end-to-end M10: ranking_debug is EMITTED per result when include_ranking_debug=true', async () => {
+    seedCache(
+      'https://react.dev/hooks',
+      'React Hooks',
+      '# React Hooks\n\nHooks for **state** management.',
+    );
+
+    const __r_result = await handleFindSimilar(
+      {
+        concept: 'React hooks state management',
+        include_web: false,
+        include_ranking_debug: true,
+      },
+      [searchEngine],
+      mockRouter,
+    );
+    const result = __r_result.ok ? __r_result.data : ({ ...__r_result } as any);
+
+    expect(result.results.length).toBeGreaterThan(0);
+    for (const r of result.results) {
+      expect(r.ranking_debug).toBeDefined();
+      expect(typeof r.ranking_debug.rrf_score).toBe('number');
+    }
+  });
 });

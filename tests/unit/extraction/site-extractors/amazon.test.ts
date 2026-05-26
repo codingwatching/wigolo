@@ -388,3 +388,30 @@ describe('extractAmazonProduct — prototype pollution guards on specifications'
     expect(probe['polluted']).toBeUndefined();
   });
 });
+
+// Slice S7 (C5): audit found Amazon "Page Not Found" / anti-bot pages were
+// silently treated as Amazon product responses — no site_data emitted, no
+// signal to caller. Detect the block / not-found pages and refuse to
+// produce fake site_data.
+describe('amazonExtractor — anti-bot / not-found detection (audit C5)', () => {
+  const BLOCKED_HTML = loadFixture('blocked.html');
+  const url = 'https://www.amazon.com/dp/B08N5WRWNW/';
+
+  it('detectAntiBotBlock returns "blocked" for an Amazon Page Not Found challenge body', async () => {
+    const { detectAntiBotBlock } = await import(
+      '../../../../src/extraction/site-extractors/amazon.js'
+    );
+    expect(detectAntiBotBlock(BLOCKED_HTML)).toBe('blocked');
+  });
+
+  it('detectAntiBotBlock returns null for a real Amazon product page (no false positive)', async () => {
+    const { detectAntiBotBlock } = await import(
+      '../../../../src/extraction/site-extractors/amazon.js'
+    );
+    expect(detectAntiBotBlock(ELECTRONICS_HTML)).toBeNull();
+  });
+
+  it('extract returns null on a blocked / not-found body (audit C5 — must not pretend success)', () => {
+    expect(amazonExtractor.extract(BLOCKED_HTML, url)).toBeNull();
+  });
+});

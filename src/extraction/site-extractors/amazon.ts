@@ -43,6 +43,35 @@ const AMAZON_HOSTS = new Set([
 const PRODUCT_PATH_RE = /\/(dp|gp\/product|gp\/aw\/d)\/[A-Z0-9]{10}\b/i;
 const ASIN_RE = /\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Z0-9]{10})\b/i;
 
+// Slice S7 (C5): Amazon frequently returns a generic "Looking for something?
+// / Page Not Found" landing when an ASIN is unrecognized or when the request
+// trips bot detection. The previous behavior was to silently extract an
+// empty product record and pretend success. Detect the canonical "not
+// found" / "robot check" phrases so we can refuse to produce fake site_data
+// and tell the caller via fetch_failed="blocked".
+const AMAZON_BLOCK_PATTERNS: RegExp[] = [
+  /page not found/i,
+  /not a functioning page on our site/i,
+  /sorry,?\s*we just need to make sure you'?re not a robot/i,
+  /to discuss automated access to amazon data/i,
+  /enter the characters you see below/i,
+];
+
+export function detectAntiBotBlock(html: string): string | null {
+  if (!html) return null;
+  // Quick negative on real product pages: a #productTitle node is the
+  // canonical signal that the page actually rendered a product. Skip the
+  // expensive regex sweep when we see it — avoids any chance of a false
+  // positive on a legitimate product whose description happens to include
+  // a "not found" review snippet.
+  if (/id="productTitle"/i.test(html.slice(0, 30_000))) return null;
+  const sample = html.slice(0, 10_000);
+  for (const re of AMAZON_BLOCK_PATTERNS) {
+    if (re.test(sample)) return 'blocked';
+  }
+  return null;
+}
+
 const CURRENCY_SYMBOLS: Array<[RegExp, string]> = [
   [/US\s?\$/i, 'USD'],
   [/CA\s?\$/i, 'CAD'],
@@ -463,6 +492,10 @@ export const amazonExtractor: Extractor = {
   },
 
   extract(html: string, url: string): ExtractionResult | null {
+    // Slice S7 (C5): refuse to produce site_data when the body is a known
+    // anti-bot / page-not-found landing. The caller learns about this via
+    // the fetch envelope's fetch_failed="blocked" surface (set in routed.ts).
+    if (detectAntiBotBlock(html)) return null;
     const product = extractAmazonProduct(html, url);
     if (!product) return null;
 

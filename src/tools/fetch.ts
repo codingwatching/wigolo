@@ -280,6 +280,14 @@ export async function handleFetch(
       // Surfacing at top level (rather than nesting under `extra`) matches
       // the existing house style for `evidence` / `screenshot`.
       ...(extraction.site_data ? { site_data: extraction.site_data } : {}),
+      // Slice S7 (C5): partial-success marker. When a Reddit / Amazon site
+      // extractor detected an anti-bot or page-not-found body, the routed
+      // extractor sets `site_data_blocked` and we surface it on the envelope
+      // as `fetch_failed` so callers branch honestly. site_data is
+      // intentionally absent in that case.
+      ...(extraction.site_data_blocked
+        ? { fetch_failed: extraction.site_data_blocked }
+        : {}),
     };
 
     capAuxFields(out, input.max_content_chars);

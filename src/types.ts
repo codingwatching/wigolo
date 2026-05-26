@@ -111,6 +111,16 @@ export interface FetchOutput {
    * cached row predates the column being persisted.
    */
   http_status?: number;
+  /**
+   * Slice S7 (C5): partial-success marker. The HTTP fetch returned bytes and
+   * the page rendered, but a site-specific extractor (Reddit / Amazon) saw a
+   * known anti-bot / not-found challenge body and refused to emit `site_data`.
+   * `"blocked"` is the canonical value. Absent when the extractor either
+   * matched cleanly (site_data present) or never matched at all (generic
+   * page). Callers branch on this instead of treating the fallback markdown
+   * as a real site_data payload.
+   */
+  fetch_failed?: string;
 }
 
 export interface RawFetchResult {
@@ -161,6 +171,15 @@ export interface ExtractionResult {
    * extractor source for the field contract.
    */
   site_data?: Record<string, unknown>;
+  /**
+   * Slice S7 (C5): when a site extractor's URL matched but the response body
+   * was a known anti-bot / not-found challenge (Reddit "blocked by network
+   * security", Amazon "Page Not Found", etc.), the extractor sets this to the
+   * short reason code (e.g. `"blocked"`) instead of producing fake `site_data`.
+   * Surfaces on `FetchOutput.fetch_failed` so callers can branch honestly
+   * rather than treating the fallback markdown as a real site_data payload.
+   */
+  site_data_blocked?: string;
 }
 
 export type ExtractorType = 'defuddle' | 'readability' | 'turndown' | 'site-specific';
@@ -1006,6 +1025,20 @@ export interface MatchSignals {
   fused_score: number;
 }
 
+/**
+ * Slice S7 (M10): opt-in per-result ranking debug. The audit observed that
+ * `fts5_rank` and `embedding_rank` often disagree without any way to inspect
+ * the disagreement; this surfaces the raw per-source ranks plus the fused
+ * score so callers can audit the RRF behavior. Only emitted when
+ * `FindSimilarInput.include_ranking_debug` is true.
+ */
+export interface RankingDebug {
+  fts5_rank?: number;
+  embedding_rank?: number;
+  web_rank?: number;
+  rrf_score: number;
+}
+
 export interface FindSimilarResult {
   url: string;
   title: string;
@@ -1013,6 +1046,8 @@ export interface FindSimilarResult {
   relevance_score: number;
   source: 'cache' | 'search';
   match_signals: MatchSignals;
+  /** Slice S7 (M10): opt-in via FindSimilarInput.include_ranking_debug. */
+  ranking_debug?: RankingDebug;
 }
 
 export interface FindSimilarInput {
@@ -1038,6 +1073,13 @@ export interface FindSimilarInput {
    * one the audit's H8 case reports (`threshold: 0.95` vs `fused_score: 0.029`).
    */
   threshold?: number;
+  /**
+   * Slice S7 (M10): when true, every result includes a `ranking_debug` block
+   * with the raw fts5/embedding/web ranks and the raw RRF score so callers
+   * can inspect rank disagreement. Off by default — the standard response
+   * shape stays slim.
+   */
+  include_ranking_debug?: boolean;
 }
 
 export interface FindSimilarOutput {

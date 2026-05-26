@@ -206,6 +206,111 @@ describe('integration: fetch surfaces site_data for amazon', () => {
   });
 });
 
+// Slice S7 (C5): audit found Reddit "blocked by network security" responses
+// were silently emitted with no site_data and no caller-visible signal — the
+// caller could not tell whether the page actually had no site data or
+// whether the bytes were a bot challenge. The extractor must short-circuit
+// AND the fetch envelope must surface `fetch_failed: "blocked"`.
+describe('integration: fetch surfaces fetch_failed=blocked when reddit is anti-bot blocked (audit C5)', () => {
+  beforeEach(() => {
+    initDatabase(':memory:');
+    resetConfig();
+  });
+  afterEach(() => {
+    closeDatabase();
+    resetConfig();
+  });
+
+  it('returns NO site_data on a Reddit anti-bot challenge body (audit C5 reddit pretending success)', async () => {
+    const html = load(siteFixturesDir, 'reddit-blocked.html');
+    const url =
+      'https://old.reddit.com/r/programming/comments/abc123/blocked/';
+    const router = makeRouter(url, html);
+
+    const r = await handleFetch({ url }, router);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    expect(r.data.site_data).toBeUndefined();
+  });
+
+  it('surfaces fetch_failed="blocked" on the envelope (audit C5 reddit honest failure)', async () => {
+    const html = load(siteFixturesDir, 'reddit-blocked.html');
+    const url =
+      'https://old.reddit.com/r/programming/comments/abc123/blocked/';
+    const router = makeRouter(url, html);
+
+    const r = await handleFetch({ url }, router);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    expect(r.data.fetch_failed).toBe('blocked');
+  });
+
+  it('does NOT set fetch_failed on a real Reddit thread (no regression)', async () => {
+    const html = load(siteFixturesDir, 'reddit-thread.html');
+    const url =
+      'https://old.reddit.com/r/programming/comments/abc123/whats_your_favorite_typescript_trick/';
+    const router = makeRouter(url, html);
+
+    const r = await handleFetch({ url }, router);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    expect(r.data.fetch_failed).toBeUndefined();
+    expect(r.data.site_data).toBeDefined();
+  });
+});
+
+// Slice S7 (C5): same as above for Amazon Page Not Found / anti-bot pages.
+describe('integration: fetch surfaces fetch_failed=blocked when amazon is page-not-found (audit C5)', () => {
+  beforeEach(() => {
+    initDatabase(':memory:');
+    resetConfig();
+  });
+  afterEach(() => {
+    closeDatabase();
+    resetConfig();
+  });
+
+  it('returns NO site_data on an Amazon Page Not Found body (audit C5 amazon pretending success)', async () => {
+    const html = load(amazonFixturesDir, 'blocked.html');
+    const url = 'https://www.amazon.com/dp/B08N5WRWNW/';
+    const router = makeRouter(url, html);
+
+    const r = await handleFetch({ url }, router);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    expect(r.data.site_data).toBeUndefined();
+  });
+
+  it('surfaces fetch_failed="blocked" on the envelope (audit C5 amazon honest failure)', async () => {
+    const html = load(amazonFixturesDir, 'blocked.html');
+    const url = 'https://www.amazon.com/dp/B08N5WRWNW/';
+    const router = makeRouter(url, html);
+
+    const r = await handleFetch({ url }, router);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    expect(r.data.fetch_failed).toBe('blocked');
+  });
+
+  it('does NOT set fetch_failed on a real Amazon product page (no regression)', async () => {
+    const html = load(amazonFixturesDir, 'electronics.html');
+    const url = 'https://www.amazon.com/dp/B08N5WRWNW/';
+    const router = makeRouter(url, html);
+
+    const r = await handleFetch({ url }, router);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    expect(r.data.fetch_failed).toBeUndefined();
+    expect(r.data.site_data).toBeDefined();
+  });
+});
+
 describe('integration: fetch omits site_data for non-site-extractor URLs', () => {
   beforeEach(() => {
     initDatabase(':memory:');

@@ -26,6 +26,31 @@ export interface RedditThread {
 
 const THREAD_URL_RE = /\/r\/[^/]+\/comments\/[^/]+/;
 
+// Slice S7 (C5): the Reddit response sometimes comes back as a generic
+// "Whoa there, partner" / "blocked by network security" body when the
+// upstream firewall flags the user-agent. The extractor used to parse that
+// as a normal page, emit empty site_data, and silently pretend success.
+// Detect the canonical block phrases so we can refuse to produce fake
+// site_data and tell the caller via fetch_failed="blocked".
+const REDDIT_BLOCK_PATTERNS: RegExp[] = [
+  /blocked by network security/i,
+  /whoa there,\s*partner/i,
+  /our cdn was unable to reach our servers/i,
+  /access to this page has been denied/i,
+];
+
+export function detectAntiBotBlock(html: string): string | null {
+  if (!html) return null;
+  // Limit the scan to the first ~10k chars — block bodies are tiny banner
+  // pages; scanning megabytes of legitimate HTML would be wasteful and the
+  // banner always appears near the top.
+  const sample = html.slice(0, 10_000);
+  for (const re of REDDIT_BLOCK_PATTERNS) {
+    if (re.test(sample)) return 'blocked';
+  }
+  return null;
+}
+
 function isRedditHost(hostname: string): boolean {
   return (
     hostname === 'reddit.com' ||
@@ -255,6 +280,10 @@ export const redditExtractor: Extractor = {
 
   extract(html: string, url: string): ExtractionResult | null {
     if (!html) return null;
+    // Slice S7 (C5): refuse to produce site_data when the body is a known
+    // anti-bot / firewall challenge page. The caller learns about this via
+    // the fetch envelope's fetch_failed="blocked" surface (set in routed.ts).
+    if (detectAntiBotBlock(html)) return null;
     const thread = extractRedditThread(html, url);
     if (!thread) return null;
     if (!thread.title) return null;

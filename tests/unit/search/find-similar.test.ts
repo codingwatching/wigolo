@@ -514,6 +514,81 @@ describe('findSimilar', () => {
     }
   });
 
+  // Slice S7 (H9): audit case "retrieval augmented generation" → 1 irrelevant
+  // result with NO cold_start. Now: concept mode with a thin local-cache
+  // signal (very few cache hits and no web fallback) must emit cold_start so
+  // the host LLM can tell the user the result is weakly grounded.
+  it('emits cold_start when concept mode returns only 1 cache hit with no web fallback (audit H9 RAG case)', async () => {
+    // Seed a populated-but-irrelevant cache (matching the audit case: cache
+    // had many pages, but the concept query only weakly matched one). We
+    // share one token ('generation') with a single page so FTS5 returns one
+    // hit, then the H9 thin-cache cold_start must fire because the local
+    // signal is too thin to trust.
+    seedCache(
+      'https://example.com/deployment',
+      'Deployment environment',
+      '# Deployment environment\n\nA deployment environment is a setup used in the next generation of software deployment.',
+    );
+    // Add 4 unrelated pages so cache size > 3 (the H9 threshold). None
+    // overlap with the RAG query — they exist solely so the cache size
+    // reflects a real, populated index where the per-query thinness is the
+    // signal.
+    for (let i = 0; i < 4; i++) {
+      seedCache(
+        `https://unrelated-${i}.example`,
+        `Unrelated ${i}`,
+        `# Unrelated topic ${i}\n\nThis page is about something completely different from the query.`,
+      );
+    }
+
+    const result = await findSimilar(
+      {
+        concept: 'retrieval augmented generation',
+        include_cache: true,
+        include_web: false,
+      },
+      [mockSearchEngine],
+      mockRouter,
+    );
+
+    // Match the audit shape: at most a handful of cache hits, no web.
+    expect(result.results.length).toBeGreaterThan(0);
+    expect(result.results.length).toBeLessThanOrEqual(2);
+    expect(result.search_hits).toBe(0);
+    // Audit demands the cold_start signal fire here so the LLM knows the
+    // local-cache result is thin.
+    expect(result.cold_start).toBeDefined();
+    expect(result.cold_start).toMatch(/thin|too few|weak|sparse|cold|1 cache match|few cache match/i);
+  });
+
+  it('does NOT emit thin-cache cold_start when concept mode returns plenty of cache hits', async () => {
+    // Boundary: with 10+ matching pages and no thin-cache concern, the new
+    // H9 signal must stay silent. Other cold_start signals may still fire
+    // (e.g. embedding-unavailable) so we only assert the H9 message did not.
+    for (let i = 0; i < 10; i++) {
+      seedCache(
+        `https://example.com/rag-${i}`,
+        `RAG explainer ${i}`,
+        `# Retrieval augmented generation explainer ${i}\n\nA primer on retrieval augmented generation systems and patterns.`,
+      );
+    }
+
+    const result = await findSimilar(
+      {
+        concept: 'retrieval augmented generation',
+        include_cache: true,
+        include_web: false,
+      },
+      [mockSearchEngine],
+      mockRouter,
+    );
+
+    expect(result.results.length).toBeGreaterThan(2);
+    if (result.cold_start) {
+      expect(result.cold_start).not.toMatch(/thin|too few|sparse|1 cache match|few cache match/i);
+    }
+  });
+
   it('sets cold_start when cache has many pages but none match this query and results come from web search', async () => {
     // Bench: cache had 39 pages but the find_similar query returned 0 cache
     // hits and the result was silently web-only — cold_start was documented
@@ -536,5 +611,84 @@ describe('findSimilar', () => {
       expect(result.cold_start).toBeDefined();
       expect(result.cold_start).toMatch(/no cache matches/i);
     }
+  });
+
+  // Slice S7 (M10): audit found fts5_rank and embedding_rank disagree
+  // without any way for the caller to inspect the disagreement. Add an
+  // opt-in `ranking_debug` field per result, off by default.
+  describe('ranking_debug (audit M10)', () => {
+    it('omits ranking_debug by default (no shape regression)', async () => {
+      seedCache(
+        'https://react.dev/hooks',
+        'React Hooks',
+        '# React Hooks\n\nHooks for **state** management.',
+      );
+
+      const result = await findSimilar(
+        { concept: 'React hooks', include_web: false },
+        [mockSearchEngine],
+        mockRouter,
+      );
+
+      expect(result.results.length).toBeGreaterThan(0);
+      for (const r of result.results) {
+        expect(r.ranking_debug).toBeUndefined();
+      }
+    });
+
+    it('emits ranking_debug with fts5_rank + rrf_score when include_ranking_debug=true on cache-only results', async () => {
+      seedCache(
+        'https://react.dev/hooks',
+        'React Hooks',
+        '# React Hooks\n\nHooks for **state** management.',
+      );
+      seedCache(
+        'https://vuejs.org/guide',
+        'Vue Guide',
+        '# Vue Guide\n\nReactive **state** management.',
+      );
+
+      const result = await findSimilar(
+        {
+          concept: 'state management',
+          include_web: false,
+          include_ranking_debug: true,
+        },
+        [mockSearchEngine],
+        mockRouter,
+      );
+
+      expect(result.results.length).toBeGreaterThan(0);
+      for (const r of result.results) {
+        expect(r.ranking_debug).toBeDefined();
+        expect(typeof r.ranking_debug!.rrf_score).toBe('number');
+        // Every cache result must surface its fts5_rank in the debug block;
+        // the audit's complaint is that the disagreement between fts5 and
+        // embedding ranks was opaque.
+        expect(typeof r.ranking_debug!.fts5_rank).toBe('number');
+      }
+    });
+
+    it('emits ranking_debug with web_rank when include_ranking_debug=true and results come from web search', async () => {
+      const result = await findSimilar(
+        {
+          concept: 'quantum computing latest research',
+          include_cache: false,
+          include_web: true,
+          include_ranking_debug: true,
+        },
+        [mockSearchEngine],
+        mockRouter,
+      );
+
+      expect(result.search_hits).toBeGreaterThan(0);
+      for (const r of result.results) {
+        if (r.source === 'search') {
+          expect(r.ranking_debug).toBeDefined();
+          expect(typeof r.ranking_debug!.web_rank).toBe('number');
+          expect(typeof r.ranking_debug!.rrf_score).toBe('number');
+        }
+      }
+    });
   });
 });
