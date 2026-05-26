@@ -169,7 +169,8 @@ Use \`search_depth\` to trade latency for thoroughness:
 ## Response shape extras
 
 - \`response_time_ms\` -- Tavily-canonical alias of \`total_time_ms\`. Always emitted.
-- \`engines_used\` / \`engine_telemetry\` -- which engines fired, per-engine latency, result count, outcome, and how many results survived dedup into the fused list.
+- \`engines_used\` -- engines that contributed >= 1 result to the deduped fused list (semantic, "who ended up in the answer").
+- \`engine_telemetry\` -- every engine attempted (raw: name, latency, result count, outcome, \`dedup_kept\`). Distinct from \`engines_used\` -- empty/errored engines appear here but not there.
 - \`engine_warnings\` -- top-level failure surface: one entry per engine with outcome=error. Stable \`code\` (\`http_4xx\` / \`http_5xx\` / \`timeout\` / \`dns\` / \`error\`) plus optional \`hint\` that names the env var to set when an engine needs an API key (e.g. github-code → \`WIGOLO_GITHUB_TOKEN\`).
 - \`include_engine_outcomes: true\` -- opt-in per-engine debug rows.
 - \`include_images: true\` -- aggregate top-level \`images[]\` from engines that surface them.

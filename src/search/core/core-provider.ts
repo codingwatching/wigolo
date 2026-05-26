@@ -220,11 +220,6 @@ export class CoreSearchProvider implements SearchProvider {
           ? dispatches[0].results
           : fuseRankedLists(dispatches.map((d) => d.results));
 
-      const enginesUsedSet = new Set<string>();
-      for (const d of dispatches) {
-        for (const e of d.enginesUsed) enginesUsedSet.add(e);
-      }
-      enginesUsed = [...enginesUsedSet];
       allDegraded = dispatches.every((d) => d.degraded);
 
       if (input.include_engine_outcomes) {
@@ -280,6 +275,29 @@ export class CoreSearchProvider implements SearchProvider {
         }
       }
       engineTelemetry = [...telemetryByEngine.values()];
+
+      // Slice 8 / M1: `engines_used` = engines that contributed >= 1 result
+      // to the deduped fused list (semantic — "who ended up in the answer").
+      // `engine_telemetry` already carries the per-engine dedup_kept count;
+      // deriving `engines_used` from it here keeps the two surfaces in sync
+      // and rules out empty/errored engines that the old code would still
+      // list because they "fired ok" but contributed nothing.
+      //
+      // Fall back to the union of `dispatch.enginesUsed` only when the
+      // dispatch layer didn't surface any telemetry rows (mocks in tests,
+      // legacy paths) — that path mirrors the pre-M1 behavior so the
+      // top-level array is never empty when engines actually fired.
+      if (engineTelemetry.length > 0) {
+        enginesUsed = engineTelemetry
+          .filter((t) => t.dedup_kept > 0)
+          .map((t) => t.name);
+      } else {
+        const enginesUsedSet = new Set<string>();
+        for (const d of dispatches) {
+          for (const e of d.enginesUsed) enginesUsedSet.add(e);
+        }
+        enginesUsed = [...enginesUsedSet];
+      }
 
       let processed = fused;
 

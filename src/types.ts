@@ -377,6 +377,12 @@ export interface SearchResultItem {
 export interface SearchOutput {
   results: SearchResultItem[];
   query: string;
+  /** Semantic view: engines that contributed >= 1 result to the deduped
+   * fused list (i.e. "who ended up in the answer"). Empty engines and
+   * errored engines are excluded — see `engine_telemetry` for the raw
+   * attempt log of every engine that fired. The two arrays answer
+   * different questions and intentionally disagree when an engine
+   * returned nothing or got fully de-duped out. */
   engines_used: string[];
   total_time_ms: number;
   /** Tavily-canonical alias of total_time_ms. Always emitted. */
@@ -396,9 +402,12 @@ export interface SearchOutput {
   /** Present only when input.include_engine_outcomes is true and the call
    * went to the engine pool (cache hits don't populate it). */
   engine_outcomes?: EngineOutcomeSummary[];
-  /** Always emitted on the engine-pool path. Richer view of `engines_used`:
-   * per-engine name, latency, result count, outcome, and how many of that
-   * engine's results survived dedup into the final fused list. */
+  /** Raw attempt log: every engine that was dispatched, regardless of
+   * whether it returned results, succeeded, or errored. Each row carries
+   * name, latency, result_count, outcome, and `dedup_kept` (how many of
+   * that engine's results survived dedup into the final fused list).
+   * Distinct from `engines_used`, which is the SEMANTIC view (contributors
+   * only, derived from rows where `dedup_kept > 0`). */
   engine_telemetry?: EngineTelemetry[];
   /** Slice S1 (M2): top-level failure surface, always emitted on the
    * engine-pool path (empty array when no engine errored). Promotes
