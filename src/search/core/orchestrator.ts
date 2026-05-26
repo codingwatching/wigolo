@@ -263,6 +263,11 @@ export async function runV1Search(
   // from secondary engines (see sub-ticket 2.2).
   const urlPrimaryCount = new Map<string, number>();
   const urlSecondaryCount = new Map<string, number>();
+  // exact_match phrase awareness (audit C7): record every URL where at least
+  // one contributing engine's title+snippet contained the exact phrase. Used
+  // post-merge to filter without dropping URLs that another engine matched
+  // but whose first-seen variant (kept by urlToResult) happens not to match.
+  const urlExactMatchHit = new Set<string>();
 
   for (let i = 0; i < outcomes.length; i++) {
     const outcome = outcomes[i];
@@ -286,6 +291,10 @@ export async function runV1Search(
         urlSecondaryCount.set(r.url, (urlSecondaryCount.get(r.url) ?? 0) + 1);
       } else {
         urlPrimaryCount.set(r.url, (urlPrimaryCount.get(r.url) ?? 0) + 1);
+      }
+      if (exactPhrase) {
+        const hay = `${r.title} ${r.snippet}`.toLowerCase();
+        if (hay.includes(exactPhrase)) urlExactMatchHit.add(r.url);
       }
     }
   }
@@ -369,7 +378,14 @@ export async function runV1Search(
     });
   }
   if (exactPhrase) {
+    // C7: union of (urlExactMatchHit observed during ingest) ∪ (post-merge
+    // title+snippet match on the urlToResult variant). The post-merge check
+    // catches the case where engines were rewritten/reranked between ingest
+    // and this point; the ingest set rescues URLs whose preferred variant
+    // (kept by urlToResult, first-seen wins) didn't have the phrase but
+    // another engine's variant did.
     merged = merged.filter((r) => {
+      if (urlExactMatchHit.has(r.url)) return true;
       const hay = `${r.title} ${r.snippet}`.toLowerCase();
       return hay.includes(exactPhrase);
     });

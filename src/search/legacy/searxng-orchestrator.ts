@@ -30,15 +30,20 @@ const MAX_RESULTS_CAP = 20;
 const DEFAULT_CONTENT_MAX_CHARS = 30000;
 const DEFAULT_MAX_TOTAL_CHARS = 50000;
 
-function filterByExactPhrases<T extends { title: string; snippet: string }>(
-  results: T[],
+// C7: collect the set of URLs whose RAW (pre-dedup) title+snippet matched any
+// exact phrase across any engine. Used to rescue URLs whose dedup-collapsed
+// variant happens to lack the phrase even though another engine's copy had it.
+function collectExactMatchUrls(
+  results: RawSearchResult[],
   phrases: string[],
-): T[] {
-  if (phrases.length === 0) return results;
-  return results.filter((r) => {
+): Set<string> {
+  const hits = new Set<string>();
+  if (phrases.length === 0) return hits;
+  for (const r of results) {
     const hay = `${r.title} ${r.snippet}`.toLowerCase();
-    return phrases.some((p) => hay.includes(p));
-  });
+    if (phrases.some((p) => hay.includes(p))) hits.add(r.url);
+  }
+  return hits;
 }
 
 export async function runSearxngSearch(
@@ -251,6 +256,10 @@ export async function runSearxngSearch(
 
     await emit(2, 5, `Deduplicating and reranking ${filteredRaw.length} results...`);
 
+    // C7: snapshot the URLs that matched the phrase pre-dedup so we can
+    // rescue results whose post-dedup variant lacks the phrase.
+    const exactMatchUrlsMq = collectExactMatchUrls(filteredRaw, exactPhrases);
+
     let merged = deduplicateResults(filteredRaw);
 
     merged = applyAllFilters(merged, {
@@ -261,7 +270,13 @@ export async function runSearxngSearch(
       category: input.category,
     });
 
-    merged = filterByExactPhrases(merged, exactPhrases);
+    if (exactPhrases.length > 0) {
+      merged = merged.filter((r) => {
+        if (exactMatchUrlsMq.has(r.url)) return true;
+        const hay = `${r.title} ${r.snippet}`.toLowerCase();
+        return exactPhrases.some((p) => hay.includes(p));
+      });
+    }
 
     const intentString = synthesizeIntent(normalizedQueries);
     merged = await rerankResults(intentString, merged, { skip: mode === 'cache' });
@@ -464,6 +479,10 @@ export async function runSearxngSearch(
 
   await emit(2, 5, `Deduplicating and reranking ${filteredAllRaw.length} results...`);
 
+  // C7: snapshot exact-phrase hits pre-dedup, then union with post-dedup
+  // matches when filtering (same rationale as the multi-query path above).
+  const exactMatchUrlsSq = collectExactMatchUrls(filteredAllRaw, exactPhrases);
+
   let merged = deduplicateResults(filteredAllRaw);
 
   merged = applyAllFilters(merged, {
@@ -474,7 +493,13 @@ export async function runSearxngSearch(
     category: input.category,
   });
 
-  merged = filterByExactPhrases(merged, exactPhrases);
+  if (exactPhrases.length > 0) {
+    merged = merged.filter((r) => {
+      if (exactMatchUrlsSq.has(r.url)) return true;
+      const hay = `${r.title} ${r.snippet}`.toLowerCase();
+      return exactPhrases.some((p) => hay.includes(p));
+    });
+  }
 
   merged = await rerankResults(queryStr, merged, { skip: mode === 'cache' });
   if (mode !== 'cache') merged = await validateLinks(merged);
