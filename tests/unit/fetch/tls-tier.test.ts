@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { resetConfig } from '../../../src/config.js';
+import { createRequire } from 'node:module';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { getConfig, resetConfig, validateTlsBrowser } from '../../../src/config.js';
 import {
   isAntiBotStatus,
   hasChallengeBody,
@@ -11,6 +12,19 @@ import {
   _resetTlsBackend,
   TlsTierUnavailableError,
 } from '../../../src/fetch/tls-tier.js';
+
+// Detect whether the optional `wreq-js` napi binary is loadable in this
+// environment. On unsupported platforms / `npm install --omit=optional` the
+// package is absent and the real-binary stdio test must be skipped.
+const wreqJsAvailable = (() => {
+  try {
+    const req = createRequire(import.meta.url);
+    req.resolve('wreq-js');
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 const originalEnv = process.env;
 
@@ -196,4 +210,129 @@ describe('tls-tier: MCP-stdio safety', () => {
 
     expect(stdoutWrites).toBe(0);
   });
+});
+
+describe('config: WIGOLO_TLS_BROWSER allowlist', () => {
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    resetConfig();
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    resetConfig();
+  });
+
+  it('accepts a whitelisted chrome profile verbatim', () => {
+    expect(validateTlsBrowser('chrome_142', 'chrome_142')).toBe('chrome_142');
+    expect(validateTlsBrowser('firefox_133', 'chrome_142')).toBe('firefox_133');
+    expect(validateTlsBrowser('safari_17', 'chrome_142')).toBe('safari_17');
+    expect(validateTlsBrowser('edge_138', 'chrome_142')).toBe('edge_138');
+    expect(validateTlsBrowser('opera_105', 'chrome_142')).toBe('opera_105');
+  });
+
+  it('falls back to the default on typo / unknown family', () => {
+    // Spy on stderr so the warning doesn't pollute test output AND so we can
+    // assert it fires. WHY — the warning is the user-visible signal that
+    // their env var was ignored; silent fallback would be a worse bug.
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      expect(validateTlsBrowser('chrme_142', 'chrome_142')).toBe('chrome_142');
+      expect(validateTlsBrowser('netscape_4', 'chrome_142')).toBe('chrome_142');
+      expect(validateTlsBrowser('chrome_', 'chrome_142')).toBe('chrome_142');
+      expect(validateTlsBrowser('chrome_abc', 'chrome_142')).toBe('chrome_142');
+      expect(validateTlsBrowser('; rm -rf /', 'chrome_142')).toBe('chrome_142');
+      expect(stderrSpy).toHaveBeenCalled();
+      expect(stderrSpy.mock.calls.length).toBeGreaterThanOrEqual(5);
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it('returns the default on null/empty input without warning', () => {
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      expect(validateTlsBrowser(null, 'chrome_142')).toBe('chrome_142');
+      expect(validateTlsBrowser(undefined, 'chrome_142')).toBe('chrome_142');
+      expect(validateTlsBrowser('', 'chrome_142')).toBe('chrome_142');
+      expect(stderrSpy).not.toHaveBeenCalled();
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it('getConfig().tlsBrowser surfaces the default when env var is hostile', () => {
+    process.env.WIGOLO_TLS_BROWSER = 'chrme_142';
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      const cfg = getConfig();
+      expect(cfg.tlsBrowser).toBe('chrome_142');
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it('getConfig().tlsBrowser honours a valid override', () => {
+    process.env.WIGOLO_TLS_BROWSER = 'firefox_133';
+    const cfg = getConfig();
+    expect(cfg.tlsBrowser).toBe('firefox_133');
+  });
+});
+
+// Real-binary stdio test — exercises the actual wreq-js napi binding to catch
+// future regressions where the underlying Rust code starts writing to stdout
+// (which would corrupt MCP JSON-RPC framing). The stubbed test above proves
+// our wrapper code stays quiet; this one proves the loaded native dep stays
+// quiet too. Skips when the optional dep is unavailable for the host
+// platform.
+describe.skipIf(!wreqJsAvailable)('tls-tier: real wreq-js binary stdio safety', () => {
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    resetConfig();
+    _resetTlsBackend();
+    _setTlsBackendForTests(null);
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    resetConfig();
+    _setTlsBackendForTests(null);
+    _resetTlsBackend();
+  });
+
+  it('never writes to process.stdout when the real wreq-js backend executes', async () => {
+    // WHY — the napi binary loaded by tlsFetch() runs Rust code that, in
+    // principle, could write diagnostics to stdout. D1 spike verified silent
+    // operation; this test catches regressions if a future wreq-js release
+    // starts logging or if a build flag flips. MCP servers transport JSON-RPC
+    // over stdout, so any stray byte breaks the protocol.
+
+    let stdoutWrites = 0;
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((..._args: unknown[]) => {
+      stdoutWrites++;
+      return true;
+    }) as typeof process.stdout.write;
+
+    try {
+      // Real call against a known-stable host. We don't care whether it
+      // succeeds or fails — both paths route through the napi binding and
+      // both must remain silent on stdout. A network error is a perfectly
+      // valid execution that still loads the binary.
+      try {
+        await tlsFetch('https://example.com/', { timeoutMs: 5000 });
+      } catch (err) {
+        // Either resolves or throws — only stdout matters.
+        if (err instanceof TlsTierUnavailableError) {
+          // Should not happen since wreqJsAvailable is true, but bail
+          // gracefully rather than masking the stdout assertion.
+          throw err;
+        }
+      }
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    expect(stdoutWrites).toBe(0);
+  }, 20000);
 });

@@ -88,6 +88,20 @@ export function _setTlsBackendForTests(backend: LoadedTlsBackend | null): void {
   _resetTlsBackend();
 }
 
+// Module specifier held as a `string` (not a string literal) so the TS
+// compiler skips module resolution. `wreq-js` is declared in
+// `optionalDependencies` and may be absent when the host platform has no
+// prebuilt napi binary OR when the user runs `npm install --omit=optional`.
+// Resolving it as a literal would break `tsc --noEmit` on those installs;
+// the dynamic import still throws at runtime and we surface that as
+// `TlsTierUnavailableError`.
+const WREQ_MODULE_ID: string = 'wreq-js';
+
+interface WreqJsModuleShape {
+  fetch?: WreqFetch;
+  default?: { fetch?: WreqFetch };
+}
+
 async function loadBackend(): Promise<LoadedTlsBackend> {
   if (_testBackendOverride) return _testBackendOverride;
   if (_backendCached) return _backendCached;
@@ -96,7 +110,7 @@ async function loadBackend(): Promise<LoadedTlsBackend> {
     try {
       // Dynamic import keeps the napi binary out of the module graph for
       // every command that doesn't actually invoke the TLS tier.
-      const mod = (await import('wreq-js')) as { fetch?: WreqFetch; default?: { fetch?: WreqFetch } };
+      const mod = (await import(WREQ_MODULE_ID)) as WreqJsModuleShape;
       const fetchFn: WreqFetch | undefined = mod.fetch ?? mod.default?.fetch;
       if (!fetchFn) {
         throw new Error('wreq-js: no fetch export found');
