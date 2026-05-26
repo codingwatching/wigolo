@@ -91,6 +91,7 @@ export async function fetchContentForResults(
 ): Promise<void> {
   const cap = ctx.maxFetches !== undefined ? ctx.maxFetches : results.length;
   const fetchTargets = results.slice(0, cap);
+  const attempted = new Set<string>(fetchTargets.map((r) => r.url));
   const fetched = await Promise.all(
     fetchTargets.map((r) => fetchOne(r.url, router, ctx)),
   );
@@ -99,23 +100,49 @@ export async function fetchContentForResults(
   // content lands in the backup's own SearchResultItem (preserving the
   // failed slot's diagnostic info) — callers can then see both the
   // attempted failure and the substitute success.
-  if (cap > 1 && results.length > cap && Date.now() < ctx.totalDeadline) {
-    let backupIdx = cap;
-    for (let i = 0; i < fetchTargets.length; i++) {
-      if (fetched[i].content !== undefined) continue;
-      // Walk the backup list for one that succeeds within remaining budget.
-      while (backupIdx < results.length && Date.now() < ctx.totalDeadline) {
-        const backup = results[backupIdx];
-        backupIdx++;
-        const tryBackup = await fetchOne(backup.url, router, ctx);
-        if (tryBackup.content !== undefined) {
-          // Apply char-budget directly to the backup — we account for it
-          // in the loop below by pushing this slot in.
-          fetchTargets.push(backup);
-          fetched.push(tryBackup);
-          break;
-        }
-        // Else: backup also failed, keep walking deeper candidates.
+  //
+  // Wave strategy: count how many top slots still need a backup, then fire
+  // that many deeper-candidate fetches IN PARALLEL. If some of those waves
+  // also fail, repeat with the next batch. This preserves the
+  // "no more than `cap` successful fetches" invariant while keeping wall-
+  // clock close to a single fetch duration — slot-by-slot serialization
+  // would multiply latency by the number of failed slots.
+  if (cap > 1 && results.length > cap) {
+    const originalFailedCount = fetched.filter((f) => f.content === undefined).length;
+    let backupsAccepted = 0;
+    let nextBackupIdx = cap;
+    while (
+      Date.now() < ctx.totalDeadline &&
+      nextBackupIdx < results.length &&
+      backupsAccepted < originalFailedCount
+    ) {
+      const stillNeeded = originalFailedCount - backupsAccepted;
+
+      // Collect the next wave of backup candidates, dedup-protected and
+      // bounded by remaining results.length.
+      const wave: SearchResultItem[] = [];
+      while (wave.length < stillNeeded && nextBackupIdx < results.length) {
+        const candidate = results[nextBackupIdx];
+        nextBackupIdx++;
+        if (attempted.has(candidate.url)) continue;
+        attempted.add(candidate.url);
+        wave.push(candidate);
+      }
+      if (wave.length === 0) break;
+
+      const waveResults = await Promise.all(
+        wave.map((r) => fetchOne(r.url, router, ctx)),
+      );
+
+      // Promote successful backups into fetchTargets / fetched. The order
+      // of insertion mirrors the wave order, which keeps the relevance-
+      // ordered char-budget loop below deterministic.
+      for (let i = 0; i < wave.length; i++) {
+        if (waveResults[i].content === undefined) continue;
+        if (backupsAccepted >= originalFailedCount) break; // never overshoot cap
+        fetchTargets.push(wave[i]);
+        fetched.push(waveResults[i]);
+        backupsAccepted++;
       }
     }
   }

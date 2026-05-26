@@ -229,4 +229,101 @@ describe('fetchContentForResults — M16 backup behavior', () => {
     // Allow 0-2 calls depending on whether the per-fetch check fires.
     expect(callCount).toBeLessThanOrEqual(2);
   });
+
+  // --- Slice S1 (M16) follow-up: backup fetches must run in PARALLEL waves,
+  // not slot-by-slot. The original loop awaited each backup sequentially,
+  // which on the very requests that already had a bad day (all top fetches
+  // failed) inflated wall-clock to N × fetchTimeoutMs. This test pins the
+  // contract: backups for independent failed slots fire concurrently.
+  it('fires backup-fetch wave in parallel, not slot-by-slot (M16 perf fix)', async () => {
+    const fetchEntries: number[] = [];
+    const router = {
+      fetch: vi.fn(async (url: string) => {
+        fetchEntries.push(Date.now());
+        // Top fetches (any /top-) fail; backups (any /backup-) succeed
+        // after a small delay to keep their windows wide enough to detect
+        // sequential vs parallel.
+        if (url.includes('/top-')) {
+          throw new Error('timeout');
+        }
+        await new Promise((r) => setTimeout(r, 50));
+        return makeRaw(url);
+      }),
+    } as unknown as SmartRouter;
+
+    const cap = 5;
+    const results: SearchResultItem[] = [];
+    for (let i = 0; i < cap; i++) results.push(makeResult(`https://a.com/top-${i}`));
+    for (let i = 0; i < cap; i++) results.push(makeResult(`https://a.com/backup-${i}`));
+
+    await fetchContentForResults(results, router, {
+      contentMaxChars: 1000,
+      maxTotalChars: 10000,
+      fetchTimeoutMs: 5000,
+      totalDeadline: Date.now() + 60000,
+      forceRefresh: false,
+      maxFetches: cap,
+    });
+
+    // All 5 top fetches fired in parallel (the wave starts at roughly the
+    // same instant) — that part already worked before this fix.
+    expect(fetchEntries.length).toBe(2 * cap); // 5 top + 5 backups
+    const topEntries = fetchEntries.slice(0, cap);
+    const backupEntries = fetchEntries.slice(cap);
+
+    // The contract: backup entry timestamps should overlap (be issued
+    // concurrently), not serialize. Sequential mode would space them ≥ 50ms
+    // apart (each await blocks the next). Parallel mode should keep the
+    // window well under one fetch duration.
+    const backupSpread = Math.max(...backupEntries) - Math.min(...backupEntries);
+    expect(backupSpread).toBeLessThan(40);
+
+    // And both top + backup waves should land before sequential mode could
+    // (sequential = 5 × 50 = 250ms minimum for the backup loop alone).
+    const topStart = Math.min(...topEntries);
+    const backupEnd = Math.max(...backupEntries);
+    expect(backupEnd - topStart).toBeLessThan(150);
+
+    // Every slot got filled — 5 backups for 5 failed tops.
+    const filled = results.filter((r) => r.markdown_content !== undefined).length;
+    expect(filled).toBe(cap);
+  });
+
+  it('does NOT exceed cap when first backup wave succeeds for fewer than all failed slots', async () => {
+    const router = {
+      fetch: vi.fn(async (url: string) => {
+        // Top: fail. First two backups: fail. Remaining: succeed.
+        if (url.includes('/top-')) throw new Error('top-fail');
+        if (url.includes('/backup-0') || url.includes('/backup-1')) {
+          throw new Error('backup-fail');
+        }
+        return makeRaw(url);
+      }),
+    } as unknown as SmartRouter;
+
+    const cap = 3;
+    const results: SearchResultItem[] = [
+      makeResult('https://a.com/top-0'),
+      makeResult('https://a.com/top-1'),
+      makeResult('https://a.com/top-2'),
+      makeResult('https://a.com/backup-0'), // fails
+      makeResult('https://a.com/backup-1'), // fails
+      makeResult('https://a.com/backup-2'), // succeeds
+      makeResult('https://a.com/backup-3'), // succeeds
+      makeResult('https://a.com/backup-4'), // succeeds
+    ];
+
+    await fetchContentForResults(results, router, {
+      contentMaxChars: 1000,
+      maxTotalChars: 10000,
+      fetchTimeoutMs: 5000,
+      totalDeadline: Date.now() + 60000,
+      forceRefresh: false,
+      maxFetches: cap,
+    });
+
+    const filled = results.filter((r) => r.markdown_content !== undefined).length;
+    // Exactly cap successful pages — no more, no less.
+    expect(filled).toBe(cap);
+  });
 });
