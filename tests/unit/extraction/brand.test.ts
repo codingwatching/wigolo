@@ -332,10 +332,12 @@ describe('extractBrand — font hints', () => {
     expect(out.provenance?.fonts).toBe('css-vars');
   });
 
-  it('extracts fonts from inline body / h1-h6 font-family rules', () => {
+  it('extracts fonts from <style>-block body / h1-h6 font-family rules with provenance "css-rule"', () => {
     // Sites without CSS vars (older marketing pages) still declare
     // fonts via classic font-family on h1/body. We don't want to lose
-    // them — agents care about typography for brand pastiche.
+    // them — agents care about typography for brand pastiche. This
+    // path is provenance "css-rule" because the rule lives inside a
+    // <style> block, not on an element's inline style attribute.
     const html = wrap(`<style>
       body { font-family: "Inter", system-ui, sans-serif; }
       h1, h2 { font-family: "Inter Display", Inter, sans-serif; }
@@ -343,7 +345,7 @@ describe('extractBrand — font hints', () => {
     const out = extractBrand(html, { baseUrl: 'https://x.example/' });
     expect(out.fonts?.body).toContain('Inter');
     expect(out.fonts?.headings).toContain('Inter Display');
-    expect(out.provenance?.fonts).toBe('inline-style');
+    expect(out.provenance?.fonts).toBe('css-rule');
   });
 
   it('filters out generic font names (sans-serif, system-ui, helvetica)', () => {
@@ -353,6 +355,142 @@ describe('extractBrand — font hints', () => {
     const out = extractBrand(html, { baseUrl: 'https://x.example/' });
     expect(out.fonts?.body ?? []).not.toContain('sans-serif');
     expect(out.fonts?.body ?? []).not.toContain('system-ui');
+  });
+
+  it('extracts fonts from inline style="font-family:..." on <h1>', () => {
+    // Figma-style pattern. When a page sets the font directly on the
+    // header element via inline style, that's the strongest signal of
+    // the brand heading face.
+    const html = wrap(
+      '',
+      '<h1 style="font-family: \'Whyte\', sans-serif;">Headline</h1>',
+    );
+    const out = extractBrand(html, { baseUrl: 'https://x.example/' });
+    expect(out.fonts?.headings).toContain('Whyte');
+    expect(out.provenance?.fonts).toBe('inline-style');
+  });
+
+  it('extracts fonts from inline style on <body>', () => {
+    // Older marketing templates still set font-family at the body
+    // element via style attribute. We treat this as the body font.
+    const html =
+      '<!doctype html><html><head></head>' +
+      '<body style="font-family: \'Söhne\', sans-serif;">x</body></html>';
+    const out = extractBrand(html, { baseUrl: 'https://x.example/' });
+    expect(out.fonts?.body).toContain('Söhne');
+    expect(out.provenance?.fonts).toBe('inline-style');
+  });
+
+  it('extracts the brand font from a Google Fonts <link>', () => {
+    // Many sites use a single Google Fonts <link> as their primary
+    // type declaration. Picking the family= query param gives us a
+    // reliable brand font even when no other path fires.
+    const html = wrap(
+      '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap">',
+    );
+    const out = extractBrand(html, { baseUrl: 'https://x.example/' });
+    // Single-family case: both headings and body share the family —
+    // that's the common case and matches how sites use Google Fonts.
+    expect(out.fonts?.body).toContain('Inter');
+    expect(out.fonts?.headings).toContain('Inter');
+    expect(out.provenance?.fonts).toBe('google-fonts-link');
+  });
+
+  it('extracts multiple families from a Google Fonts <link> with family=A&family=B', () => {
+    const html = wrap(
+      '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Inter:wght@400;500&display=swap">',
+    );
+    const out = extractBrand(html, { baseUrl: 'https://x.example/' });
+    // Convention: the FIRST family is treated as the display/heading
+    // face, the second is the body face. This matches how most sites
+    // arrange the link tag.
+    expect(out.fonts?.headings).toContain('Playfair Display');
+    expect(out.fonts?.body).toContain('Inter');
+    expect(out.provenance?.fonts).toBe('google-fonts-link');
+  });
+
+  it('handles the legacy Google Fonts css endpoint (family=Inter:400,700)', () => {
+    const html = wrap(
+      '<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:400,700">',
+    );
+    const out = extractBrand(html, { baseUrl: 'https://x.example/' });
+    expect(out.fonts?.body).toContain('Inter');
+    expect(out.provenance?.fonts).toBe('google-fonts-link');
+  });
+
+  it('prefers CSS vars over CSS-rule over inline-style over Google Fonts when multiple sources exist', () => {
+    // Priority test. The strongest signal is an explicit CSS custom
+    // property; we must not silently downgrade it when a Google
+    // Fonts link also exists on the page.
+    const html = wrap(
+      `<style>:root { --font-body: "Sohne", sans-serif; }
+        body { font-family: "Should Lose", sans-serif; }</style>
+       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Should+Also+Lose&display=swap">`,
+      '<body style="font-family: \'Should Lose Too\', sans-serif;"></body>',
+    );
+    const out = extractBrand(html, { baseUrl: 'https://x.example/' });
+    expect(out.fonts?.body).toContain('Sohne');
+    expect(out.fonts?.body).not.toContain('Should Lose');
+    expect(out.fonts?.body).not.toContain('Should Also Lose');
+    expect(out.fonts?.body).not.toContain('Should Lose Too');
+    expect(out.provenance?.fonts).toBe('css-vars');
+  });
+
+  it('CSS-rule wins over inline-style attribute when CSS vars miss', () => {
+    const html = wrap(
+      `<style>body { font-family: "Inter", sans-serif; }</style>`,
+      '<body style="font-family: \'Wrong\', sans-serif;"></body>',
+    );
+    const out = extractBrand(html, { baseUrl: 'https://x.example/' });
+    expect(out.fonts?.body).toContain('Inter');
+    expect(out.fonts?.body).not.toContain('Wrong');
+    expect(out.provenance?.fonts).toBe('css-rule');
+  });
+
+  it('inline-style wins over Google Fonts <link> when CSS-rule misses', () => {
+    const html = wrap(
+      '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Should+Lose&display=swap">',
+      '<h1 style="font-family: \'Whyte\', sans-serif;">x</h1>',
+    );
+    const out = extractBrand(html, { baseUrl: 'https://x.example/' });
+    expect(out.fonts?.headings).toContain('Whyte');
+    expect(out.fonts?.headings).not.toContain('Should Lose');
+    expect(out.provenance?.fonts).toBe('inline-style');
+  });
+
+  it('returns fonts undefined and provenance "unknown" when no source fires', () => {
+    const html = wrap('<title>no fonts</title>');
+    const out = extractBrand(html, { baseUrl: 'https://x.example/' });
+    expect(out.fonts).toBeUndefined();
+    expect(out.provenance?.fonts).toBe('unknown');
+  });
+
+  it('does not emit fonts when the only family found is a generic family', () => {
+    // A `body { font-family: sans-serif; }` rule is honest about
+    // having no brand font — emitting `body: []` would be misleading.
+    const html = wrap(`<style>body { font-family: sans-serif; }</style>`);
+    const out = extractBrand(html, { baseUrl: 'https://x.example/' });
+    expect(out.fonts).toBeUndefined();
+    expect(out.provenance?.fonts).toBe('unknown');
+  });
+
+  it('strips generic families from CSS-rule output (sans-serif from "Inter, sans-serif")', () => {
+    const html = wrap(`<style>body { font-family: "Inter", sans-serif, system-ui; }</style>`);
+    const out = extractBrand(html, { baseUrl: 'https://x.example/' });
+    expect(out.fonts?.body).toContain('Inter');
+    expect(out.fonts?.body ?? []).not.toContain('sans-serif');
+    expect(out.fonts?.body ?? []).not.toContain('system-ui');
+  });
+
+  it('ignores non-Google-Fonts <link> tags', () => {
+    // A stylesheet link to some other CDN must not be misread as a
+    // font declaration just because we see `family=` in the URL.
+    const html = wrap(
+      '<link rel="stylesheet" href="https://cdn.example/app.css?family=NotAFont">',
+    );
+    const out = extractBrand(html, { baseUrl: 'https://x.example/' });
+    expect(out.fonts).toBeUndefined();
+    expect(out.provenance?.fonts).toBe('unknown');
   });
 });
 

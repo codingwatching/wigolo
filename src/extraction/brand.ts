@@ -547,6 +547,18 @@ function collectInlineCss(doc: Document): string {
   return blocks.join('\n');
 }
 
+/** `<style>` block content only — no inline-style attributes. Font extraction
+ *  needs to distinguish a CSS-rule selector (`body { font-family: … }`) from
+ *  a style attribute on a body element; mixing them defeats provenance. */
+function collectStyleBlockCss(doc: Document): string {
+  const blocks: string[] = [];
+  for (const style of doc.querySelectorAll('style')) {
+    const text = style.textContent;
+    if (text) blocks.push(text);
+  }
+  return blocks.join('\n');
+}
+
 interface ColorResult {
   colors: string[];
   source: ProvenanceColors;
@@ -630,58 +642,230 @@ function splitFontFamilyList(value: string): string[] {
     .filter((s) => s.length > 0 && !GENERIC_FONTS.has(s.toLowerCase()));
 }
 
-function extractFontsFromCss(css: string): FontResult {
-  if (!css) return { headings: [], body: [], source: 'unknown' };
+/** Parse `font-family:` from a raw inline-style attribute value. Returns the
+ *  brand-only family list (generics stripped). */
+function fontsFromStyleAttr(styleAttr: string | null | undefined): string[] {
+  if (!styleAttr) return [];
+  const m = styleAttr.match(/font-family\s*:\s*([^;]+)/i);
+  if (!m) return [];
+  return splitFontFamilyList(m[1]);
+}
 
+/** Source 1 — CSS custom properties (`--font-heading`, `--font-body`, …).
+ *  Strongest signal: an explicit declaration that names the brand font. */
+function fontsFromCssVars(cssText: string): { headings: string[]; body: string[] } {
   const headings = new Set<string>();
   const body = new Set<string>();
-  let source: ProvenanceFonts = 'unknown';
+  if (!cssText) return { headings: [], body: [] };
 
-  // CSS var path: --font-heading: 'Inter', sans-serif;
   const declRe = /(--[a-zA-Z0-9_-]+)\s*:\s*([^;}]+)[;}]/g;
   let m: RegExpExecArray | null;
-  while ((m = declRe.exec(css)) !== null) {
+  while ((m = declRe.exec(cssText)) !== null) {
     const name = m[1];
     const value = m[2].trim();
     if (FONT_VAR_PATTERNS.headings.some((re) => re.test(name))) {
       for (const f of splitFontFamilyList(value)) headings.add(f);
-      source = 'css-vars';
     } else if (FONT_VAR_PATTERNS.body.some((re) => re.test(name))) {
       for (const f of splitFontFamilyList(value)) body.add(f);
-      source = 'css-vars';
     }
   }
+  return { headings: Array.from(headings), body: Array.from(body) };
+}
 
-  // Inline-style path: `body { font-family: ... }` and `h1,h2 { font-family: ... }`
-  // We walk rule blocks rather than every font-family declaration so we can
-  // attribute the family to headings vs body.
+/** Source 2 — `<style>` block rules targeting `body { font-family: … }` or
+ *  `h1, h2 { font-family: … }`. Distinct from inline-style ATTRIBUTES on
+ *  individual elements (see `fontsFromInlineStyleAttrs`). */
+function fontsFromCssRules(cssText: string): { headings: string[]; body: string[] } {
+  const headings = new Set<string>();
+  const body = new Set<string>();
+  if (!cssText) return { headings: [], body: [] };
+
+  // Walk rule blocks so we can attribute font-family to headings vs body
+  // based on the selector. `{[^{}]+}` keeps nested blocks (e.g. @media)
+  // out of scope — handling them needs a proper parser, which is overkill
+  // for brand extraction.
   const ruleRe = /([^{}]+)\{([^{}]+)\}/g;
   let r: RegExpExecArray | null;
-  while ((r = ruleRe.exec(css)) !== null) {
-    const selector = r[1].trim().toLowerCase();
+  while ((r = ruleRe.exec(cssText)) !== null) {
+    const selectorList = r[1].trim().toLowerCase();
     const decls = r[2];
     const ff = decls.match(/font-family\s*:\s*([^;}]+)/i);
     if (!ff) continue;
     const families = splitFontFamilyList(ff[1]);
     if (families.length === 0) continue;
 
-    const isHeading = /\b(h[1-6]|heading|title|display)\b/.test(selector);
-    const isBody = /\b(body|root|html|p|main|article|prose)\b/.test(selector) || selector === ':root' || selector === '*';
-
-    if (isHeading) {
-      for (const f of families) headings.add(f);
-      if (source !== 'css-vars') source = 'inline-style';
-    } else if (isBody) {
-      for (const f of families) body.add(f);
-      if (source !== 'css-vars') source = 'inline-style';
+    // A rule may target multiple selectors; check each independently so
+    // `h1, h2, p { … }` lands the family in BOTH buckets.
+    const selectors = selectorList.split(',').map((s) => s.trim());
+    for (const selector of selectors) {
+      const isHeading = /\b(h[1-6]|heading|title|display)\b/.test(selector);
+      const isBody =
+        /\b(body|html|p|main|article|prose)\b/.test(selector) ||
+        selector === ':root' ||
+        selector === '*';
+      if (isHeading) {
+        for (const f of families) headings.add(f);
+      } else if (isBody) {
+        for (const f of families) body.add(f);
+      }
     }
   }
+  return { headings: Array.from(headings), body: Array.from(body) };
+}
 
-  return {
-    headings: Array.from(headings).slice(0, 5),
-    body: Array.from(body).slice(0, 5),
-    source,
-  };
+/** Source 3 — `style="font-family: …"` attribute on `<h1>`/`<h2>`/`<body>`.
+ *  Figma uses this; some older marketing templates do too. */
+function fontsFromInlineStyleAttrs(doc: Document): { headings: string[]; body: string[] } {
+  const headings = new Set<string>();
+  const body = new Set<string>();
+
+  for (const heading of doc.querySelectorAll('h1[style], h2[style]')) {
+    for (const f of fontsFromStyleAttr(heading.getAttribute('style'))) {
+      headings.add(f);
+    }
+  }
+  const bodyEl = doc.querySelector('body[style]');
+  if (bodyEl) {
+    for (const f of fontsFromStyleAttr(bodyEl.getAttribute('style'))) {
+      body.add(f);
+    }
+  }
+  return { headings: Array.from(headings), body: Array.from(body) };
+}
+
+/** Source 4 — Google Fonts `<link>` stylesheet. Returns each `family=` value
+ *  in order. The Google Fonts API supports both:
+ *    /css?family=Inter:400,700
+ *    /css2?family=Playfair+Display:wght@700&family=Inter:wght@400
+ *  In both, family names use `+` for spaces and `:` separates weights/axes. */
+function fontsFromGoogleFontsLinks(doc: Document): string[] {
+  const families: string[] = [];
+  const seen = new Set<string>();
+
+  for (const link of doc.querySelectorAll('link[href]')) {
+    const href = link.getAttribute('href') ?? '';
+    // Match both the v1 (`/css?…`) and v2 (`/css2?…`) endpoints. We also
+    // accept `https://` and `//`-protocol-relative forms (common on
+    // older sites that pre-date HTTPS-first hosting).
+    if (!/(^|\/\/)fonts\.googleapis\.com\/(css|css2)\?/.test(href)) continue;
+
+    // Pull every family=… query parameter. URLSearchParams is friendlier
+    // than hand-rolling a parser, but we need a hostname to construct a
+    // URL — guard against malformed hrefs.
+    let url: URL;
+    try {
+      url = new URL(href, 'https://fonts.googleapis.com/');
+    } catch {
+      continue;
+    }
+    for (const raw of url.searchParams.getAll('family')) {
+      // family value looks like `Inter:wght@400;700` or `Playfair+Display:700,400`.
+      // The family NAME is everything before the first `:` (axis specifier).
+      const namePart = raw.split(':')[0];
+      // Google Fonts uses `+` for spaces in family names.
+      const name = namePart.replace(/\+/g, ' ').trim();
+      if (!name) continue;
+      if (GENERIC_FONTS.has(name.toLowerCase())) continue;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      families.push(name);
+    }
+  }
+  return families;
+}
+
+/** Combined font extraction. Priority order — first source with ≥1 family
+ *  wins; sources are NOT merged so callers always know which signal won.
+ *
+ *  1. CSS custom properties (`--font-heading` / `--font-body`)
+ *  2. `<style>` block rules (`body { … }`, `h1, h2 { … }`)
+ *  3. Inline `style=` attribute on `<h1>` / `<h2>` / `<body>`
+ *  4. Google Fonts `<link>` stylesheets
+ *
+ *  When the only source is Google Fonts and a single family is listed, the
+ *  family is assigned to BOTH headings and body — most sites use a single
+ *  brand font for everything. When multiple families are listed, the first
+ *  becomes headings and the second becomes body (matches typical link-tag
+ *  ordering on marketing pages).
+ */
+function extractFonts(doc: Document, styleBlockCss: string): FontResult {
+  // Source 1 — CSS vars
+  const cssVars = fontsFromCssVars(styleBlockCss);
+  if (cssVars.headings.length > 0 || cssVars.body.length > 0) {
+    return {
+      headings: cssVars.headings.slice(0, 5),
+      body: cssVars.body.slice(0, 5),
+      source: 'css-vars',
+    };
+  }
+
+  // Source 2 — <style> block CSS rules
+  const cssRules = fontsFromCssRules(styleBlockCss);
+  if (cssRules.headings.length > 0 || cssRules.body.length > 0) {
+    return {
+      headings: cssRules.headings.slice(0, 5),
+      body: cssRules.body.slice(0, 5),
+      source: 'css-rule',
+    };
+  }
+
+  // Source 3 — inline style attributes on h1/h2/body
+  const inline = fontsFromInlineStyleAttrs(doc);
+  if (inline.headings.length > 0 || inline.body.length > 0) {
+    return {
+      headings: inline.headings.slice(0, 5),
+      body: inline.body.slice(0, 5),
+      source: 'inline-style',
+    };
+  }
+
+  // Source 4 — Google Fonts <link>
+  const googleFonts = fontsFromGoogleFontsLinks(doc);
+  if (googleFonts.length > 0) {
+    const headings: string[] = [];
+    const body: string[] = [];
+    if (googleFonts.length === 1) {
+      // Single family — most sites use one font everywhere.
+      headings.push(googleFonts[0]);
+      body.push(googleFonts[0]);
+    } else {
+      // First family → headings, second → body. Remaining surface only
+      // as headings to preserve order; we cap at 5 either side.
+      headings.push(googleFonts[0]);
+      body.push(googleFonts[1]);
+      for (let i = 2; i < googleFonts.length; i++) headings.push(googleFonts[i]);
+    }
+    return {
+      headings: headings.slice(0, 5),
+      body: body.slice(0, 5),
+      source: 'google-fonts-link',
+    };
+  }
+
+  return { headings: [], body: [], source: 'unknown' };
+}
+
+/** Back-compat wrapper kept for `__internal` consumers. Operates on a CSS
+ *  blob (no DOM) and therefore can't run the inline-attribute or Google
+ *  Fonts paths — those need the live document. */
+function extractFontsFromCss(css: string): FontResult {
+  const cssVars = fontsFromCssVars(css);
+  if (cssVars.headings.length > 0 || cssVars.body.length > 0) {
+    return {
+      headings: cssVars.headings.slice(0, 5),
+      body: cssVars.body.slice(0, 5),
+      source: 'css-vars',
+    };
+  }
+  const cssRules = fontsFromCssRules(css);
+  if (cssRules.headings.length > 0 || cssRules.body.length > 0) {
+    return {
+      headings: cssRules.headings.slice(0, 5),
+      body: cssRules.body.slice(0, 5),
+      source: 'css-rule',
+    };
+  }
+  return { headings: [], body: [], source: 'unknown' };
 }
 
 export interface BrandImageFetchResult {
@@ -967,12 +1151,18 @@ export function extractBrand(
   // twitter:site handle.
   const socialLinks = extractSocialLinks(doc, baseUrl, og.twitterHandle, jsonld.socialLinks);
 
-  // 6. CSS var colors (B2a).
+  // 6. CSS var colors (B2a). Colors are mined from BOTH <style> blocks and
+  // inline-style attributes (small color literals on the body element are
+  // common in old templates).
   const css = collectInlineCss(doc);
   const colorResult = extractColorsFromCss(css);
 
-  // 7. Font hints from CSS vars / inline styles.
-  const fontResult = extractFontsFromCss(css);
+  // 7. Font hints — priority chain across CSS vars, <style> rules, inline
+  // style attrs, and Google Fonts links. Only <style> blocks feed the
+  // CSS-rule + var paths because attribute-bearing selectors aren't
+  // valid CSS source text.
+  const styleBlockCss = collectStyleBlockCss(doc);
+  const fontResult = extractFonts(doc, styleBlockCss);
 
   const out: BrandExtractionOutput = {
     provenance: {

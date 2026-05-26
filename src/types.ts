@@ -822,7 +822,7 @@ export interface BrandExtractionOutput {
   provenance?: {
     logo?: 'json-ld' | 'og:logo' | 'link[rel=icon]' | 'heuristic' | 'unknown';
     colors?: 'css-vars' | 'palette-extraction' | 'unknown';
-    fonts?: 'css-vars' | 'inline-style' | 'unknown';
+    fonts?: 'css-vars' | 'inline-style' | 'css-rule' | 'google-fonts-link' | 'unknown';
   };
 }
 
