@@ -2,6 +2,9 @@ import { claudeCodeHandler } from './claude-code.js';
 import { cursorHandler } from './cursor.js';
 import { vscodeHandler } from './vscode.js';
 import { geminiCliHandler } from './gemini-cli.js';
+import { zedHandler } from './zed.js';
+import { windsurfHandler } from './windsurf.js';
+import { codexHandler } from './codex.js';
 import { antigravityHandler } from './antigravity.js';
 
 export type AgentSkillHandler = {
@@ -22,6 +25,9 @@ export const agentHandlers: readonly AgentSkillHandler[] = [
   cursorHandler,
   vscodeHandler,
   geminiCliHandler,
+  zedHandler,
+  windsurfHandler,
+  codexHandler,
   antigravityHandler,
 ];
 
