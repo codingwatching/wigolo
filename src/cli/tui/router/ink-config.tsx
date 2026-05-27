@@ -19,7 +19,13 @@ import { InstallProgress } from '../components/InstallProgress.js';
 import { Verification } from '../components/Verification.js';
 import { AgentSelect } from '../components/AgentSelect.js';
 import { EnvEditor } from '../components/EnvEditor.js';
+// SP4 — provider/key management screen
 import { ProviderSetup } from '../components/ProviderSetup.js';
+// SP5 — dashboard screens
+import { Dashboard } from '../components/Dashboard.js';
+import { DashboardCleanup } from '../components/DashboardCleanup.js';
+import { DashboardExport } from '../components/DashboardExport.js';
+import { DashboardUninstall } from '../components/DashboardUninstall.js';
 import { getConfig } from '../../../config.js';
 import type { ScreenId } from '../actions/index.js';
 import type { BrowserChoice } from '../components/BrowserSelect.js';
@@ -144,6 +150,23 @@ function WigoloConfig() {
         <Box paddingX={2}>
           <Text color="green" bold>{'✓'} Reconfiguration complete</Text>
         </Box>
+      )}
+
+      {/* SP5 — dashboard screens */}
+      {screen === 'dashboard' && (
+        <Dashboard onNavigate={navigate} onBack={goBack} />
+      )}
+
+      {screen === 'dashboard-cleanup' && (
+        <DashboardCleanup onBack={goBack} />
+      )}
+
+      {screen === 'dashboard-export' && (
+        <DashboardExport onBack={goBack} />
+      )}
+
+      {screen === 'dashboard-uninstall' && (
+        <DashboardUninstall onBack={goBack} />
       )}
 
       {/* show back hint for non-menu screens */}

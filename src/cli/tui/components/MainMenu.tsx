@@ -55,6 +55,12 @@ const MENU_ITEMS: MenuItem[] = [
     description: 'Enable or disable individual components',
     screen: 'review',
   },
+  // SP5 — management dashboard
+  {
+    label: 'Storage & management',
+    description: 'View storage usage, cleanup, export config, uninstall',
+    screen: 'dashboard',
+  },
 ];
 
 interface MainMenuProps {
