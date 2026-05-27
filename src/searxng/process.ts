@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from '
 import { join } from 'node:path';
 import { getConfig } from '../config.js';
 import { createLogger } from '../logger.js';
+import { venvBinPath } from '../python-env.js';
 
 const log = createLogger('searxng');
 
@@ -155,7 +156,7 @@ export class SearxngProcess {
     }
 
     const settingsPath = join(this.searxngPath, 'settings.yml');
-    const pythonBin = join(this.searxngPath, 'venv', 'bin', 'python');
+    const pythonBin = venvBinPath(this.dataDir, 'python');
 
     if (!existsSync(pythonBin)) {
       log.error('SearXNG python not found — run warmup first', { path: pythonBin });

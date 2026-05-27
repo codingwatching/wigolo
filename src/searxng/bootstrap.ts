@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { getConfig } from '../config.js';
 import { createLogger } from '../logger.js';
 import { isProcessAlive } from './process.js';
+import { resolvePythonExe, venvBinPath } from '../python-env.js';
 
 const log = createLogger('searxng');
 
@@ -113,7 +114,8 @@ export interface BackendResolution {
 
 export function checkPythonAvailable(): boolean {
   try {
-    execSync('python3 --version', { stdio: 'pipe' });
+    const python = resolvePythonExe();
+    execSync(`${python} --version`, { stdio: 'pipe' });
     return true;
   } catch {
     return false;
@@ -260,9 +262,10 @@ export async function bootstrapNativeSearxng(dataDir: string): Promise<void> {
     log.info('bootstrapping SearXNG', { path: searxngDir });
 
     mkdirSync(searxngDir, { recursive: true });
-    runStep('python3', ['-m', 'venv', join(searxngDir, 'venv')], { timeout: 60_000 });
+    const pythonExe = resolvePythonExe();
+    runStep(pythonExe, ['-m', 'venv', join(searxngDir, 'venv')], { timeout: 60_000 });
 
-    const pip = join(searxngDir, 'venv', 'bin', 'pip');
+    const pip = venvBinPath(dataDir, 'pip');
     runStep(pip, ['install', '--upgrade', 'pip', 'setuptools', 'wheel'], { timeout: 60_000 });
 
     const repoDir = join(searxngDir, 'repo');

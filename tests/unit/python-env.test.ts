@@ -7,7 +7,43 @@ vi.mock('node:fs', async () => {
 });
 
 import { existsSync } from 'node:fs';
-import { getPythonBin } from '../../src/python-env.js';
+import { getPythonBin, venvBinPath } from '../../src/python-env.js';
+
+describe('venvBinPath', () => {
+  it('returns Scripts/python.exe on win32', () => {
+    const result = venvBinPath('/home/user/.wigolo', 'python', 'win32');
+    expect(result).toMatch(/Scripts[/\\]python\.exe$/);
+  });
+
+  it('returns Scripts/pip.exe on win32', () => {
+    const result = venvBinPath('/home/user/.wigolo', 'pip', 'win32');
+    expect(result).toMatch(/Scripts[/\\]pip\.exe$/);
+  });
+
+  it('returns bin/python on linux', () => {
+    const result = venvBinPath('/home/user/.wigolo', 'python', 'linux');
+    expect(result).toMatch(/bin[/\\]python$/);
+    expect(result).not.toContain('.exe');
+  });
+
+  it('returns bin/pip on darwin', () => {
+    const result = venvBinPath('/home/user/.wigolo', 'pip', 'darwin');
+    expect(result).toMatch(/bin[/\\]pip$/);
+    expect(result).not.toContain('.exe');
+  });
+
+  it('uses process.platform when not provided', () => {
+    // Should not throw regardless of host platform
+    const result = venvBinPath('/home/user/.wigolo', 'python');
+    expect(typeof result).toBe('string');
+    expect(result.length).toBeGreaterThan(0);
+  });
+
+  it('builds path under venv subdir', () => {
+    const result = venvBinPath('/data/wigolo', 'python', 'linux');
+    expect(result).toContain('venv');
+  });
+});
 
 describe('getPythonBin', () => {
   beforeEach(() => { resetConfig(); vi.clearAllMocks(); });
@@ -16,7 +52,7 @@ describe('getPythonBin', () => {
   it('returns venv python when venv exists', () => {
     vi.mocked(existsSync).mockReturnValue(true);
     const bin = getPythonBin('/tmp/wigolo');
-    expect(bin).toBe('/tmp/wigolo/searxng/venv/bin/python');
+    expect(bin).toMatch(/[/\\]python(\.exe)?$/);
   });
 
   it('falls back to system python3 when venv does not exist', () => {
@@ -26,12 +62,13 @@ describe('getPythonBin', () => {
   });
 
   it('resolves dataDir from config when argument omitted', () => {
-    vi.mocked(existsSync).mockImplementation((p) =>
-      String(p) === '/tmp/from-config/searxng/venv/bin/python',
-    );
+    vi.mocked(existsSync).mockImplementation((p) => {
+      const s = String(p);
+      return s.includes('from-config') && s.includes('venv');
+    });
     process.env.WIGOLO_DATA_DIR = '/tmp/from-config';
     const bin = getPythonBin();
-    expect(bin).toBe('/tmp/from-config/searxng/venv/bin/python');
+    expect(bin).toContain('from-config');
   });
 
   it('returns python3 fallback when venv python missing under config dataDir', () => {
