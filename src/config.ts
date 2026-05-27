@@ -67,9 +67,6 @@ export interface Config {
   embeddingModel: string;
   embeddingIdleTimeoutMs: number;
   embeddingMaxTextLength: number;
-  lightpandaUrl: string | null;
-  lightpandaEnabled: boolean;
-  lightpandaFailureThreshold: number;
   llmProvider: string | null;
   llmCacheTtlDays: number;
   llmMaxCallsPerRequest: number;
@@ -287,9 +284,6 @@ export function getConfig(): Config {
     embeddingModel: envStr('WIGOLO_EMBEDDING_MODEL', 'BAAI/bge-small-en-v1.5', settings, 'embeddingModel') ?? 'BAAI/bge-small-en-v1.5',
     embeddingIdleTimeoutMs: envInt('WIGOLO_EMBEDDING_IDLE_TIMEOUT', 1800000, settings, 'embeddingIdleTimeoutMs'),
     embeddingMaxTextLength: envInt('WIGOLO_EMBEDDING_MAX_TEXT_LENGTH', 8000, settings, 'embeddingMaxTextLength'),
-    lightpandaUrl: envStr('WIGOLO_LIGHTPANDA_URL', null, settings, 'lightpandaUrl'),
-    lightpandaEnabled: envBool('WIGOLO_LIGHTPANDA_ENABLED', false, settings, 'lightpandaEnabled'),
-    lightpandaFailureThreshold: envInt('WIGOLO_LIGHTPANDA_FAILURE_THRESHOLD', 3, settings, 'lightpandaFailureThreshold'),
     llmProvider: envStr('WIGOLO_LLM_PROVIDER', null, settings, 'llmProvider'),
     llmCacheTtlDays: envInt('WIGOLO_LLM_CACHE_TTL_DAYS', 7, settings, 'llmCacheTtlDays'),
     llmMaxCallsPerRequest: envInt('WIGOLO_LLM_MAX_CALLS_PER_REQUEST', 1, settings, 'llmMaxCallsPerRequest'),

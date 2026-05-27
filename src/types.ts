@@ -184,7 +184,7 @@ export interface ExtractionResult {
 
 export type ExtractorType = 'defuddle' | 'readability' | 'turndown' | 'site-specific';
 
-export type BrowserType = 'chromium' | 'firefox' | 'webkit' | 'lightpanda';
+export type BrowserType = 'chromium' | 'firefox' | 'webkit';
 
 export interface CDPSession {
   id: string;

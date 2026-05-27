@@ -1,6 +1,6 @@
 import type { BrowserType } from '../types.js';
 
-const VALID_BROWSER_TYPES: ReadonlySet<string> = new Set(['chromium', 'firefox', 'webkit', 'lightpanda']);
+const VALID_BROWSER_TYPES: ReadonlySet<string> = new Set(['chromium', 'firefox', 'webkit']);
 
 const DEFAULT_BROWSER_TYPES: BrowserType[] = ['chromium'];
 
