@@ -11,10 +11,20 @@
  */
 
 import { storeKey, readKey, deleteKey, listProviders, PICKER_PROVIDERS } from '../../../security/key-store.js';
+import { writePersistedConfig, defaultConfigPath } from '../../../persisted-config.js';
 import type { LLMProvider } from '../../../integrations/cloud/llm/types.js';
 
 export interface ProviderKeyOpts {
   dataDir: string;
+}
+
+export type PickableProvider = LLMProvider | 'custom';
+
+export interface SaveProviderResult {
+  ok: boolean;
+  /** Where the secret landed; null for custom URL (persisted to config only). */
+  location: 'keychain' | 'file' | null;
+  error?: string;
 }
 
 export interface StoreKeyResult {
@@ -101,6 +111,62 @@ export async function listConfiguredProviders(
   const list = await listProviders(opts);
   // ProviderEntry only contains provider + location — no secret values
   return list;
+}
+
+/**
+ * Save a provider selection end-to-end: store the secret in the keystore (or,
+ * for custom URLs, persist the URL to config) AND persist the provider block
+ * (name + keyLocation) to config.json.
+ *
+ * config.json NEVER receives the raw key — only the provider name + the
+ * location reference. This is the single side-effecting save path so the
+ * TUI component stays thin and the no-secret-persistence guarantee is unit-
+ * testable here without an Ink render.
+ *
+ * For provider === 'custom', the `value` is an OpenAI-compatible endpoint URL,
+ * not a secret; it is stored in config settings (WIGOLO_LLM_PROVIDER) and the
+ * provider block records keyLocation 'env' (custom backend reads the URL at
+ * runtime, no API key tier).
+ *
+ * @param configPath override for tests; defaults to defaultConfigPath()
+ */
+export async function saveProviderSelection(
+  provider: PickableProvider,
+  value: string,
+  opts: ProviderKeyOpts,
+  configPath: string = defaultConfigPath(),
+): Promise<SaveProviderResult> {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { ok: false, location: null, error: 'value cannot be empty' };
+  }
+
+  if (provider === 'custom') {
+    try {
+      writePersistedConfig(configPath, {
+        provider: { name: 'custom', keyLocation: 'env' },
+        settings: { WIGOLO_LLM_PROVIDER: trimmed },
+      });
+      return { ok: true, location: null };
+    } catch (err) {
+      return { ok: false, location: null, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  // Cloud provider: store the secret in the keystore, then record only the
+  // provider name + location in config.json (never the key).
+  const stored = await storeProviderKey(provider, trimmed, opts);
+  if (!stored.ok || !stored.location) {
+    return { ok: false, location: null, error: stored.error ?? 'failed to store key' };
+  }
+  try {
+    writePersistedConfig(configPath, {
+      provider: { name: provider, keyLocation: stored.location },
+    });
+  } catch (err) {
+    return { ok: false, location: stored.location, error: err instanceof Error ? err.message : String(err) };
+  }
+  return { ok: true, location: stored.location };
 }
 
 /**

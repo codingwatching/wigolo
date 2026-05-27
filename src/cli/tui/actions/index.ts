@@ -66,6 +66,7 @@ export {
   readProviderKey,
   deleteProviderKey,
   listConfiguredProviders,
+  saveProviderSelection,
   maskValue,
   PICKER_PROVIDERS,
 } from './provider-keys.js';
@@ -75,4 +76,6 @@ export type {
   DeleteKeyResult,
   ProviderListEntry,
   ProviderKeyOpts,
+  PickableProvider,
+  SaveProviderResult,
 } from './provider-keys.js';

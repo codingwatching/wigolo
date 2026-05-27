@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 
 vi.mock('../../../../../src/security/keychain.js', () => {
   const store = new Map<string, string>();
@@ -22,11 +22,16 @@ vi.mock('../../../../../src/security/keychain.js', () => {
 const keychainMod = await import('../../../../../src/security/keychain.js');
 const { _store } = keychainMod as typeof keychainMod & { _store: Map<string, string> };
 
+const { clearKeyStoreMemo } = await import('../../../../../src/security/key-store.js');
+const { resetPersistedConfig } = await import('../../../../../src/persisted-config.js');
+
 const {
   storeProviderKey,
   readProviderKey,
   deleteProviderKey,
   listConfiguredProviders,
+  saveProviderSelection,
+  PICKER_PROVIDERS,
 } = await import('../../../../../src/cli/tui/actions/provider-keys.js');
 
 describe('provider actions (SP4)', () => {
@@ -34,6 +39,7 @@ describe('provider actions (SP4)', () => {
 
   beforeEach(() => {
     _store.clear();
+    clearKeyStoreMemo();
     tmpDir = mkdtempSync(join(tmpdir(), 'wigolo-pa-test-'));
   });
 
@@ -84,5 +90,73 @@ describe('provider actions (SP4)', () => {
     const list = await listConfiguredProviders({ dataDir: tmpDir });
     const json = JSON.stringify(list);
     expect(json).not.toContain('super-secret-key');
+  });
+});
+
+describe('PICKER_PROVIDERS — groq hidden from picker (locked decision)', () => {
+  it('does NOT include groq', () => {
+    expect(PICKER_PROVIDERS).not.toContain('groq');
+  });
+
+  it('includes the four picker-visible providers', () => {
+    expect(PICKER_PROVIDERS).toContain('anthropic');
+    expect(PICKER_PROVIDERS).toContain('openai');
+    expect(PICKER_PROVIDERS).toContain('gemini');
+    expect(PICKER_PROVIDERS).toContain('custom');
+  });
+});
+
+describe('saveProviderSelection — config.json never holds the raw key', () => {
+  let tmpDir: string;
+  let configPath: string;
+
+  beforeEach(() => {
+    _store.clear();
+    clearKeyStoreMemo();
+    resetPersistedConfig();
+    tmpDir = mkdtempSync(join(tmpdir(), 'wigolo-save-test-'));
+    configPath = join(tmpDir, 'config.json');
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+    resetPersistedConfig();
+  });
+
+  it('persists only provider name + keyLocation, NEVER the raw key', async () => {
+    const SECRET = 'sk-ant-api03-DO-NOT-PERSIST-THIS';
+    const result = await saveProviderSelection('anthropic', SECRET, { dataDir: tmpDir }, configPath);
+    expect(result.ok).toBe(true);
+
+    const raw = readFileSync(configPath, 'utf8');
+    // The secret must never appear anywhere in the written config.json
+    expect(raw).not.toContain(SECRET);
+    expect(raw).not.toContain('DO-NOT-PERSIST-THIS');
+
+    const parsed = JSON.parse(raw) as { provider?: { name?: string; keyLocation?: string } };
+    expect(parsed.provider?.name).toBe('anthropic');
+    expect(parsed.provider?.keyLocation).toBe('keychain');
+    // No stray `key` field
+    expect(JSON.stringify(parsed.provider)).not.toContain('key"');
+  });
+
+  it('custom URL is stored as setting, recorded with keyLocation env', async () => {
+    const URL = 'http://localhost:11434';
+    const result = await saveProviderSelection('custom', URL, { dataDir: tmpDir }, configPath);
+    expect(result.ok).toBe(true);
+    expect(result.location).toBeNull();
+
+    const parsed = JSON.parse(readFileSync(configPath, 'utf8')) as {
+      provider?: { name?: string; keyLocation?: string };
+      settings?: Record<string, unknown>;
+    };
+    expect(parsed.provider?.name).toBe('custom');
+    expect(parsed.provider?.keyLocation).toBe('env');
+    expect(parsed.settings?.WIGOLO_LLM_PROVIDER).toBe(URL);
+  });
+
+  it('rejects empty value', async () => {
+    const result = await saveProviderSelection('openai', '   ', { dataDir: tmpDir }, configPath);
+    expect(result.ok).toBe(false);
   });
 });
