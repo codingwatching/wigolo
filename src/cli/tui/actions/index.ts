@@ -18,6 +18,12 @@
  *   maskValue          — SP4: mask a key value for display
  *   PICKER_PROVIDERS   — SP4: ordered provider list for TUI picker
  *   verifyEndToEnd     — SP6: end-to-end capability smoke + MCP-wiring check
+ *   computeStorage     — per-component storage sizes + hogs sorted desc (SP5)
+ *   getCacheStatsAction — entry counts + size via public cache API (SP5)
+ *   cleanupComponent   — remove targeted component's files, report freed bytes (SP5)
+ *   exportConfig       — serialize settings to a portable file (secrets excluded) (SP5)
+ *   importConfig       — validate + apply a config export file (SP5)
+ *   uninstall          — remove data dir + unwire agent MCP configs (SP5)
  *
  * Exported types and metadata:
  *   COMPONENT_REGISTRY — ordered list of components with name/purpose/cost
@@ -25,9 +31,6 @@
  *   CURATED_ENV_VARS   — ordered list of env/flag vars with group/label/description
  *   ENV_GROUP_LABELS   — display labels for each group
  *   buildDefaultToggles — build initial ToggleMap from COMPONENT_REGISTRY defaults
- *
- * Wave C integration notes:
- *   SP5 (dashboard): add computeStorage/cleanup/exportConfig/importConfig here
  */
 
 export { detectSystem } from './detect-system.js';
@@ -91,3 +94,19 @@ export type {
   VerifyEndToEndDeps,
   McpWiringCheckInput,
 } from './verify-e2e.js';
+
+// SP5: storage dashboard + config export/import + uninstall
+export { computeStorage } from './compute-storage.js';
+export type { StorageResult, ComponentStorageItem } from './compute-storage.js';
+
+export { getCacheStatsAction } from './cache-stats.js';
+export type { CacheStatsResult } from './cache-stats.js';
+
+export { cleanupComponent } from './cleanup.js';
+export type { CleanupResult, CleanableComponentId } from './cleanup.js';
+
+export { exportConfig, importConfig } from './export-import-config.js';
+export type { ExportConfigResult, ImportConfigResult } from './export-import-config.js';
+
+export { uninstall } from './uninstall.js';
+export type { UninstallResult, UninstallOptions, AgentUninstallResult } from './uninstall.js';

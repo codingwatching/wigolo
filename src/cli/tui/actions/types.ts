@@ -251,6 +251,12 @@ export type ScreenId =
   | 'env-editor'
   | 'summary'
   | 'main-menu'
-  | 'provider';
+  // SP4 — provider/key management screen
+  | 'provider'
+  // SP5 — dashboard screens
+  | 'dashboard'
+  | 'dashboard-cleanup'
+  | 'dashboard-export'
+  | 'dashboard-uninstall';
 
 export type EntryMode = 'init' | 'config' | 'dashboard';
