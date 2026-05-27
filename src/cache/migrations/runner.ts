@@ -133,6 +133,12 @@ CREATE TABLE IF NOT EXISTS domain_routing (
 // doesn't exist in SQLite, and an unguarded `ALTER` blows up on re-runs.
 const MIGRATION_006_URL_CACHE_HTTP_STATUS = '';
 
+// SP1: Remove the browser-routing telemetry table for the alternative browser
+// backend that has been dropped. The table is not user data; dropping it is
+// safe. SQL is empty — the actual drop runs in postStep guarded against fresh
+// DBs where the table was never created.
+const MIGRATION_007_DROP_LP_ROUTING = '';
+
 export const MIGRATIONS: Migration[] = [
   { name: '001-sqlite-vec', sql: MIGRATION_001_SQLITE_VEC, requiresVec: true },
   { name: '002-feed-items', sql: MIGRATION_002_FEED_ITEMS },
@@ -171,6 +177,20 @@ export const MIGRATIONS: Migration[] = [
       const names = new Set(cols.map((c) => c.name));
       if (!names.has('http_status')) {
         db.exec('ALTER TABLE url_cache ADD COLUMN http_status INTEGER');
+      }
+    },
+  },
+  {
+    name: '007-drop-lp-routing',
+    sql: MIGRATION_007_DROP_LP_ROUTING,
+    postStep: (db) => {
+      // Drop the browser-routing telemetry table from the removed alternative
+      // browser backend. Fresh DBs won't have this table; this is a no-op for them.
+      const tables = db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='lightpanda_routing'",
+      ).all() as Array<{ name: string }>;
+      if (tables.length > 0) {
+        db.exec('DROP TABLE lightpanda_routing');
       }
     },
   },
