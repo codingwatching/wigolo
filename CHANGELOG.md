@@ -1,5 +1,67 @@
 # Changelog
 
+## v0.1.22 — 2026-05-27
+
+Audit-driven gap closure batch: 12 slices (S1–S8 + S11a–d) lift the wigolo gap-closure score from 5.4 to 7.4. Additive; no breaking API changes — existing callers continue to work; new defaults are tighter where they were silently wrong. Full audit at `docs/superpowers/audits/2026-05-27-wigolo-gap-closure-v2.md`.
+
+### Trust & correctness (S1–S4)
+- **Silent failures surfaced** — fetch envelopes now carry `fetch_failed` reasons (`blocked`, `timeout`, `network`, `extractor`) instead of returning empty success shapes. Block-detection added for Reddit / Amazon paths.
+- **Evidence cap honored** — multi-result tools respect the per-result evidence cap end-to-end; no more silent overflow.
+- **Hard filters enforced** — `include_domains` / `exclude_domains` are now strictly applied at the orchestrator boundary, not best-effort at the ranker.
+- **Schema truth** — extract `mode: 'schema'` is structurally prevented from hallucinating fields not present in the page; missing fields emit `null` with a `field_missing` reason, never a fabricated value.
+
+### Latency & router (S5)
+- Smart-router escalation tightened: avoid false-positive Playwright launches for pages whose initial HTTP body already contains the target content. Perceived-latency win on docs/blogs.
+
+### Extractor cleanup (S6)
+- Wikipedia chrome (navboxes, edit-links, citation-needed markers) filtered from main-content output.
+- Crawl markdown is now populated for all crawled pages (previously empty on some BFS branches).
+- PDF fetch wired via `pdf-parse` v2 — `.pdf` URLs return extracted text instead of binary garbage.
+- Anchor-fragment dedup: `#section-1` and `#section-2` on the same page no longer count as separate results.
+
+### Discovery honesty (S7)
+- Reddit / Amazon block-detection: bot-walls return an explicit `fetch_failed: 'blocked'` envelope instead of a misleading partial.
+- `find_similar` surfaces `cold_start: true` when the local cache lacks signal — tune `WIGOLO_FIND_SIMILAR_COLD_START_THRESHOLD`.
+- New opt-in `include_ranking_debug` flag on search exposes per-result rank components for debugging.
+
+### Long-tail polish (S8)
+- 14 small fixes including: word-LCS guard (`DIFF_TOKEN_CAP` + `Uint32Array` for large diffs), `engines_used` semantics aligned with `engine_telemetry`, freshness omitted when undetectable, watch shape carries both `job` (single) and `jobs[]` (batch) for back-compat.
+
+### Core engine breadth (S11a)
+- **Image search on core** — `category: 'images'` now works on the core backend via DDG Image + Brave Image adapters (kills H7 — image vertical no longer requires legacy aggregator).
+- Mojeek and Marginalia added to the general vertical for long-tail diversity.
+- Doctor command now prints a per-engine health-check summary on cold start.
+
+### Adapter quality (S11b)
+- 14-engine review pass. Lobsters User-Agent fix. GitHub Code adapter now accepts a Bearer token via `WIGOLO_GITHUB_TOKEN` (anonymous rate-limit is 10/min — set the token for 30/min). Quality-tier metadata added per engine.
+
+### Ranking quality (S11c)
+- Tier-based RRF weights derived from engine quality metadata (high-quality engines weighted higher in fusion).
+- Cross-engine canonical URL dedup: `utm_*`, AMP variants, mobile subdomains, protocol differences, and trailing-slash variants now collapse to a single result.
+- Static-synonym low-recall query expansion when initial pass returns too few results.
+
+### Benchmark (S11d)
+- Per-flaw evidence rows in audit report; score 5.4 → 7.4 with reproducible inputs.
+
+### Added — env vars
+- `WIGOLO_GITHUB_TOKEN` — Bearer token for github-code adapter (optional, raises rate limit).
+- `BRAVE_API_KEY` — required for Brave + Brave Image adapters.
+
+### Added — new files (for inventory)
+- `src/search/engines/{ddg-image,brave-image,mojeek,marginalia}.ts`
+- `src/search/core/{engine-quality,engine-health,canonical-url,query-expansion}.ts`
+- `src/extraction/{schema-truth,brand-provenance}.ts`
+- `src/cache/migrations/006-url-cache-http-status.sql`
+
+### API additions (back-compat)
+- `category: 'images'` on `search` (core backend).
+- `include_ranking_debug` flag on `search`.
+- `engine_warnings.needs_key` with env-hints on `search`.
+- `truncated: true` field on `extract` table output.
+- `fetch_failed: 'blocked'` envelope on `fetch`.
+- Watch tool single-vs-batch shape (`job` + `jobs[]`).
+- `cold_start: true` on `find_similar` when signals are weak.
+
 ## [1.2.0] - unreleased
 
 ### Changed
