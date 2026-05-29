@@ -6,9 +6,9 @@
  * Uninstall) render placeholder screens this slice; real wiring lands in
  * slice 11.
  *
- * This router intentionally does NOT replace the legacy `ink-config.tsx` /
- * `ink-init.tsx` entry points. Those die in slice 10 when `entry.ts` is
- * introduced and the `wigolo config` / `wigolo init` CLI is rewired.
+ * Hosted by `entry.ts` (slice 10) which selects between this router and the
+ * 4-step Wizard, depending on first-run state. The legacy `ink-init.tsx` /
+ * `ink-config.tsx` routers were removed in slice 10.
  */
 import React, { useCallback, useState } from 'react';
 import { Box, Text, useInput } from 'ink';

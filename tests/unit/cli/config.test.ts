@@ -6,7 +6,12 @@ const readEnvSettingsMock = vi.hoisted(() =>
     WIGOLO_LOG_LEVEL: 'info',
   }),
 );
-const runInkConfigMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const runEntryMock = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({
+    resolution: { mode: 'home', firstRun: false, headless: false },
+    mounted: true,
+  }),
+);
 
 vi.mock('../../../src/cli/tui/actions/index.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/cli/tui/actions/index.js')>();
@@ -16,8 +21,9 @@ vi.mock('../../../src/cli/tui/actions/index.js', async (importOriginal) => {
   };
 });
 
-vi.mock('../../../src/cli/tui/router/ink-config.js', () => ({
-  runInkConfig: runInkConfigMock,
+vi.mock('../../../src/cli/tui/entry.js', () => ({
+  runEntry: runEntryMock,
+  resolveEntry: vi.fn(),
 }));
 
 vi.mock('../../../src/config.js', () => ({
@@ -42,21 +48,21 @@ describe('runConfig — non-interactive (non-TTY)', () => {
     expect(code).toBe(0);
     expect(process.stdout.write).toHaveBeenCalled();
     // should NOT mount Ink
-    expect(runInkConfigMock).not.toHaveBeenCalled();
+    expect(runEntryMock).not.toHaveBeenCalled();
   });
 
   it('--plain forces non-interactive output even in TTY mode', async () => {
     Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
     const code = await runConfig(['--plain']);
     expect(code).toBe(0);
-    expect(runInkConfigMock).not.toHaveBeenCalled();
+    expect(runEntryMock).not.toHaveBeenCalled();
   });
 
   it('--help prints usage and exits 0', async () => {
     const code = await runConfig(['--help']);
     expect(code).toBe(0);
     expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining('Usage'));
-    expect(runInkConfigMock).not.toHaveBeenCalled();
+    expect(runEntryMock).not.toHaveBeenCalled();
   });
 
   it('CI=true prevents Ink mount even with TTY', async () => {
@@ -65,7 +71,7 @@ describe('runConfig — non-interactive (non-TTY)', () => {
     Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
     const code = await runConfig([]);
     expect(code).toBe(0);
-    expect(runInkConfigMock).not.toHaveBeenCalled();
+    expect(runEntryMock).not.toHaveBeenCalled();
     process.env.CI = origCI;
   });
 });
@@ -77,7 +83,7 @@ describe('runConfig — interactive (TTY)', () => {
     Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
     const code = await runConfig([]);
     expect(code).toBe(0);
-    expect(runInkConfigMock).toHaveBeenCalledOnce();
+    expect(runEntryMock).toHaveBeenCalledOnce();
     process.env.CI = origCI;
   });
 });

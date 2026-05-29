@@ -44,9 +44,12 @@ export async function runInit(args: string[]): Promise<number> {
   const useInk = !flags.plain && !flags.nonInteractive && isTTY && !isCI;
 
   if (useInk) {
-    const { runInkInit } = await import('./tui/ink-init.js');
-    await runInkInit();
-    return 0;
+    return runInkInit({
+      isTTY,
+      ci: isCI,
+      plain: flags.plain,
+      nonInteractive: flags.nonInteractive,
+    });
   }
 
   // Plain / non-interactive mode — use the existing text-based flow
@@ -254,5 +257,61 @@ async function runInitPlain(flags: InitFlagsResolved): Promise<number> {
     }
   }
 
+  return 0;
+}
+
+interface RunInkInitOpts {
+  isTTY: boolean;
+  ci: boolean;
+  plain: boolean;
+  nonInteractive: boolean;
+}
+
+/**
+ * Mounts the new schema-driven TUI in wizard mode. Replaces the legacy
+ * `runInkInit` import that lived in `src/cli/tui/ink-init.tsx`.
+ */
+async function runInkInit(opts: RunInkInitOpts): Promise<number> {
+  const { runEntry } = await import('./tui/entry.js');
+  const { createSettingsStore } = await import('./tui/state/settings-store.js');
+  const { CATALOG } = await import('./tui/schema/catalog.js');
+  const { defaultAgentTargets } = await import('./tui/state/agent-targets.js');
+  const { defaultSecretStore } = await import('./tui/state/secret-store.js');
+  const { enableTuiMode } = await import('./tui/utils/suppress-logs.js');
+  const { getPackageVersion } = await import('./tui/version.js');
+  const { defaultConfigPath, readPersistedConfig } = await import('../persisted-config.js');
+  const { getConfig } = await import('../config.js');
+
+  enableTuiMode();
+  const configPath = defaultConfigPath();
+  const persisted = readPersistedConfig(configPath);
+  const store = createSettingsStore(persisted.settings);
+  const config = getConfig();
+  const agents = defaultAgentTargets({ dataDir: config.dataDir });
+  const secretStore = defaultSecretStore({ dataDir: config.dataDir });
+
+  const result = await runEntry({
+    mode: 'wizard',
+    configPath,
+    isTTY: opts.isTTY,
+    ci: opts.ci,
+    plain: opts.plain,
+    nonInteractive: opts.nonInteractive,
+    store,
+    catalog: CATALOG,
+    agents,
+    secretStore,
+    version: getPackageVersion(),
+    productName: 'wigolo',
+  });
+
+  if (!result.mounted) {
+    // The headless branch in resolveEntry kicked in. This shouldn't happen
+    // for the wizard path because the caller already gated on TTY/CI/--plain
+    // and routed those to runInitPlain, but surface a sensible error in case
+    // the gating ever drifts.
+    process.stderr.write('First-run wizard requires a terminal. Use --plain or --non-interactive in scripts.\n');
+    return 1;
+  }
   return 0;
 }

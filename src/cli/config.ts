@@ -263,9 +263,11 @@ export async function runConfig(args: string[]): Promise<number> {
   const useInk = !flags.plain && isTTY && !isCI;
 
   if (useInk) {
-    const { runInkConfig } = await import('./tui/router/ink-config.js');
-    await runInkConfig();
-    return 0;
+    return runInkConfig({
+      isTTY,
+      ci: isCI,
+      plain: flags.plain,
+    });
   }
 
   // Plain / non-interactive: print current settings.
@@ -302,5 +304,56 @@ export async function runConfig(args: string[]): Promise<number> {
   process.stdout.write('  wigolo config --cleanup <comp>   Free storage per component\n');
   process.stdout.write('  wigolo config --uninstall --yes  Full uninstall\n');
 
+  return 0;
+}
+
+interface RunInkConfigOpts {
+  isTTY: boolean;
+  ci: boolean;
+  plain: boolean;
+}
+
+/**
+ * Mounts the new schema-driven TUI in home mode. Replaces the legacy
+ * `runInkConfig` import that lived in `src/cli/tui/router/ink-config.tsx`.
+ */
+async function runInkConfig(opts: RunInkConfigOpts): Promise<number> {
+  const { runEntry } = await import('./tui/entry.js');
+  const { createSettingsStore } = await import('./tui/state/settings-store.js');
+  const { CATALOG } = await import('./tui/schema/catalog.js');
+  const { defaultAgentTargets } = await import('./tui/state/agent-targets.js');
+  const { defaultSecretStore } = await import('./tui/state/secret-store.js');
+  const { enableTuiMode } = await import('./tui/utils/suppress-logs.js');
+  const { getPackageVersion } = await import('./tui/version.js');
+  const { defaultConfigPath, readPersistedConfig } = await import('../persisted-config.js');
+
+  enableTuiMode();
+  const configPath = defaultConfigPath();
+  const persisted = readPersistedConfig(configPath);
+  const store = createSettingsStore(persisted.settings);
+  const config = getConfig();
+  const agents = defaultAgentTargets({ dataDir: config.dataDir });
+  const secretStore = defaultSecretStore({ dataDir: config.dataDir });
+
+  const result = await runEntry({
+    mode: 'home',
+    configPath,
+    isTTY: opts.isTTY,
+    ci: opts.ci,
+    plain: opts.plain,
+    store,
+    catalog: CATALOG,
+    agents,
+    secretStore,
+    version: getPackageVersion(),
+    productName: 'wigolo',
+  });
+
+  if (!result.mounted) {
+    // Headless gating tripped — caller already guarded on flags, but surface
+    // a sensible non-zero so scripts notice if the gating ever drifts.
+    process.stderr.write('Interactive config requires a terminal. Use --plain to see settings.\n');
+    return 1;
+  }
   return 0;
 }
