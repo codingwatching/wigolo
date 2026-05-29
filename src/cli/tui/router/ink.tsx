@@ -1,17 +1,11 @@
 /**
- * InkRouter — top-level shell for the schema-driven settings TUI.
+ * InkRoot — production entry (named export). Wraps the router in the App shell
+ * (Header / Sidebar / Footer). entry.ts renders WizardSteps directly when
+ * phase === 'wizard'; all post-wizard navigation flows through InkRoot.
  *
- * Drives a simple state machine between SettingsHome, the per-category
- * CategoryScreen, and the action-row screens (Verify · Doctor · Export ·
- * Import · Uninstall). Each action mounts the relevant component from
- * components/ — no business logic lives in this router.
- *
- * Hosted by `entry.ts` (slice 10) which selects between this router and the
- * 4-step Wizard, depending on first-run state.
- *
- * SP6: `InkRoot` (named export) wraps InkRouter with the App shell
- * (Header / Sidebar / Footer). The wizard route bypasses the shell entirely —
- * entry.ts renders WizardSteps directly when phase === 'wizard'.
+ * InkRouter (default export) is the legacy unwrapped router retained for
+ * backwards-compat with SP6-era unit tests. It is NOT used in production.
+ * See the @deprecated JSDoc on InkRouter for removal timeline.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { useInput } from 'ink';
@@ -40,6 +34,10 @@ export interface InkRouterProps {
   productName?: string;
 }
 
+/**
+ * @deprecated Retained for SP6-era unit tests; will be removed in SP10 cleanup.
+ * Production code path uses the named export {@link InkRoot} which wraps screens in the shell.
+ */
 export default function InkRouter(props: InkRouterProps): React.ReactElement {
   const { store, catalog, onExit, version, productName } = props;
 
@@ -106,12 +104,11 @@ export default function InkRouter(props: InkRouterProps): React.ReactElement {
 }
 
 // ---------------------------------------------------------------------------
-// InkRoot — testability-friendly shell compositor (SP6)
+// InkRoot — production shell compositor (SP6+)
 //
-// Wraps InkRouter with the App shell (Header / Sidebar / Footer). The
-// `initialRoute` prop defaults to 'home' and matches the existing first-mount
-// behaviour; the integration test uses it to seed the starting view without
-// reaching for entry.ts internals.
+// Wraps the router logic in the App shell (Header / Sidebar / Footer).
+// `initialRoute` seeds the starting view (used in tests and future deep-link
+// support); entry.ts always omits it, defaulting to 'home'.
 // ---------------------------------------------------------------------------
 
 export interface InkRootProps {
@@ -128,6 +125,15 @@ export interface InkRootProps {
    * via keyboard.
    */
   initialRoute?: string;
+}
+
+function resolveInitialView(initialRoute: string | undefined): ScreenView {
+  if (!initialRoute || initialRoute === 'home') return { kind: 'home' };
+  const r = DEFAULT_ROUTES.find((x) => x.id === initialRoute);
+  if (!r) return { kind: 'home' };
+  return r.group === 'settings'
+    ? { kind: 'category', id: r.id as CategoryId }
+    : { kind: 'action', id: r.id as SettingsHomeAction };
 }
 
 function computeActiveRoute(view: ScreenView): string {
@@ -163,9 +169,10 @@ export function InkRoot(props: InkRootProps): React.ReactElement {
     version,
     productName,
     toastStore,
+    initialRoute,
   } = props;
 
-  const [view, setView] = useState<ScreenView>({ kind: 'home' });
+  const [view, setView] = useState<ScreenView>(() => resolveInitialView(initialRoute));
   const [focusedPane, setFocusedPane] = useState<'sidebar' | 'main'>('sidebar');
 
   // Reactive pending count
@@ -190,7 +197,10 @@ export function InkRoot(props: InkRootProps): React.ReactElement {
     if (key.tab) setFocusedPane((p) => p === 'sidebar' ? 'main' : 'sidebar');
   });
 
-  const goHome = useCallback(() => setView({ kind: 'home' }), []);
+  const goHome = useCallback(() => {
+    setView({ kind: 'home' });
+    setFocusedPane('sidebar');
+  }, []);
 
   const onSelectCategory = useCallback((id: CategoryId) => {
     setView({ kind: 'category', id });
@@ -237,7 +247,8 @@ export function InkRoot(props: InkRootProps): React.ReactElement {
       currentScreen = <CategoryScreen category={category} store={store} onBack={goHome} />;
     }
   } else if (view.kind === 'action') {
-    switch (view.id) {
+    const actionId: SettingsHomeAction = view.id;
+    switch (actionId) {
       case 'verify':
         currentScreen = <VerifyScreen onBack={goHome} />;
         break;
@@ -253,6 +264,10 @@ export function InkRoot(props: InkRootProps): React.ReactElement {
       case 'uninstall':
         currentScreen = <DashboardUninstall onBack={goHome} />;
         break;
+      default: {
+        const _exhaustive: never = actionId;
+        throw new Error(`Unhandled action: ${String(_exhaustive)}`);
+      }
     }
   } else {
     currentScreen = (

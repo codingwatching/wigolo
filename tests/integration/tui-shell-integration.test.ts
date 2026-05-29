@@ -83,3 +83,19 @@ describe('shell wraps existing screens', () => {
     expect(lastFrame() ?? '').not.toContain('pending');
   });
 });
+
+describe('initialRoute prop', () => {
+  it('initialRoute="llm" mounts the LLM category screen instead of home', async () => {
+    const store = makeStore();
+    const { lastFrame } = render(
+      React.createElement(InkRoot, { store, catalog: CATALOG, initialRoute: 'llm' }),
+    );
+    await wait(40);
+    const frame = lastFrame() ?? '';
+    // CategoryScreen for 'llm' renders the category label in the main pane.
+    expect(frame).toContain('LLM');
+    // Home screen uses "navigate" in its footer hint; CategoryScreen uses "field".
+    // Asserting "navigate" absent confirms we are NOT on the home screen.
+    expect(frame).not.toContain('navigate');
+  });
+});
