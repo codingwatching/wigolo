@@ -18,13 +18,14 @@ import type { CategoryDef, FieldDef, Ctx } from '../schema/types.js';
 import type { SettingsStore } from '../state/settings-store.js';
 import { FieldRenderer } from './FieldRenderer.js';
 import { ActionBar, type ActionBarHotkey } from './ActionBar.js';
+import { createLogger } from '../../../logger.js';
+
+const logger = createLogger('cli');
 
 export interface CategoryScreenProps {
   category: CategoryDef;
   store: SettingsStore;
   onBack: () => void;
-  /** Called when the user advances past this screen (e.g. in the Wizard). */
-  onSave?: () => void;
 }
 
 export function CategoryScreen(props: CategoryScreenProps): React.ReactElement {
@@ -137,7 +138,9 @@ export function CategoryScreen(props: CategoryScreenProps): React.ReactElement {
               onEditStart={() => setEditing(true)}
               onEditDone={() => {
                 setEditing(false);
-                void store.blur(settingsPath);
+                void store.blur(settingsPath).catch((err) => {
+                  logger.error('blur failed', { path: settingsPath, err: String(err) });
+                });
               }}
               onEditCancel={() => setEditing(false)}
             />

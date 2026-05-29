@@ -110,22 +110,30 @@ describe('CategoryScreen blur autosave', () => {
     expect(blurSpy).toHaveBeenCalledWith('greeting');
   });
 
-  it('onSave prop is never called on keystroke (s handler removed)', async () => {
-    const store = createSettingsStore({ greeting: '' });
-    const onSave = vi.fn();
+  it('logs an error if store.blur rejects (rejection is consumed, component stays mounted)', async () => {
+    const store = createSettingsStore({ greeting: 'hello' });
+    const blurSpy = vi.spyOn(store, 'blur').mockRejectedValueOnce(new Error('disk full'));
 
-    render(
+    const { lastFrame, stdin } = render(
       <CategoryScreen
         category={textCategory}
         store={store}
         onBack={() => {}}
-        onSave={onSave}
       />,
     );
 
     await wait(30);
-    // onSave is no longer wired to any key — it should never fire passively.
-    expect(onSave).not.toHaveBeenCalled();
+    // Enter edit mode on the text field
+    stdin.write(ENTER);
+    await wait(30);
+    // Commit with Enter — blur will reject
+    stdin.write(ENTER);
+    await wait(50);
+
+    // The rejection must be consumed: blur was called and the component is still mounted.
+    expect(blurSpy).toHaveBeenCalledWith('greeting');
+    // Component did not crash — frame is still renderable.
+    expect(lastFrame()).toBeTruthy();
   });
 
   it('ActionBar shows autosave hint (no manual save key)', async () => {

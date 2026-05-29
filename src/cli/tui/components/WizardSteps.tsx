@@ -27,6 +27,9 @@ import {
   type SystemCheckResult,
 } from '../system-check.js';
 
+/** One Ink render cycle plus margin — prevents double-advance on rapid Enter. */
+const ADVANCE_GUARD_MS = 50;
+
 type StepIndex = 1 | 2 | 3 | 4;
 
 const STEP_LABEL: Record<StepIndex, string> = {
@@ -326,7 +329,7 @@ export function WizardSteps(props: WizardStepsProps): React.ReactElement {
         // Reset after a tick so subsequent Enter presses on the next step work.
         setTimeout(() => {
           advancingRef.current = false;
-        }, 50);
+        }, ADVANCE_GUARD_MS);
       }
     },
     { isActive: step === 3 || step === 4 },
