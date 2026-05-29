@@ -11,4 +11,15 @@ describe('CATALOG', () => {
     const keys = CATALOG.flatMap((c) => c.fields.map((f) => f.key));
     expect(new Set(keys).size).toBe(keys.length);
   });
+
+  it('lists six categories in the spec home-layout order', () => {
+    expect(CATALOG.map((c) => c.id)).toEqual([
+      'browser',
+      'search',
+      'llm',
+      'agents',
+      'cache',
+      'advanced',
+    ]);
+  });
 });

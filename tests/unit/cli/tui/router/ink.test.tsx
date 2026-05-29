@@ -78,8 +78,11 @@ describe('InkRouter (router/ink.tsx)', () => {
       <InkRouter store={store} catalog={CATALOG} onExit={() => {}} />,
     );
     await wait(30);
-    // Browser → action row (Verify focused).
-    stdin.write(ARROW_DOWN);
+    // Walk past every category to land on Verify (first action row entry).
+    for (let i = 0; i < CATALOG.length; i++) {
+      stdin.write(ARROW_DOWN);
+      await wait(10);
+    }
     await wait(20);
     stdin.write(ENTER);
     await wait(40);

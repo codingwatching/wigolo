@@ -147,8 +147,11 @@ describe('SettingsHome', () => {
       />,
     );
     await wait(20);
-    // Single category in CATALOG → one ARROW_DOWN moves into the action row.
-    stdin.write(ARROW_DOWN);
+    // Walk N down-arrows to step past all categories into the action row.
+    for (let i = 0; i < CATALOG.length; i++) {
+      stdin.write(ARROW_DOWN);
+      await wait(10);
+    }
     await wait(30);
     const frame = lastFrame() ?? '';
     const focusLine = frame.split('\n').find((l) => l.includes('❯ ')) ?? '';
@@ -205,8 +208,11 @@ describe('SettingsHome', () => {
       />,
     );
     await wait(20);
-    // Move from Browser → Verify (first action).
-    stdin.write(ARROW_DOWN);
+    // Walk past every category to land on Verify (the first action).
+    for (let i = 0; i < CATALOG.length; i++) {
+      stdin.write(ARROW_DOWN);
+      await wait(10);
+    }
     await wait(20);
     stdin.write(ENTER);
     await wait(30);
@@ -226,10 +232,11 @@ describe('SettingsHome', () => {
       />,
     );
     await wait(20);
-    // Browser → Verify → Doctor.
-    stdin.write(ARROW_DOWN);
-    await wait(10);
-    stdin.write(ARROW_DOWN);
+    // Walk past every category + 1 step to land on Doctor (second action).
+    for (let i = 0; i < CATALOG.length + 1; i++) {
+      stdin.write(ARROW_DOWN);
+      await wait(10);
+    }
     await wait(20);
     stdin.write(ENTER);
     await wait(30);
