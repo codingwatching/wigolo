@@ -7,7 +7,7 @@ export interface Toast {
 
 type Listener = () => void;
 
-interface ToastStore {
+export interface ToastStore {
   push(t: Toast): void;
   current(): Toast | null;
   queue(): Toast[];
@@ -17,7 +17,17 @@ interface ToastStore {
 export function createToastStore(): ToastStore {
   let queue: Toast[] = [];
   const listeners = new Set<Listener>();
+  const timers = new Map<Toast, ReturnType<typeof setTimeout>>();
   const fire = () => listeners.forEach((l) => l());
+
+  function scheduleRemoval(t: Toast): void {
+    const handle = setTimeout(() => {
+      queue = queue.filter((q) => q !== t);
+      timers.delete(t);
+      fire();
+    }, t.ttl);
+    timers.set(t, handle);
+  }
 
   function push(t: Toast): void {
     if (t.group === 'save') {
@@ -25,17 +35,18 @@ export function createToastStore(): ToastStore {
       if (last && last.group === 'save') {
         const m = /^Saved · (\d+) fields$/.exec(last.message);
         const next = m ? Number(m[1]) + 1 : 2;
-        queue[queue.length - 1] = { ...last, message: `Saved · ${next} fields` };
+        const merged: Toast = { ...last, message: `Saved · ${next} fields` };
+        const prevTimer = timers.get(last);
+        if (prevTimer !== undefined) { clearTimeout(prevTimer); timers.delete(last); }
+        queue[queue.length - 1] = merged;
+        scheduleRemoval(merged);
         fire();
         return;
       }
     }
     queue.push(t);
+    scheduleRemoval(t);
     fire();
-    setTimeout(() => {
-      queue = queue.filter((q) => q !== t);
-      fire();
-    }, t.ttl);
   }
 
   return {

@@ -41,4 +41,18 @@ describe('toast-store', () => {
     expect(store.current()?.message).toBe('Saved · B');
     vi.useRealTimers();
   });
+
+  it('coalesced save toast still auto-expires after the most recent push + ttl', () => {
+    vi.useFakeTimers();
+    const store = createToastStore();
+    store.push({ message: 'Saved · A', severity: 'ok', ttl: 3000, group: 'save' });
+    vi.advanceTimersByTime(200);
+    store.push({ message: 'Saved · B', severity: 'ok', ttl: 3000, group: 'save' });
+    vi.advanceTimersByTime(200);
+    store.push({ message: 'Saved · C', severity: 'ok', ttl: 3000, group: 'save' });
+    expect(store.current()?.message).toBe('Saved · 3 fields');
+    vi.advanceTimersByTime(3001);
+    expect(store.current()).toBeNull();
+    vi.useRealTimers();
+  });
 });
