@@ -48,9 +48,10 @@ export async function runInit(args: string[]): Promise<number> {
 
   if (useInk) {
     // Delegate to runConfig with --force-wizard: same code path, no divergent logic.
+    // Don't forward --plain: this code path is reached only when useInk is true,
+    // which already requires !flags.plain.
     const { runConfig } = await import('./config.js');
     const configArgs = ['--force-wizard'];
-    if (flags.plain) configArgs.push('--plain');
     return runConfig(configArgs);
   }
 

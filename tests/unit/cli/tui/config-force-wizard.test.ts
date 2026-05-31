@@ -1,18 +1,16 @@
 /**
- * --force-wizard routing tests.
- *
- * `wigolo config --force-wizard` must resolve to mode='wizard' even when
- * a fully-configured config file exists. This pins the flag as a real bypass
- * rather than a rename of the existing wizard path.
- *
- * `wigolo init` delegates to runConfig with forceWizard:true — same code path,
- * verified by confirming both produce the same resolveEntry result.
+ * Tests for --force-wizard handling in resolveEntry.
+ * These tests verify that mode='wizard' bypasses the hasRequiredFields check,
+ * regardless of config state. The init-delegate-to-config wiring is verified
+ * by code inspection (init.ts is a 3-line delegate to runConfig(['--force-wizard']));
+ * end-to-end CLI tests would require subprocess spawning which is out of scope.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveEntry } from '../../../../src/cli/tui/entry.js';
+import { resetPersistedConfig } from '../../../../src/persisted-config.js';
 
 let tmpDir: string;
 
@@ -30,6 +28,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetPersistedConfig();   // bust the per-path cache
   try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 

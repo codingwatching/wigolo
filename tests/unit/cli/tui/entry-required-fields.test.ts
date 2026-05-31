@@ -13,6 +13,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveEntry } from '../../../../src/cli/tui/entry.js';
+import { resetPersistedConfig } from '../../../../src/persisted-config.js';
 
 let tmpDir: string;
 
@@ -27,6 +28,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetPersistedConfig();   // bust the per-path cache
   try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
