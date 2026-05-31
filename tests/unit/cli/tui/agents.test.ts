@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { join } from 'node:path';
 
 vi.mock('../../../../src/cli/tui/detect-helpers.js', () => ({
   binaryInPath: vi.fn(),
@@ -45,12 +46,12 @@ describe('Cursor descriptor', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('detects when project .cursor dir exists', () => {
-    vi.mocked(dirExists).mockImplementation((p) => p === '/proj/.cursor');
+    vi.mocked(dirExists).mockImplementation((p) => p === join('/proj', '.cursor'));
     expect(getDescriptor('cursor').detect(ENV)).toBe(true);
   });
 
   it('detects when global ~/.cursor dir exists', () => {
-    vi.mocked(dirExists).mockImplementation((p) => p === '/home/test/.cursor');
+    vi.mocked(dirExists).mockImplementation((p) => p === join('/home/test', '.cursor'));
     expect(getDescriptor('cursor').detect(ENV)).toBe(true);
   });
 
@@ -67,13 +68,13 @@ describe('Cursor descriptor', () => {
   });
 
   it('configPath prefers project .cursor/mcp.json when project dir exists', () => {
-    vi.mocked(dirExists).mockImplementation((p) => p === '/proj/.cursor');
-    expect(getDescriptor('cursor').configPath(ENV)).toBe('/proj/.cursor/mcp.json');
+    vi.mocked(dirExists).mockImplementation((p) => p === join('/proj', '.cursor'));
+    expect(getDescriptor('cursor').configPath(ENV)).toBe(join('/proj', '.cursor', 'mcp.json'));
   });
 
   it('configPath falls back to global when project dir missing', () => {
     vi.mocked(dirExists).mockReturnValue(false);
-    expect(getDescriptor('cursor').configPath(ENV)).toBe('/home/test/.cursor/mcp.json');
+    expect(getDescriptor('cursor').configPath(ENV)).toBe(join('/home/test', '.cursor', 'mcp.json'));
   });
 });
 
