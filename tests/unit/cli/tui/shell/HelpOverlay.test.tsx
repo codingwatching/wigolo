@@ -53,4 +53,12 @@ describe('HelpOverlay', () => {
     await wait(20);
     expect(lastFrame()).toContain('Keyboard');
   });
+
+  it('does not list ⌃z (Undo — unimplemented)', async () => {
+    const { lastFrame } = render(<HelpOverlay onClose={() => {}} />);
+    await wait(20);
+    const frame = lastFrame() ?? '';
+    expect(frame).not.toContain('⌃z');
+    expect(frame).not.toMatch(/Undo.*last|last.*Undo/i);
+  });
 });

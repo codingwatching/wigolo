@@ -26,17 +26,19 @@ import {
   runSystemCheck,
   type SystemCheckResult,
 } from '../system-check.js';
+import { defaultConfigPath } from '../../../persisted-config.js';
 
 /** One Ink render cycle plus margin — prevents double-advance on rapid Enter. */
 const ADVANCE_GUARD_MS = 50;
 
-type StepIndex = 1 | 2 | 3 | 4;
+type StepIndex = 1 | 2 | 3 | 4 | 5;
 
 const STEP_LABEL: Record<StepIndex, string> = {
   1: 'Welcome',
   2: 'System',
   3: 'LLM Provider',
   4: 'MCP Agents',
+  5: 'Complete',
 };
 
 export interface WizardStepsProps {
@@ -172,6 +174,36 @@ function SystemStep(props: SystemStepProps): React.ReactElement {
   );
 }
 
+const CEREMONY_DELAY_MS = 1500;
+
+interface SetupCompleteProps {
+  onDone: () => void;
+}
+
+function SetupComplete({ onDone }: SetupCompleteProps): React.ReactElement {
+  useEffect(() => {
+    const t = setTimeout(onDone, CEREMONY_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [onDone]);
+
+  useInput((_input, key) => {
+    if (key.return) {
+      onDone();
+    }
+  });
+
+  return (
+    <Box flexDirection="column">
+      <Text color={semantic.ok} bold>✓ Setup complete</Text>
+      <Text dimColor>{'─'.repeat(24)}</Text>
+      <Text dimColor>Saved to {defaultConfigPath()}</Text>
+      <Box marginTop={1}>
+        <Text dimColor>Press ⏎ to continue (auto-dismiss in 1.5s)</Text>
+      </Box>
+    </Box>
+  );
+}
+
 function findCategory(
   catalog: ReadonlyArray<CategoryDef>,
   id: CategoryDef['id'],
@@ -196,6 +228,7 @@ export function WizardSteps(props: WizardStepsProps): React.ReactElement {
   const [step, setStep] = useState<StepIndex>(1);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [setupComplete, setSetupComplete] = useState(false);
 
   const llmCategory = useMemo(() => findCategory(catalog, 'llm'), [catalog]);
   const agentsCategory = useMemo(() => findCategory(catalog, 'agents'), [catalog]);
@@ -216,6 +249,7 @@ export function WizardSteps(props: WizardStepsProps): React.ReactElement {
     setSaving(true);
     setSaveError(null);
 
+    let hadError = false;
     try {
       // 1. Snapshot the selected agents from pending OR current — we need
       //    this BEFORE save commits the store, since installAgent runs from
@@ -261,7 +295,9 @@ export function WizardSteps(props: WizardStepsProps): React.ReactElement {
           secretStore,
         });
         if (result.errors && result.errors.length > 0) {
-          setSaveError(result.errors.map((e) => `${e.key}: ${e.reason}`).join('; '));
+          const msg = result.errors.map((e) => `${e.key}: ${e.reason}`).join('; ');
+          setSaveError(msg);
+          hadError = true;
         }
       } else {
         // No secret store wired up (test or partial caller) — at minimum
@@ -282,11 +318,19 @@ export function WizardSteps(props: WizardStepsProps): React.ReactElement {
           } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);
             setSaveError(reason);
+            hadError = true;
           }
         }
       }
+
     } finally {
       setSaving(false);
+    }
+    // On clean success, show the ceremony screen.
+    // On error, call onDone immediately (no ceremony).
+    if (!hadError) {
+      setSetupComplete(true);
+    } else {
       onDone();
     }
   }, [
@@ -332,8 +376,13 @@ export function WizardSteps(props: WizardStepsProps): React.ReactElement {
         }, ADVANCE_GUARD_MS);
       }
     },
-    { isActive: step === 3 || step === 4 },
+    { isActive: (step === 3 || step === 4) && !setupComplete },
   );
+
+  // Ceremony screen shown after a successful finish.
+  if (setupComplete) {
+    return <SetupComplete onDone={onDone} />;
+  }
 
   if (step === 1) {
     return <WelcomeStep onNext={() => setStep(2)} onSkip={onSkip} />;

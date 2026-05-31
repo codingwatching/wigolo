@@ -8,7 +8,6 @@ const KEYBINDS: { key: string; desc: string }[] = [
   { key: '⏎',   desc: 'Select / confirm / begin edit' },
   { key: 'esc', desc: 'Back / cancel / close overlay' },
   { key: '⌃k',  desc: 'Open command palette' },
-  { key: '⌃z',  desc: 'Undo last change' },
   { key: '?',   desc: 'Toggle this help overlay' },
   { key: 'q',   desc: 'Quit (when no pending changes)' },
 ];

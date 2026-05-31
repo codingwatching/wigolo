@@ -208,6 +208,10 @@ describe('WizardSteps', () => {
     // Agents → save (Enter triggers ⏎ Finish)
     stdin.write(ENTER);
     await wait(80);
+    // Save+install complete; ceremony screen is now showing.
+    // Press Enter to dismiss the Setup complete ceremony.
+    stdin.write(ENTER);
+    await wait(40);
 
     expect(saveImpl).toHaveBeenCalledTimes(1);
     expect(installImpl).toHaveBeenCalledTimes(2);

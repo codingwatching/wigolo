@@ -26,6 +26,8 @@ export function Header(props: {
   activityStore?: ActivityStore;
   width?: ShellWidth;
   breadcrumb?: string;
+  /** Unified save-state label. When provided, replaces the "N pending" badge. */
+  saveLabel?: string;
 }): JSX.Element {
   const rm = reducedMotion();
 
@@ -83,17 +85,27 @@ export function Header(props: {
     <Gradient colors={[...gradientColors]}><Text bold>wigolo</Text></Gradient>
   );
 
+  // Unified right-side info: saveLabel > toast > pending (legacy)
+  const rightInfo: React.ReactElement | null = (() => {
+    if (width === 'tiny') return null;
+    if (props.saveLabel !== undefined) {
+      return <Text color={dotColor}>{props.saveLabel}</Text>;
+    }
+    if (props.toast) {
+      return <Text color={toastColor(props.toast.severity)}>{props.toast.message}</Text>;
+    }
+    if (props.pending > 0) {
+      return <Text color={semantic.accent}>{props.pending} pending</Text>;
+    }
+    return null;
+  })();
+
   return (
     <Box justifyContent="space-between" paddingX={1}>
       {title}
       <Box gap={2}>
         <Text color={dotColor}>{dotChar}</Text>
-        {width !== 'tiny' && props.pending > 0 && (
-          <Text color={semantic.accent}>{props.pending} pending</Text>
-        )}
-        {width !== 'tiny' && props.toast && (
-          <Text color={toastColor(props.toast.severity)}>{props.toast.message}</Text>
-        )}
+        {rightInfo}
       </Box>
     </Box>
   );

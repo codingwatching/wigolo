@@ -20,8 +20,12 @@ import React from 'react';
 import { render, useApp } from 'ink';
 import type { CategoryDef } from './schema/types.js';
 import type { SettingsStore } from './state/settings-store.js';
+import type { ToastStore } from './state/toast-store.js';
+import type { ActivityStore } from './state/activity-store.js';
 import type { AgentTarget } from './state/agent-targets.js';
 import type { SecretStore } from './state/propagation.js';
+import { toastStore as defaultToastStore } from './state/toast-store-instance.js';
+import { activityStore as defaultActivityStore } from './state/activity-store-instance.js';
 
 export type EntryMode = 'wizard' | 'home' | 'auto';
 
@@ -142,6 +146,8 @@ function MountRoot(props: MountRootProps): React.ReactElement {
     onExit?: () => void;
     version?: string;
     productName?: string;
+    toastStore?: ToastStore;
+    activityStore?: ActivityStore;
   }> | null>(null);
   const [WizardSteps, setWizardSteps] = React.useState<React.ComponentType<{
     store: SettingsStore;
@@ -194,6 +200,8 @@ function MountRoot(props: MountRootProps): React.ReactElement {
     onExit: () => exit(),
     version: props.version,
     productName: props.productName,
+    toastStore: defaultToastStore,
+    activityStore: defaultActivityStore,
   });
 }
 

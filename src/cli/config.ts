@@ -401,11 +401,13 @@ async function runInkConfig(opts: RunInkConfigOpts): Promise<number> {
   const { enableTuiMode } = await import('./tui/utils/suppress-logs.js');
   const { getPackageVersion } = await import('./tui/version.js');
   const { defaultConfigPath, readPersistedConfig } = await import('../persisted-config.js');
+  const { toastStore } = await import('./tui/state/toast-store-instance.js');
+  const { activityStore } = await import('./tui/state/activity-store-instance.js');
 
   enableTuiMode();
   const configPath = defaultConfigPath();
   const persisted = readPersistedConfig(configPath);
-  const store = createSettingsStore(persisted.settings);
+  const store = createSettingsStore(persisted.settings, toastStore, activityStore);
   const config = getConfig();
   const agents = defaultAgentTargets({ dataDir: config.dataDir });
   const secretStore = defaultSecretStore({ dataDir: config.dataDir });

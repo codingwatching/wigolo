@@ -262,7 +262,7 @@ describe('SettingsHome', () => {
     expect(onQuit).toHaveBeenCalledTimes(1);
   });
 
-  it('q with a dirty store shows the confirmation line and does NOT call onQuit', async () => {
+  it('q with a dirty store shows the three-way prompt and does NOT call onQuit', async () => {
     const store = makeStore();
     store.set('maxBrowsers', 5);
     expect(store.isDirty()).toBe(true);
@@ -280,12 +280,13 @@ describe('SettingsHome', () => {
     stdin.write('q');
     await wait(30);
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('Discard 1 pending change');
-    expect(frame).toContain('(y/N)');
+    expect(frame).toMatch(/Save.*exit|Save & exit/i);
+    expect(frame).toMatch(/[Dd]iscard/);
+    expect(frame).toMatch(/[Cc]ancel/);
     expect(onQuit).not.toHaveBeenCalled();
   });
 
-  it('confirmation y after q on a dirty store calls onQuit', async () => {
+  it('d after q on a dirty store discards and calls onQuit', async () => {
     const store = makeStore();
     store.set('maxBrowsers', 5);
     const onQuit = vi.fn();
@@ -301,12 +302,12 @@ describe('SettingsHome', () => {
     await wait(20);
     stdin.write('q');
     await wait(20);
-    stdin.write('y');
+    stdin.write('d');
     await wait(30);
     expect(onQuit).toHaveBeenCalledTimes(1);
   });
 
-  it('confirmation n after q on a dirty store cancels and does NOT call onQuit', async () => {
+  it('Esc after q on a dirty store cancels and does NOT call onQuit', async () => {
     const store = makeStore();
     store.set('maxBrowsers', 5);
     const onQuit = vi.fn();
@@ -322,11 +323,11 @@ describe('SettingsHome', () => {
     await wait(20);
     stdin.write('q');
     await wait(20);
-    stdin.write('n');
+    stdin.write('\x1b'); // Esc
     await wait(30);
     expect(onQuit).not.toHaveBeenCalled();
     const frame = lastFrame() ?? '';
-    expect(frame).not.toContain('Discard');
+    expect(frame).not.toMatch(/Save.*exit/i);
   });
 
   it('? toggles a help overlay line', async () => {
