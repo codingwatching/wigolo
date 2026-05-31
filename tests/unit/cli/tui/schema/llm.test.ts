@@ -8,12 +8,12 @@ describe('llmCategory', () => {
     expect(llmCategory.description).toMatch(/research\/agent/i);
   });
 
-  it('declares exactly three fields: provider, api key, custom base URL', () => {
+  it('declares exactly two fields: provider and api key (base URL field removed with custom option)', () => {
     const keys = llmCategory.fields.map((f) => f.settingsPath);
-    expect(keys).toEqual(['llmProvider', 'llmApiKey', 'llmBaseUrl']);
+    expect(keys).toEqual(['llmProvider', 'llmApiKey']);
   });
 
-  it('provider is a select with the four expected options', () => {
+  it('provider is a select with exactly three options: anthropic, openai, gemini', () => {
     const provider = llmCategory.fields.find((f) => f.settingsPath === 'llmProvider');
     expect(provider).toBeDefined();
     expect(provider?.kind).toBe('select');
@@ -21,8 +21,8 @@ describe('llmCategory', () => {
       'anthropic',
       'openai',
       'gemini',
-      'custom',
     ]);
+    expect(provider?.options?.map((o) => o.value)).not.toContain('custom');
     expect(provider?.default).toBe('anthropic');
   });
 
@@ -37,28 +37,13 @@ describe('llmCategory', () => {
     expect(key?.help).toMatch(/keychain/i);
   });
 
-  it('base URL is a text field with a visible predicate', () => {
+  it('llmBaseUrl field is removed — the custom endpoint URL field no longer exists in the schema', () => {
+    // The custom provider option was removed; the conditional Endpoint URL field
+    // that was tied to provider === 'custom' is also gone. Users who need a
+    // custom backend set WIGOLO_LLM_PROVIDER to the URL directly via env var —
+    // that undocumented escape hatch is not surfaced in the schema.
     const url = llmCategory.fields.find((f) => f.settingsPath === 'llmBaseUrl');
-    expect(url).toBeDefined();
-    expect(url?.kind).toBe('text');
-    expect(typeof url?.visible).toBe('function');
-  });
-
-  it('base URL visible() returns false when provider is anthropic', () => {
-    const url = llmCategory.fields.find((f) => f.settingsPath === 'llmBaseUrl');
-    expect(url?.visible?.({ current: { llmProvider: 'anthropic' }, pending: {} })).toBe(false);
-  });
-
-  it('base URL visible() returns true when pending provider is custom', () => {
-    const url = llmCategory.fields.find((f) => f.settingsPath === 'llmBaseUrl');
-    expect(
-      url?.visible?.({ current: { llmProvider: 'anthropic' }, pending: { llmProvider: 'custom' } }),
-    ).toBe(true);
-  });
-
-  it('base URL visible() returns true when current provider is custom and pending unchanged', () => {
-    const url = llmCategory.fields.find((f) => f.settingsPath === 'llmBaseUrl');
-    expect(url?.visible?.({ current: { llmProvider: 'custom' }, pending: {} })).toBe(true);
+    expect(url).toBeUndefined();
   });
 
   it('every field has a settingsPath, label, and key', () => {
