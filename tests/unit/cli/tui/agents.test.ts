@@ -218,12 +218,12 @@ describe('OpenCode descriptor', () => {
   });
 
   it('detects when ~/.config/opencode dir exists', () => {
-    vi.mocked(dirExists).mockImplementation((p) => p === '/home/test/.config/opencode');
+    vi.mocked(dirExists).mockImplementation((p) => p === join('/home/test', '.config', 'opencode'));
     expect(getDescriptor('opencode').detect(ENV)).toBe(true);
   });
 
   it('configPath returns ~/.config/opencode/config.json', () => {
-    expect(getDescriptor('opencode').configPath(ENV)).toBe('/home/test/.config/opencode/config.json');
+    expect(getDescriptor('opencode').configPath(ENV)).toBe(join('/home/test', '.config', 'opencode', 'config.json'));
   });
 });
 
