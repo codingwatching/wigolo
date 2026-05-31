@@ -143,7 +143,7 @@ describe('Gemini CLI descriptor', () => {
   });
 
   it('detects when ~/.gemini dir exists', () => {
-    vi.mocked(dirExists).mockImplementation((p) => p === '/home/test/.gemini');
+    vi.mocked(dirExists).mockImplementation((p) => p === join('/home/test', '.gemini'));
     expect(getDescriptor('gemini-cli').detect(ENV)).toBe(true);
   });
 
@@ -154,7 +154,7 @@ describe('Gemini CLI descriptor', () => {
   });
 
   it('configPath returns ~/.gemini/settings.json', () => {
-    expect(getDescriptor('gemini-cli').configPath(ENV)).toBe('/home/test/.gemini/settings.json');
+    expect(getDescriptor('gemini-cli').configPath(ENV)).toBe(join('/home/test', '.gemini', 'settings.json'));
   });
 });
 
