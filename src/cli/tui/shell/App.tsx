@@ -47,6 +47,8 @@ interface AppProps {
   helpOpen?: boolean;
   onHelpClose?: () => void;
   activityStore?: ActivityStore;
+  /** Unified save-state label for the Header right-side info area. */
+  saveLabel?: string;
 }
 
 function computeBreadcrumb(routeId: string | undefined, routes: readonly SidebarRoute[], paneTitle: string): string {
@@ -81,6 +83,7 @@ export function App(props: AppProps): JSX.Element {
           activityStore={props.activityStore}
           width={width}
           breadcrumb={breadcrumb}
+          saveLabel={props.saveLabel}
         />
         <Box flexGrow={1}>
           {width === 'wide' && (

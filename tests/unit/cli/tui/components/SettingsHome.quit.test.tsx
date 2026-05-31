@@ -1,11 +1,10 @@
 /**
- * SettingsHome quit-key behaviour — Phase 0 regression pins.
+ * SettingsHome quit-key behaviour — Phase 0 + Phase 1 regression pins.
  *
  * Verifies that:
  * - pressing q on a clean session calls onQuit immediately (no prompt).
- * - pressing q with pending changes shows the Discard prompt and does NOT
- *   call onQuit (three-way Save/Discard/Cancel is Phase 1; this covers the
- *   existing two-way gate that Phase 0 must not regress).
+ * - pressing q with pending changes shows the three-way Save/Discard/Cancel
+ *   prompt and does NOT call onQuit immediately.
  */
 import React from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -50,7 +49,7 @@ describe('SettingsHome — quit key', () => {
     expect(onQuit).toHaveBeenCalledTimes(1);
   });
 
-  it('q with pending shows Discard prompt and does not call onQuit', async () => {
+  it('q with pending shows three-way prompt and does not call onQuit', async () => {
     const store = makeStore();
     store.set('maxBrowsers', 5);
     expect(store.isDirty()).toBe(true);
@@ -68,7 +67,9 @@ describe('SettingsHome — quit key', () => {
     stdin.write('q');
     await wait(30);
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('Discard');
+    // Three-way prompt: Save & exit, Discard & exit, Cancel
+    expect(frame).toMatch(/Save.*exit|Save & exit/i);
+    expect(frame).toMatch(/[Dd]iscard/);
     expect(onQuit).not.toHaveBeenCalled();
   });
 });

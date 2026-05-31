@@ -126,6 +126,8 @@ export function SettingsHome(props: SettingsHomeProps): React.ReactElement {
   const totalRows = categoryRows.length + ACTIONS.length;
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [confirmQuit, setConfirmQuit] = useState(false);
+  const [quitSaving, setQuitSaving] = useState(false);
+  const [quitError, setQuitError] = useState<string | null>(null);
   const [helpVisible, setHelpVisible] = useState(false);
 
   // Clamp focus if the catalog shrinks (future-proofing).
@@ -140,16 +142,35 @@ export function SettingsHome(props: SettingsHomeProps): React.ReactElement {
   const pendingCount = store.dirtyKeys().length;
 
   useInput((input, key) => {
-    // Quit confirmation has highest priority — it owns the keyboard until
-    // resolved.
+    // Three-way quit prompt has highest priority — it owns the keyboard until resolved.
     if (confirmQuit) {
-      if (input === 'y' || input === 'Y') {
+      // Esc → cancel, stay in TUI
+      if (key.escape) {
         setConfirmQuit(false);
+        setQuitError(null);
+        return;
+      }
+      // d / D → discard & exit
+      if (input === 'd' || input === 'D') {
+        setConfirmQuit(false);
+        setQuitError(null);
+        store.discard();
         onQuit();
         return;
       }
-      if (input === 'n' || input === 'N' || key.escape) {
-        setConfirmQuit(false);
+      // ⏎ → save & exit: flush each dirty key via blur, then quit
+      if (key.return && !quitSaving) {
+        setQuitSaving(true);
+        const keys = store.dirtyKeys();
+        void Promise.all(keys.map((k) => store.blur(k))).then(() => {
+          setQuitSaving(false);
+          setConfirmQuit(false);
+          setQuitError(null);
+          onQuit();
+        }).catch((err: unknown) => {
+          setQuitSaving(false);
+          setQuitError(err instanceof Error ? err.message : String(err));
+        });
         return;
       }
       return;
@@ -252,10 +273,17 @@ export function SettingsHome(props: SettingsHomeProps): React.ReactElement {
       ) : null}
 
       {confirmQuit ? (
-        <Box marginTop={1}>
+        <Box marginTop={1} flexDirection="column">
           <Text color={semantic.warn}>
-            {`Discard ${pendingCount} pending change${pendingCount === 1 ? '' : 's'}? (y/N)`}
+            {`${pendingCount} unsaved change${pendingCount === 1 ? '' : 's'}. Choose:`}
           </Text>
+          <Text color={semantic.ok}>{'  ⏎  Save & exit'}</Text>
+          <Text color={semantic.warn}>{'  d  Discard & exit'}</Text>
+          <Text color={semantic.textDim}>{'  esc  Cancel'}</Text>
+          {quitSaving ? <Text dimColor>{'  Saving…'}</Text> : null}
+          {quitError !== null ? (
+            <Text color={semantic.err}>{`  Error: ${quitError}`}</Text>
+          ) : null}
         </Box>
       ) : null}
     </Box>

@@ -26,8 +26,35 @@ type ScreenView =
 
 const ACTION_LABELS = ['Verify', 'Doctor', 'Export', 'Import', 'Uninstall'];
 
-// TODO: derive from a future system-health store; SP4 spec deferred this wiring
-const SYSTEM_STATUS = 'ok' as const;
+type SaveState = 'idle-saved' | 'saving' | 'saved-toast' | 'dirty' | 'error';
+
+function computeSaveState(
+  dirtyCount: number,
+  isSaving: boolean,
+  currentToast: { message: string; severity: 'ok' | 'warn' | 'err'; group?: string } | null,
+): SaveState {
+  if (isSaving) return 'saving';
+  if (currentToast?.group === 'save') return 'saved-toast';
+  if (currentToast?.severity === 'err') return 'error';
+  if (dirtyCount > 0) return 'dirty';
+  return 'idle-saved';
+}
+
+function saveStateToStatus(state: SaveState): 'ok' | 'warn' | 'err' {
+  if (state === 'idle-saved' || state === 'saved-toast') return 'ok';
+  if (state === 'error') return 'err';
+  return 'warn';
+}
+
+function saveStateLabel(state: SaveState, dirtyCount: number, toastMessage: string | null): string {
+  switch (state) {
+    case 'idle-saved': return 'All changes saved ✓';
+    case 'saving': return 'Saving…';
+    case 'saved-toast': return toastMessage ?? 'Saved';
+    case 'dirty': return `${dirtyCount} unsaved`;
+    case 'error': return 'Save failed — check logs';
+  }
+}
 
 // ---------------------------------------------------------------------------
 // InkRoot — production shell compositor (SP6+)
@@ -110,15 +137,27 @@ export function InkRoot(props: InkRootProps): React.ReactElement {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
-  // Reactive pending count
-  const [pending, setPending] = useState(() => store.dirtyKeys().length);
+  // Reactive dirty count
+  const [dirtyCount, setDirtyCount] = useState(() => store.dirtyKeys().length);
   useEffect(() => {
-    const unsub = store.subscribe(() => setPending(store.dirtyKeys().length));
+    const unsub = store.subscribe(() => setDirtyCount(store.dirtyKeys().length));
     return unsub;
   }, [store]);
 
+  // Reactive activity (saving in flight)
+  const [isSaving, setIsSaving] = useState(() => {
+    const labels = defaultActivityStore.labels();
+    return labels.some((l) => l.startsWith('save:'));
+  });
+  useEffect(() => {
+    const unsub = defaultActivityStore.subscribe(() => {
+      setIsSaving(defaultActivityStore.labels().some((l) => l.startsWith('save:')));
+    });
+    return unsub;
+  }, []);
+
   // Reactive toast
-  const [toast, setToast] = useState<{ message: string; severity: 'ok' | 'warn' | 'err' } | null>(
+  const [toast, setToast] = useState<{ message: string; severity: 'ok' | 'warn' | 'err'; group?: string } | null>(
     () => toastStore?.current() ?? null,
   );
   useEffect(() => {
@@ -126,6 +165,11 @@ export function InkRoot(props: InkRootProps): React.ReactElement {
     const unsub = toastStore.subscribe(() => setToast(toastStore.current()));
     return unsub;
   }, [toastStore]);
+
+  // Derived save-state (single computed value, no new globals)
+  const saveState = computeSaveState(dirtyCount, isSaving, toast);
+  const headerStatus = saveStateToStatus(saveState);
+  const headerLabel = saveStateLabel(saveState, dirtyCount, toast?.message ?? null);
 
   // Build palette index once per catalog change
   const paletteEntries = useMemo(
@@ -267,9 +311,10 @@ export function InkRoot(props: InkRootProps): React.ReactElement {
       activeRoute={activeRoute}
       routeId={routeId}
       dirtyByCategory={dirtyByCategory}
-      status={SYSTEM_STATUS}
-      pending={pending}
+      status={headerStatus}
+      pending={0}
       toast={toast}
+      saveLabel={headerLabel}
       focusedPane={focusedPane}
       paneTitle={paneTitle}
       onSelectRoute={handleSelectRoute}
