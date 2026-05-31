@@ -149,8 +149,13 @@ describe('uninstall — path-safety guard (rm -rf footgun prevention)', () => {
     expect(result.error).toMatch(/unsafe|refus/i);
   });
 
-  it('refuses to delete an obvious system root (/usr)', async () => {
-    const result = await uninstall({ dataDir: '/usr', confirmed: true });
+  it('refuses to delete an obvious system root', async () => {
+    // Test-side fix: '/usr' is only a system root on POSIX. On Windows it
+    // resolves to 'C:\\usr' which is a legitimate top-level dir, not a system
+    // root. Use a platform-appropriate fixture that the source guard knows
+    // about (both '/usr' and 'C:\\Windows' are in the source's SYSTEM_ROOTS).
+    const systemRoot = process.platform === 'win32' ? 'C:\\Windows' : '/usr';
+    const result = await uninstall({ dataDir: systemRoot, confirmed: true });
     expect(result.ok).toBe(false);
     expect(result.dataDirRemoved).toBe(false);
   });

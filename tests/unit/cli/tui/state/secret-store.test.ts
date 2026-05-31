@@ -100,7 +100,10 @@ describe('defaultSecretStore — file fallback', () => {
     expect(result.location).toBe('file');
   });
 
-  it('writes the file with mode 0o600', async () => {
+  // POSIX-only: Windows file ACLs don't map to POSIX mode bits, so fs.statSync
+  // reports 0o666 regardless of the mode passed to writeFileSync. The production
+  // secret-store call still passes mode: 0o600 (harmless no-op on Windows).
+  it.skipIf(process.platform === 'win32')('writes the file with mode 0o600', async () => {
     const store = defaultSecretStore({ dataDir: tmp });
     await store.set('llmApiKey', 'sk-on-disk');
     const path = join(tmp, 'keys', 'llmApiKey');
@@ -111,7 +114,8 @@ describe('defaultSecretStore — file fallback', () => {
     expect(readFileSync(path, 'utf-8')).toBe('sk-on-disk');
   });
 
-  it('creates the keys dir with mode 0o700', async () => {
+  // POSIX-only: Windows directory ACLs don't map to POSIX mode bits.
+  it.skipIf(process.platform === 'win32')('creates the keys dir with mode 0o700', async () => {
     const store = defaultSecretStore({ dataDir: tmp });
     await store.set('llmApiKey', 'sk-on-disk');
     const dir = join(tmp, 'keys');
