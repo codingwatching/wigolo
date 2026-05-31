@@ -64,10 +64,26 @@ function formatValue(v: unknown): string {
   }
 }
 
+interface PreviewResult {
+  text: string;
+  severity?: 'ok' | 'warn';
+}
+
 function categoryPreview(
   category: CategoryDef,
   current: Readonly<Record<string, unknown>>,
-): string {
+): PreviewResult {
+  // Multiselect fields: show installed count or a warning when empty.
+  for (const field of category.fields) {
+    if (field.kind === 'multiselect') {
+      const raw = current[field.settingsPath];
+      const arr = Array.isArray(raw) ? raw : (Array.isArray(field.default) ? field.default : []);
+      if (arr.length === 0) {
+        return { text: '⚠ none installed', severity: 'warn' };
+      }
+      return { text: `✓ ${arr.length} installed`, severity: 'ok' };
+    }
+  }
   // Find the first visible field with a value (or a default) and render that
   // as the right-column summary. Keeps the screen useful even with one
   // category in CATALOG today.
@@ -77,16 +93,16 @@ function categoryPreview(
     if (value === undefined || value === null) continue;
     const rendered = formatValue(value);
     if (rendered.length === 0) continue;
-    return rendered;
+    return { text: rendered };
   }
   // Fallback — first option of first select field if nothing else.
   for (const field of category.fields) {
     if (field.kind === 'select' && field.options && field.options.length > 0) {
       const first = field.options[0];
-      if (first) return first.value;
+      if (first) return { text: first.value };
     }
   }
-  return '';
+  return { text: '' };
 }
 
 export function SettingsHome(props: SettingsHomeProps): React.ReactElement {
@@ -112,12 +128,16 @@ export function SettingsHome(props: SettingsHomeProps): React.ReactElement {
 
   const categoryRows = useMemo(
     () =>
-      catalog.map((c) => ({
-        id: c.id,
-        label: c.label,
-        description: c.description,
-        preview: categoryPreview(c, current),
-      })),
+      catalog.map((c) => {
+        const preview = categoryPreview(c, current);
+        return {
+          id: c.id,
+          label: c.label,
+          description: c.description,
+          preview: preview.text,
+          previewSeverity: preview.severity,
+        };
+      }),
     // current is rebuilt every render; recompute when its JSON shape changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [catalog, JSON.stringify(current)],
@@ -225,6 +245,12 @@ export function SettingsHome(props: SettingsHomeProps): React.ReactElement {
       <Box flexDirection="column">
         {categoryRows.map((row, idx) => {
           const focused = idx === focusedIndex && !inActionRow;
+          const previewColor =
+            row.previewSeverity === 'ok'
+              ? semantic.ok
+              : row.previewSeverity === 'warn'
+                ? semantic.warn
+                : undefined;
           return (
             <Box key={row.id} flexDirection="row">
               <Text>
@@ -233,7 +259,9 @@ export function SettingsHome(props: SettingsHomeProps): React.ReactElement {
                   {row.label}
                 </Text>
                 <Text>{'  '}</Text>
-                <Text dimColor>{row.preview}</Text>
+                <Text color={previewColor} dimColor={previewColor === undefined}>
+                  {row.preview}
+                </Text>
               </Text>
             </Box>
           );

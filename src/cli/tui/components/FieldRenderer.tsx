@@ -168,18 +168,17 @@ export function FieldRenderer(props: FieldRendererProps): React.ReactElement {
       // Non-focused fields ignore all input.
       if (!focused) return;
 
-      // SELECT — left/right cycles; enter is a no-op edit (immediate change).
+      // SELECT — left/right cycles; enter is a no-op.
       if (field.kind === 'select') {
         const opts = field.options ?? [];
         if (opts.length === 0) return;
         const idx = opts.findIndex((o) => o.value === value);
         const safeIdx = idx >= 0 ? idx : 0;
-        if (key.rightArrow || (key.return && !editing)) {
+        if (key.rightArrow) {
           const next = opts[(safeIdx + 1) % opts.length];
           if (next && next.value !== value) {
             onChange(next.value);
           }
-          if (key.return) onEditDone();
           return;
         }
         if (key.leftArrow) {

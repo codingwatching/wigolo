@@ -136,8 +136,10 @@ describe('CategoryScreen', () => {
     expect(focusLine).toContain('Engine');
   });
 
-  it('enter on a select field cycles the value and calls store.set', async () => {
-    // Add a second option so cycling is observable.
+  it('enter on a select field is a no-op — does NOT cycle the value', async () => {
+    // Per spec: select fields cycle via left/right arrows ONLY. Enter must be a
+    // no-op on a focused (not editing) select so users can navigate through
+    // category rows without accidentally mutating the value.
     const category: CategoryDef = {
       ...browserCategory,
       fields: [
@@ -161,11 +163,10 @@ describe('CategoryScreen', () => {
       <CategoryScreen category={category} store={store} onBack={() => {}} />,
     );
     await wait(20);
-    // Focused on Engine (select) by default. Enter should cycle to next option.
+    // Enter on focused select — must NOT trigger store.set with a cycled value.
     stdin.write(ENTER);
     await wait(40);
-    // The select also fires onEditDone, but the store.set call is what matters.
-    expect(setSpy).toHaveBeenCalledWith('browserTypes', 'firefox');
+    expect(setSpy).not.toHaveBeenCalledWith('browserTypes', 'firefox');
   });
 
   it('right-arrow on a focused select cycles the value via FieldRenderer', async () => {

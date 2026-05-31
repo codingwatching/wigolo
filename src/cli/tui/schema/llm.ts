@@ -1,4 +1,4 @@
-import type { CategoryDef, Ctx } from './types.js';
+import type { CategoryDef } from './types.js';
 
 export const llmCategory: CategoryDef = {
   id: 'llm',
@@ -14,7 +14,6 @@ export const llmCategory: CategoryDef = {
         { value: 'anthropic', label: 'Anthropic (Claude)' },
         { value: 'openai', label: 'OpenAI (GPT)' },
         { value: 'gemini', label: 'Google Gemini' },
-        { value: 'custom', label: 'Custom (OpenAI-compatible)' },
       ],
       default: 'anthropic',
     },
@@ -26,15 +25,6 @@ export const llmCategory: CategoryDef = {
       secret: true,
       propagateToAgents: true,
       help: 'Stored in OS keychain when available; never written to config.json.',
-    },
-    {
-      key: 'WIGOLO_LLM_BASE_URL',
-      settingsPath: 'llmBaseUrl',
-      label: 'Endpoint URL',
-      kind: 'text',
-      visible: (ctx: Ctx) =>
-        (ctx.pending.llmProvider ?? ctx.current.llmProvider) === 'custom',
-      help: 'Required for custom providers (Ollama, LM Studio, etc).',
     },
   ],
 };
