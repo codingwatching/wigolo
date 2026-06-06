@@ -135,4 +135,37 @@ describe('fresh-machine setup round-trip', () => {
       expect(statSync(agentFile).mode & 0o777).toBe(0o600);
     }
   });
+
+  it('resetPersistedConfig() is load-bearing: without it the probe reads a stale backend', async () => {
+    // Reproduces the bug fixed in init.ts: applyHeadlessSet / save() write
+    // config.json via atomicWriteJson (direct fs write) which does NOT update
+    // the in-process _cache. If the probe runs before resetPersistedConfig(),
+    // readPersistedConfig() returns the STALE cached value from before the write.
+    //
+    // Step 1 — prime the cache with the default (no searchBackend set)
+    const { readPersistedConfig, resetPersistedConfig, defaultConfigPath } = await import('../../src/persisted-config.js');
+    const configPath = defaultConfigPath();
+
+    // Cache is already reset in beforeEach; reading now will prime it with an
+    // empty settings object (no searchBackend).
+    const primed = readPersistedConfig(configPath);
+    expect(primed.settings.searchBackend).toBeUndefined();
+
+    // Step 2 — bypass the cache and write 'hybrid' directly to disk (faithfully
+    // reproducing what atomicWriteJson inside save() / applyHeadlessSet does —
+    // a raw fs write that never touches _cache).
+    const newCfg = { version: 1, settings: { searchBackend: 'hybrid' } };
+    writeFileSync(configPath, JSON.stringify(newCfg, null, 2), { mode: 0o600 });
+
+    // Step 3 — WITHOUT a reset, readPersistedConfig still returns the stale cache.
+    // This is the bug: the probe would see 'undefined' (or the old value), not 'hybrid'.
+    const stale = readPersistedConfig(configPath);
+    expect(stale.settings.searchBackend).toBeUndefined(); // proves the bug exists
+
+    // Step 4 — WITH resetPersistedConfig(), the probe now reads fresh from disk.
+    // This is exactly what init.ts does before calling probeSetupStatus().
+    resetPersistedConfig();
+    const fresh = readPersistedConfig(configPath);
+    expect(fresh.settings.searchBackend).toBe('hybrid'); // proves the fix works
+  });
 });

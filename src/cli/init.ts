@@ -11,7 +11,12 @@ const INIT_USAGE = [
   '  --agents=<csv>          Comma-separated agent ids (required with --non-interactive)',
   '  --skip-verify           Skip the post-install verify step',
   '  --plain                 Force plain (non-TUI) output',
+  '  --provider=<name>       LLM provider for research/agent: anthropic|openai|gemini',
+  '  --search=<backend>      Search backend: core|searxng|hybrid',
   '  --help, -h              Show this message',
+  '',
+  'Environment:',
+  '  WIGOLO_LLM_API_KEY      LLM API key (never passed as a flag; read from env only)',
   '',
 ].join('\n');
 
@@ -299,6 +304,11 @@ async function runInitPlain(flags: InitFlagsResolved): Promise<number> {
   }
 
   const { probeSetupStatus, defaultProbeDeps, summarizeSetup } = await import('./tui/actions/setup-status.js');
+  // Bust the in-process cache so the probe reads fresh from disk. Without this,
+  // applyHeadlessSet / save() writes bypass the cache (atomicWriteJson direct fs
+  // write), and the probe can return the stale backend written before this run.
+  const { resetPersistedConfig } = await import('../persisted-config.js');
+  resetPersistedConfig();
   const statuses = await probeSetupStatus(defaultProbeDeps());
   const summary = summarizeSetup(statuses);
   out();

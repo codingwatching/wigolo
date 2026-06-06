@@ -102,6 +102,7 @@ vi.mock('../../../src/cli/tui/state/secret-store.js', () => ({
 vi.mock('../../../src/persisted-config.js', () => ({
   defaultConfigPath: vi.fn(() => '/tmp/test-config.json'),
   readPersistedConfig: vi.fn(() => ({ version: 1, settings: {} })),
+  resetPersistedConfig: vi.fn(),
 }));
 
 vi.mock('../../../src/cli/tui/state/settings-store.js', () => ({

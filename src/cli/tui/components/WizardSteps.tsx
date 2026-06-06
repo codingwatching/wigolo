@@ -279,8 +279,8 @@ export function SetupComplete({ statuses, onDone }: SetupCompleteProps): React.R
       <Text color={semantic.ok} bold>✓ Setup complete</Text>
       <Text dimColor>{'─'.repeat(24)}</Text>
       {statuses.map((c) => {
-        // Match summarizeSetup's per-component line format character-for-character
-        // (setup-status.ts) so the CLI summary and TUI ceremony render identically.
+        // Same per-component content as the CLI summary (minus the summary-level indent)
+        // produced by summarizeSetup in setup-status.ts.
         let line = `${glyph(c.status)} ${c.label}`;
         if (c.detail && c.status !== 'ok') line += ` — ${c.detail}`;
         if (c.disables && c.status !== 'ok') line += `   → ${c.disables} disabled`;
