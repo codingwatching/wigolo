@@ -46,7 +46,7 @@ npx @staticn0va/wigolo doctor
 WIGOLO_LLM_API_KEY=sk-... npx @staticn0va/wigolo init --non-interactive --agents=claude-code,cursor --provider=anthropic --search=core
 ```
 
-> The LLM provider key is **optional** — wigolo's core tools (search, fetch, crawl, extract, cache) work without one. Only the `research` and `agent` tools use an LLM to synthesise results. The key is read from the `WIGOLO_LLM_API_KEY` env var; it is never passed as a CLI flag.
+> The LLM provider key is **optional** — wigolo's core tools (search, fetch, crawl, extract, cache) work without one. Only the `research` and `agent` tools use an LLM to synthesize results. The key is read from the `WIGOLO_LLM_API_KEY` env var; it is never passed as a CLI flag.
 
 Or add it to any MCP client by hand:
 
