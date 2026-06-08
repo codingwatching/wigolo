@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 
 vi.mock('../../../src/security/keychain.js', () => {
   const store = new Map<string, string>();
@@ -24,6 +24,8 @@ const { _store } = keychainMod as typeof keychainMod & { _store: Map<string, str
 
 const { storeKey, clearKeyStoreMemo } = await import('../../../src/security/key-store.js');
 const { selectProviderWithKeyStore } = await import('../../../src/integrations/cloud/llm/select.js');
+const { resetConfig } = await import('../../../src/config.js');
+const { resetPersistedConfig } = await import('../../../src/persisted-config.js');
 
 describe('selectProviderWithKeyStore', () => {
   let tmpDir: string;
@@ -102,5 +104,74 @@ describe('selectProviderWithKeyStore', () => {
     const envSnapshot = JSON.stringify(process.env);
     await selectProviderWithKeyStore(process.env, { dataDir: tmpDir });
     expect(JSON.stringify(process.env)).toBe(envSnapshot);
+  });
+
+  describe('config.json llmProvider precedence (A2)', () => {
+    afterEach(() => {
+      delete process.env.WIGOLO_CONFIG_PATH;
+      resetConfig();
+      resetPersistedConfig();
+    });
+
+    function writeConfig(provider: string): void {
+      const cfgPath = join(tmpDir, 'config.json');
+      writeFileSync(cfgPath, JSON.stringify({ version: 1, settings: { llmProvider: provider } }));
+      process.env.WIGOLO_CONFIG_PATH = cfgPath;
+      resetConfig();
+      resetPersistedConfig();
+    }
+
+    it('uses config.json llmProvider when WIGOLO_LLM_PROVIDER env is absent', async () => {
+      await storeKey('gemini', 'gm-key', { dataDir: tmpDir });
+      // anthropic has a key too, but config.json names gemini explicitly
+      await storeKey('anthropic', 'an-key', { dataDir: tmpDir });
+      writeConfig('gemini');
+      const result = await selectProviderWithKeyStore(process.env, { dataDir: tmpDir });
+      expect(result?.provider).toBe('gemini');
+      expect(result?.key).toBe('gm-key');
+    });
+
+    it('WIGOLO_LLM_PROVIDER env wins over config.json llmProvider', async () => {
+      await storeKey('gemini', 'gm-key', { dataDir: tmpDir });
+      await storeKey('openai', 'oa-key', { dataDir: tmpDir });
+      writeConfig('gemini');
+      process.env.WIGOLO_LLM_PROVIDER = 'openai';
+      const result = await selectProviderWithKeyStore(process.env, { dataDir: tmpDir });
+      expect(result?.provider).toBe('openai');
+      expect(result?.key).toBe('oa-key');
+    });
+
+    it('falls through to auto-detect when config.json provider has no key', async () => {
+      // config names anthropic but only openai has a key
+      await storeKey('openai', 'oa-key', { dataDir: tmpDir });
+      writeConfig('anthropic');
+      const result = await selectProviderWithKeyStore(process.env, { dataDir: tmpDir });
+      expect(result?.provider).toBe('openai');
+    });
+  });
+
+  describe('zero-env runtime invariant (A1+A2+A3)', () => {
+    afterEach(() => {
+      delete process.env.WIGOLO_CONFIG_PATH;
+      resetConfig();
+      resetPersistedConfig();
+    });
+
+    it('resolves provider=anthropic + keychain key from config.json with ZERO env vars', async () => {
+      // No WIGOLO_LLM_PROVIDER, no ANTHROPIC_API_KEY (cleared in beforeEach).
+      await storeKey('anthropic', 'kc-anthropic-key', { dataDir: tmpDir });
+      const cfgPath = join(tmpDir, 'config.json');
+      writeFileSync(
+        cfgPath,
+        JSON.stringify({ version: 1, settings: { searchBackend: 'hybrid', llmProvider: 'anthropic' } }),
+      );
+      process.env.WIGOLO_CONFIG_PATH = cfgPath;
+      resetConfig();
+      resetPersistedConfig();
+
+      const result = await selectProviderWithKeyStore(process.env, { dataDir: tmpDir });
+      expect(result?.provider).toBe('anthropic');
+      expect(result?.key).toBe('kc-anthropic-key');
+    });
   });
 });

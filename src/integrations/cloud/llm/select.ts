@@ -1,5 +1,6 @@
 import type { LLMProvider } from './types.js';
 import type { KeyStoreOpts } from '../../../security/key-store.js';
+import { readPersistedConfig, defaultConfigPath } from '../../../persisted-config.js';
 
 const PROVIDER_ORDER: LLMProvider[] = ['anthropic', 'openai', 'gemini', 'groq'];
 
@@ -34,8 +35,11 @@ export function selectProvider(
  * hydrating process.env. Returns null when no provider is configured.
  *
  * Resolution order:
- *   1. WIGOLO_LLM_PROVIDER override (if key resolves in keystore or env)
- *   2. First provider in PROVIDER_ORDER whose key resolves
+ *   1. WIGOLO_LLM_PROVIDER env override (if key resolves in keystore or env)
+ *   2. Persisted config.json `llmProvider` (if key resolves) — so a runtime
+ *      with zero env vars honors the provider chosen during `wigolo init`.
+ *   3. First provider in PROVIDER_ORDER whose key resolves (auto-detect,
+ *      keychain → file → env via resolveProviderKey).
  */
 export async function selectProviderWithKeyStore(
   env: Record<string, string | undefined>,
@@ -44,28 +48,43 @@ export async function selectProviderWithKeyStore(
   // Lazy import to avoid circular dep at module load time
   const { resolveProviderKey } = await import('../../../security/key-store.js');
 
-  // Check custom URL first (no key needed)
-  const raw = env.WIGOLO_LLM_PROVIDER;
-  if (raw && (raw.startsWith('http://') || raw.startsWith('https://'))) {
+  // Check custom URL first (no key needed). Only the env var can name a custom
+  // URL backend; config.json holds a provider id, handled by the chain below.
+  const envRaw = env.WIGOLO_LLM_PROVIDER;
+  if (envRaw && (envRaw.startsWith('http://') || envRaw.startsWith('https://'))) {
     // Custom URL — not a cloud provider, handled separately in run.ts
     return null;
   }
 
-  // Explicit provider override
-  if (raw && (PROVIDER_ORDER as string[]).includes(raw)) {
-    const p = raw as LLMProvider;
+  // Explicit provider: env var wins, else fall back to the persisted
+  // config.json value. resolvePersistedLlmProvider() reads only config.json so
+  // env precedence stays in this function (env checked first above).
+  const explicit = envRaw ?? resolvePersistedLlmProvider();
+  if (explicit && (PROVIDER_ORDER as string[]).includes(explicit)) {
+    const p = explicit as LLMProvider;
     const key = await resolveProviderKey(p, opts);
     if (key) return { provider: p, key };
-    // Override specified but key not found — fall through to auto-detect
+    // Explicit provider specified but key not found — fall through to auto-detect
   }
 
-  // Auto-detect: first provider with any key
+  // Auto-detect: first provider with any key (keychain → file → env)
   for (const p of PROVIDER_ORDER) {
     const key = await resolveProviderKey(p, opts);
     if (key) return { provider: p, key };
   }
 
   return null;
+}
+
+/**
+ * Read the persisted `llmProvider` from config.json (no env layer). Used as the
+ * second tier of provider resolution: env override > config.json > auto-detect.
+ * Returns null when unset or unreadable.
+ */
+function resolvePersistedLlmProvider(): string | null {
+  const { settings } = readPersistedConfig(defaultConfigPath());
+  const v = settings.llmProvider;
+  return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
 export function providerEnvVar(p: LLMProvider): string {
