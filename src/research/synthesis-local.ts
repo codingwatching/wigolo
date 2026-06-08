@@ -1,5 +1,5 @@
 import { createLogger } from '../logger.js';
-import { isLlmConfigured, runLlmText } from '../integrations/cloud/llm/run.js';
+import { isLlmConfiguredWithKeyStore, runLlmText } from '../integrations/cloud/llm/run.js';
 
 const log = createLogger('research');
 
@@ -32,7 +32,7 @@ export async function synthesizeLocal(
   sources: LocalSynthesisSource[],
   opts: LocalSynthesisOptions = {},
 ): Promise<LocalSynthesisResult> {
-  if (!isLlmConfigured()) {
+  if (!(await isLlmConfiguredWithKeyStore())) {
     throw new Error('LLM not configured. Set WIGOLO_LLM_PROVIDER or a provider API key.');
   }
 
@@ -67,10 +67,11 @@ export async function synthesizeLocal(
   }
 }
 
-// Backwards-compat shim — callers (research/pipeline.ts) used isLocalLlmEnabled()
-// to gate this fallback. Keep the same gate name pointing at the unified runner.
-export function isLocalLlmEnabled(): boolean {
-  return isLlmConfigured();
+// Backwards-compat shim — callers used isLocalLlmEnabled() to gate this
+// fallback. Keystore-aware so a zero-env (config.json + keychain) setup reports
+// enabled. No remaining in-tree callers; kept for external compatibility.
+export async function isLocalLlmEnabled(): Promise<boolean> {
+  return isLlmConfiguredWithKeyStore();
 }
 
 function extractCitations(text: string): number[] {

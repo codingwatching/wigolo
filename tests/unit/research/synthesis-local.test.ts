@@ -1,5 +1,26 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { synthesizeLocal } from '../../../src/research/synthesis-local.js';
+
+// In-memory keychain so storeKey/resolveProviderKey work without a real OS keychain.
+vi.mock('../../../src/security/keychain.js', () => {
+  const store = new Map<string, string>();
+  return {
+    WIGOLO_SERVICE: 'wigolo',
+    keychainAvailable: vi.fn(() => true),
+    keychainSet: vi.fn((service: string, _user: string, value: string) => { store.set(service, value); }),
+    keychainGet: vi.fn((service: string, _user: string) => store.get(service) ?? null),
+    keychainDelete: vi.fn((service: string, _user: string) => { store.delete(service); }),
+    _store: store,
+  };
+});
+
+const keychainMod = await import('../../../src/security/keychain.js');
+const { _store } = keychainMod as typeof keychainMod & { _store: Map<string, string> };
+const { storeKey, clearKeyStoreMemo } = await import('../../../src/security/key-store.js');
+const { resetConfig } = await import('../../../src/config.js');
 
 const ORIGINAL_PROVIDER = process.env['WIGOLO_LLM_PROVIDER'];
 const ORIGINAL_MODEL = process.env['WIGOLO_LLM_MODEL'];
@@ -167,5 +188,72 @@ describe('synthesizeLocal', () => {
     const body = JSON.parse(String((fetchSpy.mock.calls[0]![1] as RequestInit).body));
     const content = body.messages[0].content as string;
     expect((content.match(/x/g) || []).length).toBeLessThanOrEqual(100);
+  });
+});
+
+/**
+ * Slice 1c: synthesizeLocal's configured-gate must be keystore-aware.
+ *
+ * Zero-env scenario: no provider/key env vars, provider chosen in config.json,
+ * key in the OS keychain. The env-only isLlmConfigured() gate would wrongly
+ * throw "LLM not configured"; the keystore-aware gate must let synthesis run.
+ */
+describe('synthesizeLocal LLM gate is keystore-aware', () => {
+  const originalEnv = process.env;
+  let tmpDir: string;
+
+  const KEY_ENV_VARS = [
+    'ANTHROPIC_API_KEY',
+    'OPENAI_API_KEY',
+    'GOOGLE_API_KEY',
+    'GROQ_API_KEY',
+    'WIGOLO_LLM_PROVIDER',
+    'WIGOLO_LLM_API_KEY',
+    'WIGOLO_LLM_MODEL',
+  ];
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    for (const v of KEY_ENV_VARS) delete process.env[v];
+    _store.clear();
+    clearKeyStoreMemo();
+    tmpDir = mkdtempSync(join(tmpdir(), 'wigolo-synth-gate-'));
+    process.env.WIGOLO_DATA_DIR = tmpDir;
+    process.env.WIGOLO_CONFIG_PATH = join(tmpDir, 'config.json');
+    resetConfig();
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    rmSync(tmpDir, { recursive: true, force: true });
+    resetConfig();
+    clearKeyStoreMemo();
+    vi.restoreAllMocks();
+  });
+
+  it('runs synthesis when provider is in config.json and key is in the keychain (no env vars)', async () => {
+    writeFileSync(join(tmpDir, 'config.json'), JSON.stringify({ llmProvider: 'anthropic' }));
+    await storeKey('anthropic', 'sk-keychain-key', { dataDir: tmpDir });
+
+    // Anthropic provider resolved from config.json+keychain -> anthropic-shaped response.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({ content: [{ type: 'text', text: 'Keychain answer [1].' }] }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+
+    const result = await synthesizeLocal('q', [{ url: 'u', title: 't', markdown: 'm' }]);
+
+    // Gate let synthesis run (would have thrown "LLM not configured" otherwise).
+    expect(fetchSpy).toHaveBeenCalled();
+    expect(result.text).toBe('Keychain answer [1].');
+  });
+
+  it('throws when neither env, config.json provider, nor keychain key are present', async () => {
+    await expect(
+      synthesizeLocal('q', [{ url: 'u', title: 't', markdown: 'm' }]),
+    ).rejects.toThrow(/LLM not configured/);
   });
 });
