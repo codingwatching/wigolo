@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { getConfig } from '../config.js';
 import { createLogger } from '../logger.js';
 import { isProcessAlive } from './process.js';
-import { resolvePythonExe, venvBinPath } from '../python-env.js';
+import { resolvePythonExe, venvBinPath, checkVenvModule, isMissingVenvModuleError, venvInstallHint } from '../python-env.js';
 
 const log = createLogger('searxng');
 
@@ -250,6 +250,9 @@ export async function resolveSearchBackend(): Promise<BackendResolution> {
 export async function bootstrapNativeSearxng(dataDir: string): Promise<void> {
   const release = acquireBootstrapLock(dataDir);
   const priorAttempts = getBootstrapState(dataDir)?.attempts ?? 0;
+  // Captured from the proactive venv probe so the catch handler can build the
+  // apt hint without re-spawning subprocesses to re-derive the Python version.
+  let detectedPythonVersion: string | undefined;
   try {
     const searxngDir = join(dataDir, 'searxng');
 
@@ -263,6 +266,21 @@ export async function bootstrapNativeSearxng(dataDir: string): Promise<void> {
 
     mkdirSync(searxngDir, { recursive: true });
     const pythonExe = resolvePythonExe();
+
+    // Detect the missing-python3-venv case proactively so the failed state
+    // carries actionable guidance instead of a cryptic ensurepip stderr. The
+    // failed state then routes through resolveSearchBackend()'s docker→scraping
+    // fallback, so search keeps working on the core backend.
+    const venvCheck = checkVenvModule(pythonExe);
+    detectedPythonVersion = venvCheck.pythonVersion;
+    if (!venvCheck.available) {
+      throw new BootstrapError({
+        stderr: venvInstallHint(venvCheck.pythonVersion),
+        exitCode: 1,
+        command: `${pythonExe} -m venv ${join(searxngDir, 'venv')}`,
+      });
+    }
+
     runStep(pythonExe, ['-m', 'venv', join(searxngDir, 'venv')], { timeout: 60_000 });
 
     const pip = venvBinPath(dataDir, 'pip');
@@ -302,7 +320,13 @@ export async function bootstrapNativeSearxng(dataDir: string): Promise<void> {
 
     const lastError = err instanceof BootstrapError
       ? {
-          message: err.message,
+          // When the venv step failed with the recognizable python3-venv
+          // symptom, surface the actionable apt hint as the message so doctor
+          // and warmup show "run: sudo apt install pythonX.Y-venv" rather than
+          // a raw ensurepip traceback.
+          message: isMissingVenvModuleError(err.detail.stderr)
+            ? venvInstallHint(detectedPythonVersion)
+            : err.message,
           stderr: err.detail.stderr,
           exitCode: err.detail.exitCode,
           command: err.detail.command,
