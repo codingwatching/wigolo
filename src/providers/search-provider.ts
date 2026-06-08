@@ -34,7 +34,7 @@ export function getSearchProvider(): Promise<SearchProvider> {
   // Resolve through getConfig() so a persisted `searchBackend` in config.json is
   // honored at runtime (env still wins — precedence is handled in config.ts).
   const raw = getConfig().searchBackend;
-  let which = raw === null || raw === '' ? 'core' : raw;
+  let which = raw === null || raw === undefined || raw === '' ? 'core' : raw;
   if (which === 'v1') {
     log.warn('WIGOLO_SEARCH=v1 is deprecated, use WIGOLO_SEARCH=core (alias kept for one release)');
     which = 'core';
