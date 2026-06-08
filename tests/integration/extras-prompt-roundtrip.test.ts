@@ -21,6 +21,24 @@ vi.mock('@inquirer/prompts', () => ({
   password: vi.fn(),
 }));
 
+// Force the deterministic file-fallback keystore tier. The OS keychain is a
+// PROCESS-GLOBAL, machine-wide store that is NOT scoped to the test's per-case
+// dataDir — so on a CI runner with a working keyring backend, the first test's
+// stored `anthropic` secret would leak into the second test (which expects no
+// stored key) and into subsequent runs. Locally the keychain set/get silently
+// EPERMs and falls through to the file tier, which is why this only ever broke
+// in CI. Stubbing the keychain unavailable pins both cases to the encrypted
+// file tier (~/.wigolo/keys/<provider>.enc under the per-case dataDir), which
+// is the persistence path this test is actually asserting ("file fallback in
+// the test env"). This is deterministic regardless of host keychain presence.
+vi.mock('../../src/security/keychain.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/security/keychain.js')>();
+  return {
+    ...actual,
+    keychainAvailable: () => false,
+  };
+});
+
 import { select, input, password } from '@inquirer/prompts';
 
 const selectMock = vi.mocked(select);

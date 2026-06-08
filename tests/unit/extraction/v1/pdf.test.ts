@@ -33,6 +33,15 @@ function helloPdfBuffer(): Buffer {
 }
 
 describe('V1Extractor — PDF (C6)', () => {
+  // Timeout bumped well above the 20s global default: pdf-parse@2 lazily
+  // boots the underlying pdf.js engine (WASM + font/CMap data + first-call
+  // JIT) on the first getText() of the process. On a cold Windows CI runner
+  // that one-time init is an order of magnitude slower than on macOS/Linux
+  // (~0.5s locally) and intermittently overran the 20s default, while passing
+  // everywhere else — i.e. genuine first-run slowness, not a hang (the promise
+  // always resolves). The higher ceiling absorbs the cold-start without
+  // masking a real regression: a true empty-body regression still fails fast
+  // on the content assertions below.
   it('extracts text from a PDF buffer (regression for pdf-parse v2 API)', async () => {
     const extractor = new V1Extractor();
     const result = await extractor.extract('', 'https://arxiv.org/pdf/2301.00001v1', {
@@ -46,7 +55,7 @@ describe('V1Extractor — PDF (C6)', () => {
     // must surface the actual text content from the PDF buffer.
     expect(result.markdown.length).toBeGreaterThan(0);
     expect(result.markdown.toLowerCase()).toContain('hello');
-  });
+  }, 60000);
 
   it('returns a useful envelope on a non-PDF content-type with no buffer (defence-in-depth)', async () => {
     const extractor = new V1Extractor();
