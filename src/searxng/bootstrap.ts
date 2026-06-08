@@ -250,6 +250,9 @@ export async function resolveSearchBackend(): Promise<BackendResolution> {
 export async function bootstrapNativeSearxng(dataDir: string): Promise<void> {
   const release = acquireBootstrapLock(dataDir);
   const priorAttempts = getBootstrapState(dataDir)?.attempts ?? 0;
+  // Captured from the proactive venv probe so the catch handler can build the
+  // apt hint without re-spawning subprocesses to re-derive the Python version.
+  let detectedPythonVersion: string | undefined;
   try {
     const searxngDir = join(dataDir, 'searxng');
 
@@ -269,6 +272,7 @@ export async function bootstrapNativeSearxng(dataDir: string): Promise<void> {
     // failed state then routes through resolveSearchBackend()'s docker→scraping
     // fallback, so search keeps working on the core backend.
     const venvCheck = checkVenvModule(pythonExe);
+    detectedPythonVersion = venvCheck.pythonVersion;
     if (!venvCheck.available) {
       throw new BootstrapError({
         stderr: venvInstallHint(venvCheck.pythonVersion),
@@ -321,7 +325,7 @@ export async function bootstrapNativeSearxng(dataDir: string): Promise<void> {
           // and warmup show "run: sudo apt install pythonX.Y-venv" rather than
           // a raw ensurepip traceback.
           message: isMissingVenvModuleError(err.detail.stderr)
-            ? venvInstallHint(checkVenvModule(resolvePythonExe()).pythonVersion)
+            ? venvInstallHint(detectedPythonVersion)
             : err.message,
           stderr: err.detail.stderr,
           exitCode: err.detail.exitCode,
