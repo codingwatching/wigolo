@@ -57,6 +57,8 @@ vi.mock('../../../src/search/core/verticals/papers.js', () => ({
 
 import { handleSearch } from '../../../src/tools/search.js';
 import { _resetSearchProviderForTest } from '../../../src/providers/search-provider.js';
+import { resetConfig } from '../../../src/config.js';
+import { initDatabase, closeDatabase } from '../../../src/cache/db.js';
 
 function makeResult(engineName: string, url: string): RawSearchResult {
   return { title: 'T', url, snippet: 'S', relevance_score: 1, engine: engineName };
@@ -86,8 +88,24 @@ describe('handleSearch — engine_warnings (M2 integration)', () => {
   const origEnv = process.env;
 
   beforeEach(() => {
-    process.env = { ...origEnv, WIGOLO_SEARCH: 'core', WIGOLO_RERANKER: 'none' };
+    // WHY: the suite default (tests/setup.ts) pins WIGOLO_SEARCH=searxng, and
+    // getSearchProvider() resolves the backend through the cached getConfig().
+    // Without resetConfig() the stale 'searxng' value selects the legacy
+    // provider, which reaches for the cache DB and throws "Database not
+    // initialized" before any core dispatch runs. Pin core + reset config +
+    // init an in-memory DB so the engine_warnings assertions exercise the
+    // core provider in isolation. VALIDATE_LINKS/LOG_LEVEL keep the run off
+    // the network and quiet, matching tests/integration/filter-enforcement.ts.
+    process.env = {
+      ...origEnv,
+      WIGOLO_SEARCH: 'core',
+      WIGOLO_RERANKER: 'none',
+      VALIDATE_LINKS: 'false',
+      LOG_LEVEL: 'error',
+    };
+    resetConfig();
     _resetSearchProviderForTest();
+    initDatabase(':memory:');
     verticalState.general = [];
     verticalState.news = [];
     verticalState.code = [];
@@ -96,7 +114,9 @@ describe('handleSearch — engine_warnings (M2 integration)', () => {
   });
 
   afterEach(() => {
+    closeDatabase();
     process.env = origEnv;
+    resetConfig();
     _resetSearchProviderForTest();
   });
 

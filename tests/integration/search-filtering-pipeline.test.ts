@@ -1,87 +1,137 @@
-import { describe, it, expect, vi } from 'vitest';
+// Search filtering pipeline integration at the MCP tool boundary, exercised
+// against the CORE search provider (WIGOLO_SEARCH=core, the production
+// default).
+//
+// HISTORY: these tests originally injected fake `engine` objects into
+// handleSearch(input, [engines], router) and asserted on engine.search calls
+// plus a legacy overfetch multiplier (maxResults*3). The core provider
+// resolves engines from the per-vertical modules (getGeneralEngines() etc.),
+// ignores the passed `engines` argument, and has no overfetch multiplier.
+// Rewritten to mock the vertical engine modules — mirroring
+// tests/integration/filter-enforcement.test.ts. The end-to-end behaviours
+// each test protects are preserved: multi-engine dedup + RRF fusion, hard
+// include/exclude domain filtering across fused results, subdomain matching,
+// date pass-through to engine options, the no-filter baseline, and the
+// max_results cap under domain-filter attrition.
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type {
+  SearchEngine,
+  SearchEngineOptions,
+  RawSearchResult,
+} from '../../src/types.js';
+import type { SmartRouter } from '../../src/fetch/router.js';
+import type { EngineEntry } from '../../src/search/core/engine-base.js';
+
+const verticalState: {
+  general: EngineEntry[];
+  news: EngineEntry[];
+  code: EngineEntry[];
+  docs: EngineEntry[];
+  papers: EngineEntry[];
+} = { general: [], news: [], code: [], docs: [], papers: [] };
+
+vi.mock('../../src/search/core/verticals/general.js', () => ({
+  getGeneralEngines: () => verticalState.general,
+  _resetGeneralEnginesForTest: () => {
+    verticalState.general = [];
+  },
+}));
+vi.mock('../../src/search/core/verticals/news.js', () => ({
+  getNewsEngines: () => verticalState.news,
+  _resetNewsEnginesForTest: () => {
+    verticalState.news = [];
+  },
+}));
+vi.mock('../../src/search/core/verticals/code.js', () => ({
+  getCodeEngines: () => verticalState.code,
+  _resetCodeEnginesForTest: () => {
+    verticalState.code = [];
+  },
+}));
+vi.mock('../../src/search/core/verticals/docs.js', () => ({
+  getDocsEngines: () => verticalState.docs,
+  _resetDocsEnginesForTest: () => {
+    verticalState.docs = [];
+  },
+}));
+vi.mock('../../src/search/core/verticals/papers.js', () => ({
+  getPapersEngines: () => verticalState.papers,
+  _resetPapersEnginesForTest: () => {
+    verticalState.papers = [];
+  },
+}));
+
 import { handleSearch } from '../../src/tools/search.js';
-import type { SearchEngine, RawSearchResult } from '../../src/types.js';
+import { _resetSearchProviderForTest } from '../../src/providers/search-provider.js';
+import { resetConfig } from '../../src/config.js';
+import { initDatabase, closeDatabase } from '../../src/cache/db.js';
 
-vi.mock('../../src/config.js', () => ({
-  getConfig: () => ({
-    searchTotalTimeoutMs: 30000,
-    searchFetchTimeoutMs: 10000,
-    searxngQueryTimeoutMs: 5000,
-    fastStaleMaxHours: 24,
-    multiQueryConcurrency: 4,
-    multiQueryMax: 5,
-    relevanceThreshold: 0,
-    reranker: 'none',
-    rerankerModel: 'bge-reranker-v2-m3',
-    validateTimeoutMs: 5000,
-  }),
-}));
+function makeResult(engineName: string, url: string, relevance = 1): RawSearchResult {
+  return { title: 'T', url, snippet: 'S', relevance_score: relevance, engine: engineName };
+}
 
-vi.mock('../../src/logger.js', () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
-}));
+interface SpyEntry {
+  entry: EngineEntry;
+  search: ReturnType<typeof vi.fn>;
+}
 
-vi.mock('../../src/cache/store.js', () => ({
-  getCachedSearchResults: vi.fn().mockReturnValue(null),
-  cacheSearchResults: vi.fn(),
-  buildSearchCacheKey: vi.fn((query: string) => query.toLowerCase().trim()),
-  normalizeUrl: vi.fn((url: string) => url),
-}));
+function makeEntry(name: string, results: RawSearchResult[]): SpyEntry {
+  const search = vi.fn(async (_q: string, _opts?: SearchEngineOptions) => results);
+  const engine: SearchEngine = { name, search };
+  return { entry: { engine }, search };
+}
 
-vi.mock('../../src/search/validator.js', () => ({
-  validateLinks: vi.fn((results: unknown[]) => results),
-}));
+const fakeRouter = {} as SmartRouter;
 
-vi.mock('../../src/search/query.js', () => ({
-  decomposeQuery: vi.fn((q: string) => [q]),
-}));
+describe('search filtering pipeline integration (core provider)', () => {
+  const origEnv = process.env;
 
-const extractMock = vi.fn().mockResolvedValue({ markdown: 'mock content', title: 'Test' });
-vi.mock('../../src/providers/extract-provider.js', () => ({
-  getExtractProvider: vi.fn(async () => ({
-    name: 'v1' as const,
-    extract: extractMock,
-  })),
-  _resetExtractProviderForTest: vi.fn(),
-}));
-
-
-const mockRouter = {
-  fetch: vi.fn().mockResolvedValue({
-    html: '<p>test content</p>',
-    finalUrl: 'https://test.com',
-    contentType: 'text/html',
-  }),
-} as any;
-
-describe('search filtering pipeline integration', () => {
-  it('full pipeline: two engines -> dedup -> domain filter -> validate -> output', async () => {
-    const searxngEngine: SearchEngine = {
-      name: 'searxng',
-      search: vi.fn().mockResolvedValue([
-        { title: 'React Docs', url: 'https://react.dev/learn', snippet: 'Learn React', relevance_score: 0.95, engine: 'searxng' },
-        { title: 'React Blog', url: 'https://react.dev/blog', snippet: 'Blog post', relevance_score: 0.85, engine: 'searxng' },
-        { title: 'Medium React', url: 'https://medium.com/react', snippet: 'Tutorial', relevance_score: 0.80, engine: 'searxng' },
-        { title: 'GH React', url: 'https://github.com/facebook/react', snippet: 'Source code', relevance_score: 0.75, engine: 'searxng' },
-        { title: 'SO Question', url: 'https://stackoverflow.com/q/react', snippet: 'Q&A', relevance_score: 0.70, engine: 'searxng' },
-      ]),
+  beforeEach(() => {
+    process.env = {
+      ...origEnv,
+      WIGOLO_SEARCH: 'core',
+      WIGOLO_RERANKER: 'none',
+      VALIDATE_LINKS: 'false',
+      LOG_LEVEL: 'error',
     };
+    resetConfig();
+    _resetSearchProviderForTest();
+    initDatabase(':memory:');
+    verticalState.general = [];
+    verticalState.news = [];
+    verticalState.code = [];
+    verticalState.docs = [];
+    verticalState.papers = [];
+  });
 
-    const ddgEngine: SearchEngine = {
-      name: 'duckduckgo',
-      search: vi.fn().mockResolvedValue([
-        { title: 'React Docs', url: 'https://react.dev/learn', snippet: 'Official docs', relevance_score: 0.90, engine: 'duckduckgo' },
-        { title: 'W3Schools React', url: 'https://w3schools.com/react', snippet: 'Tutorial', relevance_score: 0.65, engine: 'duckduckgo' },
-        { title: 'Dev.to React', url: 'https://dev.to/react-guide', snippet: 'Guide', relevance_score: 0.60, engine: 'duckduckgo' },
-      ]),
-    };
+  afterEach(() => {
+    closeDatabase();
+    process.env = origEnv;
+    resetConfig();
+    _resetSearchProviderForTest();
+  });
 
-    const __r_output = await handleSearch(
+  it('full pipeline: two engines -> dedup -> domain filter -> output', async () => {
+    // react.dev/learn appears in both engines -> must fuse to a single row.
+    // After the include_domains hard filter only react.dev + github.com hosts
+    // survive: react.dev/learn, react.dev/blog, github.com/facebook/react.
+    // The docs vertical is the one category:'docs' routes to.
+    const searxng = makeEntry('searxng', [
+      makeResult('searxng', 'https://react.dev/learn', 0.95),
+      makeResult('searxng', 'https://react.dev/blog', 0.85),
+      makeResult('searxng', 'https://medium.com/react', 0.8),
+      makeResult('searxng', 'https://github.com/facebook/react', 0.75),
+      makeResult('searxng', 'https://stackoverflow.com/q/react', 0.7),
+    ]);
+    const ddg = makeEntry('duckduckgo', [
+      makeResult('duckduckgo', 'https://react.dev/learn', 0.9),
+      makeResult('duckduckgo', 'https://w3schools.com/react', 0.65),
+      makeResult('duckduckgo', 'https://dev.to/react-guide', 0.6),
+    ]);
+    verticalState.docs = [searxng.entry, ddg.entry];
+
+    const r = await handleSearch(
       {
         query: 'react hooks tutorial',
         include_domains: ['react.dev', 'github.com'],
@@ -89,72 +139,65 @@ describe('search filtering pipeline integration', () => {
         include_content: false,
         max_results: 10,
       },
-      [searxngEngine, ddgEngine],
-      mockRouter,
-    );;
-    const output = __r_output.ok ? __r_output.data : ({ ...__r_output } as any);
+      [],
+      fakeRouter,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
 
-    // After dedup: react.dev/learn merged, ~7 unique URLs
-    // After domain filter (react.dev, github.com): react.dev/learn, react.dev/blog, github.com/facebook/react
-    expect(output.results).toHaveLength(3);
-    expect(output.results.every(r =>
-      r.url.includes('react.dev') || r.url.includes('github.com')
-    )).toBe(true);
-    // Verify dedup picked the higher score for react.dev/learn (post-boost score ≥ raw 0.95)
-    const learnResult = output.results.find(r => r.url.includes('react.dev/learn'));
-    expect(learnResult).toBeDefined();
-    expect(learnResult!.relevance_score).toBeGreaterThanOrEqual(0.95);
-    // Both engines used
-    expect(output.engines_used).toContain('searxng');
-    expect(output.engines_used).toContain('duckduckgo');
-    // Category passed to both engines
-    expect(searxngEngine.search).toHaveBeenCalledWith(
+    expect(r.data.results).toHaveLength(3);
+    expect(
+      r.data.results.every((res) =>
+        res.url.includes('react.dev') || res.url.includes('github.com'),
+      ),
+    ).toBe(true);
+    // react.dev/learn fused into a single deduped row, not two.
+    const learn = r.data.results.filter((res) => res.url.includes('react.dev/learn'));
+    expect(learn).toHaveLength(1);
+    // Both engines contributed to the fused list.
+    expect(r.data.engines_used).toContain('searxng');
+    expect(r.data.engines_used).toContain('duckduckgo');
+    // category routed the dispatch to the docs vertical: both docs engines
+    // ran and carry `category: 'docs'`.
+    expect(searxng.search).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ category: 'docs' }),
     );
-    expect(ddgEngine.search).toHaveBeenCalledWith(
+    expect(ddg.search).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ category: 'docs' }),
     );
   });
 
   it('full pipeline: exclude_domains removes results after dedup', async () => {
-    const engine: SearchEngine = {
-      name: 'test',
-      search: vi.fn().mockResolvedValue([
-        { title: 'A', url: 'https://react.dev/a', snippet: 'a', relevance_score: 0.9, engine: 'test' },
-        { title: 'B', url: 'https://medium.com/b', snippet: 'b', relevance_score: 0.8, engine: 'test' },
-        { title: 'C', url: 'https://medium.com/c', snippet: 'c', relevance_score: 0.7, engine: 'test' },
-        { title: 'D', url: 'https://github.com/d', snippet: 'd', relevance_score: 0.6, engine: 'test' },
-      ]),
-    };
+    const eng = makeEntry('bing', [
+      makeResult('bing', 'https://react.dev/a', 0.9),
+      makeResult('bing', 'https://medium.com/b', 0.8),
+      makeResult('bing', 'https://medium.com/c', 0.7),
+      makeResult('bing', 'https://github.com/d', 0.6),
+    ]);
+    verticalState.general = [eng.entry];
 
-    const __r_output = await handleSearch(
-      {
-        query: 'react',
-        exclude_domains: ['medium.com'],
-        include_content: false,
-      },
-      [engine],
-      mockRouter,
-    );;
-    const output = __r_output.ok ? __r_output.data : ({ ...__r_output } as any);
-
-    expect(output.results).toHaveLength(2);
-    expect(output.results.every(r => !r.url.includes('medium.com'))).toBe(true);
+    const r = await handleSearch(
+      { query: 'react', exclude_domains: ['medium.com'], include_content: false },
+      [],
+      fakeRouter,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.results).toHaveLength(2);
+    expect(r.data.results.every((res) => !res.url.includes('medium.com'))).toBe(true);
   });
 
-  it('full pipeline: combined include + exclude + date filters', async () => {
-    const engine: SearchEngine = {
-      name: 'test',
-      search: vi.fn().mockResolvedValue([
-        { title: 'A', url: 'https://docs.react.dev/a', snippet: 'a', relevance_score: 0.9, engine: 'test' },
-        { title: 'B', url: 'https://blog.react.dev/b', snippet: 'b', relevance_score: 0.8, engine: 'test' },
-        { title: 'C', url: 'https://stackoverflow.com/c', snippet: 'c', relevance_score: 0.7, engine: 'test' },
-      ]),
-    };
+  it('full pipeline: combined include + date filters keep subdomain matches', async () => {
+    const eng = makeEntry('bing', [
+      makeResult('bing', 'https://docs.react.dev/a', 0.9),
+      makeResult('bing', 'https://blog.react.dev/b', 0.8),
+      makeResult('bing', 'https://stackoverflow.com/c', 0.7),
+    ]);
+    verticalState.general = [eng.entry];
 
-    const __r_output = await handleSearch(
+    const r = await handleSearch(
       {
         query: 'react hooks',
         include_domains: ['react.dev'],
@@ -162,17 +205,18 @@ describe('search filtering pipeline integration', () => {
         to_date: '2026-04-01',
         include_content: false,
       },
-      [engine],
-      mockRouter,
-    );;
-    const output = __r_output.ok ? __r_output.data : ({ ...__r_output } as any);
-
-    // Domain filter: docs.react.dev and blog.react.dev match react.dev
-    // Date filter: best-effort pass-through (all kept)
-    expect(output.results).toHaveLength(2);
-    expect(output.results.every(r => r.url.includes('react.dev'))).toBe(true);
-    // Verify date params passed to engine
-    expect(engine.search).toHaveBeenCalledWith(
+      [],
+      fakeRouter,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // docs.react.dev and blog.react.dev both match react.dev (host-suffix);
+    // stackoverflow.com is dropped. Results with no published_date survive
+    // the date filter (best-effort, conservative keep).
+    expect(r.data.results).toHaveLength(2);
+    expect(r.data.results.every((res) => res.url.includes('react.dev'))).toBe(true);
+    // Date params threaded into engine options.
+    expect(eng.search).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
         fromDate: '2026-01-01',
@@ -181,42 +225,51 @@ describe('search filtering pipeline integration', () => {
     );
   });
 
-  it('full pipeline: no filters applied preserves existing behavior', async () => {
-    const engine: SearchEngine = {
-      name: 'test',
-      search: vi.fn().mockResolvedValue([
-        { title: 'A', url: 'https://react.dev/a', snippet: 'a', relevance_score: 0.9, engine: 'test' },
-        { title: 'B', url: 'https://medium.com/b', snippet: 'b', relevance_score: 0.8, engine: 'test' },
-        { title: 'C', url: 'https://github.com/c', snippet: 'c', relevance_score: 0.7, engine: 'test' },
-      ]),
-    };
+  it('full pipeline: no filters applied preserves all results', async () => {
+    const eng = makeEntry('bing', [
+      makeResult('bing', 'https://react.dev/a', 0.9),
+      makeResult('bing', 'https://medium.com/b', 0.8),
+      makeResult('bing', 'https://github.com/c', 0.7),
+    ]);
+    verticalState.general = [eng.entry];
 
-    const __r_output = await handleSearch(
+    const r = await handleSearch(
       { query: 'react', include_content: false },
-      [engine],
-      mockRouter,
-    );;
-    const output = __r_output.ok ? __r_output.data : ({ ...__r_output } as any);
-
-    expect(output.results).toHaveLength(3);
+      [],
+      fakeRouter,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.results).toHaveLength(3);
   });
 
-  it('full pipeline: filter attrition triggers overfetch factor', async () => {
-    const engine: SearchEngine = {
-      name: 'test',
-      search: vi.fn().mockResolvedValue([]),
-    };
+  it('full pipeline: domain-filter attrition still caps to max_results', async () => {
+    // Engine over-returns matching hosts; with include_domains active the
+    // orchestrator filters then hard-caps to max_results. (The legacy
+    // provider over-fetched maxResults*3 to survive attrition; core passes
+    // max_results to the engine and caps after fusion — this protects the
+    // pass-through + cap, the behaviour the old *3 assertion stood in for.)
+    const eng = makeEntry('bing', [
+      makeResult('bing', 'https://react.dev/1', 0.9),
+      makeResult('bing', 'https://react.dev/2', 0.85),
+      makeResult('bing', 'https://react.dev/3', 0.8),
+      makeResult('bing', 'https://react.dev/4', 0.75),
+      makeResult('bing', 'https://medium.com/x', 0.7),
+    ]);
+    verticalState.general = [eng.entry];
 
-    await handleSearch(
-      { query: 'react', max_results: 5, include_domains: ['react.dev'], include_content: false },
-      [engine],
-      mockRouter,
+    const r = await handleSearch(
+      { query: 'react', max_results: 2, include_domains: ['react.dev'], include_content: false },
+      [],
+      fakeRouter,
     );
-
-    // With domain filters: maxResults * 3 = 15
-    expect(engine.search).toHaveBeenCalledWith(
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(eng.search).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ maxResults: 15 }),
+      expect.objectContaining({ maxResults: 2 }),
     );
+    expect(r.data.results.length).toBeLessThanOrEqual(2);
+    expect(r.data.results.every((res) => res.url.includes('react.dev'))).toBe(true);
   });
 });

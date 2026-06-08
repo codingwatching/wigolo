@@ -68,6 +68,8 @@ vi.mock('../../../src/search/core/verticals/images.js', () => ({
 
 import { handleSearch } from '../../../src/tools/search.js';
 import { _resetSearchProviderForTest } from '../../../src/providers/search-provider.js';
+import { resetConfig } from '../../../src/config.js';
+import { initDatabase, closeDatabase } from '../../../src/cache/db.js';
 
 function makeImageEntry(name: string, results: RawSearchResult[]): EngineEntry {
   const engine: SearchEngine = {
@@ -106,8 +108,23 @@ describe('handleSearch — category=images (S11a H7 integration)', () => {
   const origEnv = process.env;
 
   beforeEach(() => {
-    process.env = { ...origEnv, WIGOLO_SEARCH: 'core', WIGOLO_RERANKER: 'none' };
+    // WHY: the suite default (tests/setup.ts) pins WIGOLO_SEARCH=searxng, and
+    // getSearchProvider() resolves the backend through the cached getConfig().
+    // Without resetConfig() the stale 'searxng' value selects the legacy
+    // provider, which reaches for the cache DB and throws "Database not
+    // initialized" before the core images vertical ever dispatches. Pin core +
+    // reset config + init an in-memory DB so the H7 images assertions exercise
+    // the core provider in isolation.
+    process.env = {
+      ...origEnv,
+      WIGOLO_SEARCH: 'core',
+      WIGOLO_RERANKER: 'none',
+      VALIDATE_LINKS: 'false',
+      LOG_LEVEL: 'error',
+    };
+    resetConfig();
     _resetSearchProviderForTest();
+    initDatabase(':memory:');
     verticalState.general = [];
     verticalState.news = [];
     verticalState.code = [];
@@ -117,7 +134,9 @@ describe('handleSearch — category=images (S11a H7 integration)', () => {
   });
 
   afterEach(() => {
+    closeDatabase();
     process.env = origEnv;
+    resetConfig();
     _resetSearchProviderForTest();
   });
 

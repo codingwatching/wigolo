@@ -1,127 +1,200 @@
-import { describe, it, expect, vi } from 'vitest';
+// Search filtering at the MCP tool boundary, exercised against the CORE
+// search provider (WIGOLO_SEARCH=core, the production default).
+//
+// HISTORY: these tests originally injected a fake `engine` object into
+// handleSearch(input, [engine], router) and asserted on engine.search calls
+// plus a legacy overfetch multiplier (maxResults*2 / *3). The core provider
+// resolves engines from the per-vertical modules (getGeneralEngines() etc.)
+// and ignores the passed `engines` argument entirely, and it has no overfetch
+// multiplier. So the injected engine and the *N assertions targeted a removed
+// seam. Rewritten to mock the vertical engine modules (the seam core actually
+// reads) — mirroring tests/unit/search/include-domains-hard-filter.test.ts
+// and tests/integration/filter-enforcement.test.ts. The behaviours each test
+// protects are preserved: include/exclude domain filtering, category routing,
+// date pass-through to engine options, includeDomains pass-through to engine
+// options, and empty-not-error on full attrition.
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type {
+  SearchEngine,
+  SearchEngineOptions,
+  RawSearchResult,
+} from '../../../src/types.js';
+import type { SmartRouter } from '../../../src/fetch/router.js';
+import type { EngineEntry } from '../../../src/search/core/engine-base.js';
+
+const verticalState: {
+  general: EngineEntry[];
+  news: EngineEntry[];
+  code: EngineEntry[];
+  docs: EngineEntry[];
+  papers: EngineEntry[];
+} = { general: [], news: [], code: [], docs: [], papers: [] };
+
+vi.mock('../../../src/search/core/verticals/general.js', () => ({
+  getGeneralEngines: () => verticalState.general,
+  _resetGeneralEnginesForTest: () => {
+    verticalState.general = [];
+  },
+}));
+vi.mock('../../../src/search/core/verticals/news.js', () => ({
+  getNewsEngines: () => verticalState.news,
+  _resetNewsEnginesForTest: () => {
+    verticalState.news = [];
+  },
+}));
+vi.mock('../../../src/search/core/verticals/code.js', () => ({
+  getCodeEngines: () => verticalState.code,
+  _resetCodeEnginesForTest: () => {
+    verticalState.code = [];
+  },
+}));
+vi.mock('../../../src/search/core/verticals/docs.js', () => ({
+  getDocsEngines: () => verticalState.docs,
+  _resetDocsEnginesForTest: () => {
+    verticalState.docs = [];
+  },
+}));
+vi.mock('../../../src/search/core/verticals/papers.js', () => ({
+  getPapersEngines: () => verticalState.papers,
+  _resetPapersEnginesForTest: () => {
+    verticalState.papers = [];
+  },
+}));
+
 import { handleSearch } from '../../../src/tools/search.js';
-import type { SearchEngine, RawSearchResult } from '../../../src/types.js';
+import { _resetSearchProviderForTest } from '../../../src/providers/search-provider.js';
+import { resetConfig } from '../../../src/config.js';
+import { initDatabase, closeDatabase } from '../../../src/cache/db.js';
 
-vi.mock('../../../src/config.js', () => ({
-  getConfig: () => ({
-    searchTotalTimeoutMs: 30000,
-    searchFetchTimeoutMs: 10000,
-    searxngQueryTimeoutMs: 5000,
-    multiQueryConcurrency: 5,
-    multiQueryMax: 10,
-  }),
-}));
-
-vi.mock('../../../src/logger.js', () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
-}));
-
-vi.mock('../../../src/cache/store.js', () => ({
-  getCachedSearchResults: vi.fn().mockReturnValue(null),
-  cacheSearchResults: vi.fn(),
-  buildSearchCacheKey: vi.fn((query: string) => query.toLowerCase().trim()),
-  normalizeUrl: vi.fn((url: string) => url),
-}));
-
-vi.mock('../../../src/search/validator.js', () => ({
-  validateLinks: vi.fn((results: unknown[]) => results),
-}));
-
-vi.mock('../../../src/search/query.js', () => ({
-  decomposeQuery: vi.fn((q: string) => [q]),
-}));
-
-const extractMock = vi.fn();
-vi.mock('../../../src/providers/extract-provider.js', () => ({
-  getExtractProvider: vi.fn(async () => ({
-    name: 'v1' as const,
-    extract: extractMock,
-  })),
-  _resetExtractProviderForTest: vi.fn(),
-}));
-
-
-function makeEngine(results: RawSearchResult[]): SearchEngine {
-  return {
-    name: 'test',
-    search: vi.fn().mockResolvedValue(results),
-  };
+function makeResult(engineName: string, url: string): RawSearchResult {
+  return { title: 'T', url, snippet: 'S', relevance_score: 1, engine: engineName };
 }
 
-const mockRouter = {
-  fetch: vi.fn().mockResolvedValue({ html: '<p>test</p>', finalUrl: 'https://test.com', contentType: 'text/html' }),
-} as any;
+interface SpyEntry {
+  entry: EngineEntry;
+  search: ReturnType<typeof vi.fn>;
+}
 
-describe('search pipeline filtering', () => {
-  // 1. include_domains filters results in pipeline output
+function makeEntry(name: string, results: RawSearchResult[]): SpyEntry {
+  const search = vi.fn(async (_q: string, _opts?: SearchEngineOptions) => results);
+  const engine: SearchEngine = { name, search };
+  return { entry: { engine }, search };
+}
+
+const fakeRouter = {} as SmartRouter;
+
+describe('search pipeline filtering (core provider)', () => {
+  const origEnv = process.env;
+
+  beforeEach(() => {
+    process.env = {
+      ...origEnv,
+      WIGOLO_SEARCH: 'core',
+      WIGOLO_RERANKER: 'none',
+      VALIDATE_LINKS: 'false',
+      LOG_LEVEL: 'error',
+    };
+    resetConfig();
+    _resetSearchProviderForTest();
+    initDatabase(':memory:');
+    verticalState.general = [];
+    verticalState.news = [];
+    verticalState.code = [];
+    verticalState.docs = [];
+    verticalState.papers = [];
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    process.env = origEnv;
+    resetConfig();
+    _resetSearchProviderForTest();
+  });
+
+  // 1. include_domains is a hard filter: only matching hosts survive.
   it('filters results by include_domains in pipeline', async () => {
-    const engine = makeEngine([
-      { title: 'React Docs', url: 'https://react.dev/docs', snippet: 'docs', relevance_score: 0.9, engine: 'test' },
-      { title: 'Medium Post', url: 'https://medium.com/react', snippet: 'post', relevance_score: 0.8, engine: 'test' },
-      { title: 'GH Repo', url: 'https://github.com/react', snippet: 'repo', relevance_score: 0.7, engine: 'test' },
+    const eng = makeEntry('bing', [
+      makeResult('bing', 'https://react.dev/docs'),
+      makeResult('bing', 'https://medium.com/react'),
+      makeResult('bing', 'https://github.com/react'),
     ]);
+    verticalState.general = [eng.entry];
 
-    const __r_output = await handleSearch(
+    const r = await handleSearch(
       { query: 'react', include_domains: ['react.dev'], include_content: false },
-      [engine],
-      mockRouter,
-    );;
-    const output = __r_output.ok ? __r_output.data : ({ ...__r_output } as any);
-
-    expect(output.results).toHaveLength(1);
-    expect(output.results[0].url).toContain('react.dev');
-  });
-
-  // 2. exclude_domains removes matched results from pipeline
-  it('filters results by exclude_domains in pipeline', async () => {
-    const engine = makeEngine([
-      { title: 'React Docs', url: 'https://react.dev/docs', snippet: 'docs', relevance_score: 0.9, engine: 'test' },
-      { title: 'Medium Post', url: 'https://medium.com/react', snippet: 'post', relevance_score: 0.8, engine: 'test' },
-    ]);
-
-    const __r_output = await handleSearch(
-      { query: 'react', exclude_domains: ['medium.com'], include_content: false },
-      [engine],
-      mockRouter,
-    );;
-    const output = __r_output.ok ? __r_output.data : ({ ...__r_output } as any);
-
-    expect(output.results).toHaveLength(1);
-    expect(output.results[0].url).toContain('react.dev');
-  });
-
-  // 3. category is passed through to engine options
-  it('passes category to engine search options', async () => {
-    const engine = makeEngine([]);
-
-    await handleSearch(
-      { query: 'react', category: 'code', include_content: false },
-      [engine],
-      mockRouter,
+      [],
+      fakeRouter,
     );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.results).toHaveLength(1);
+    expect(r.data.results[0].url).toContain('react.dev');
+  });
 
-    expect(engine.search).toHaveBeenCalledWith(
+  // 2. exclude_domains hard-drops matched hosts.
+  it('filters results by exclude_domains in pipeline', async () => {
+    const eng = makeEntry('bing', [
+      makeResult('bing', 'https://react.dev/docs'),
+      makeResult('bing', 'https://medium.com/react'),
+    ]);
+    verticalState.general = [eng.entry];
+
+    const r = await handleSearch(
+      { query: 'react', exclude_domains: ['medium.com'], include_content: false },
+      [],
+      fakeRouter,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.results).toHaveLength(1);
+    expect(r.data.results[0].url).toContain('react.dev');
+  });
+
+  // 3. category routes the dispatch to the matching vertical's engines.
+  // The legacy test asserted `category` landed in the engine's options; on
+  // core, category selects WHICH vertical's engines run, so we prove routing
+  // by seeding only the code vertical and confirming its engine fired (and
+  // the general vertical's did not) when category: 'code' is requested.
+  it('routes category to the matching vertical engines', async () => {
+    const codeEng = makeEntry('github-code', [
+      makeResult('github-code', 'https://github.com/x/y'),
+    ]);
+    const generalEng = makeEntry('bing', [
+      makeResult('bing', 'https://example.com/a'),
+    ]);
+    verticalState.code = [codeEng.entry];
+    verticalState.general = [generalEng.entry];
+
+    const r = await handleSearch(
+      { query: 'react', category: 'code', include_content: false },
+      [],
+      fakeRouter,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(codeEng.search).toHaveBeenCalled();
+    expect(generalEng.search).not.toHaveBeenCalled();
+    // The code-vertical engine carries `category: 'code'` in its options.
+    expect(codeEng.search).toHaveBeenCalledWith(
       'react',
       expect.objectContaining({ category: 'code' }),
     );
   });
 
-  // 4. from_date and to_date are passed through to engine options
+  // 4. from_date / to_date are threaded into the engine search options so
+  // date-aware engines can filter natively.
   it('passes from_date and to_date to engine search options', async () => {
-    const engine = makeEngine([]);
+    const eng = makeEntry('bing', []);
+    verticalState.general = [eng.entry];
 
     await handleSearch(
       { query: 'react', from_date: '2026-01-01', to_date: '2026-04-01', include_content: false },
-      [engine],
-      mockRouter,
+      [],
+      fakeRouter,
     );
 
-    expect(engine.search).toHaveBeenCalledWith(
+    expect(eng.search).toHaveBeenCalledWith(
       'react',
       expect.objectContaining({
         fromDate: '2026-01-01',
@@ -130,74 +203,88 @@ describe('search pipeline filtering', () => {
     );
   });
 
-  // 5. Filters that remove all results return empty output (not error)
+  // 5. Filters that strip every result return empty output, not an error.
   it('returns empty results when all filtered out (no error)', async () => {
-    const engine = makeEngine([
-      { title: 'A', url: 'https://medium.com/a', snippet: 's', relevance_score: 0.9, engine: 'test' },
+    const eng = makeEntry('bing', [
+      makeResult('bing', 'https://medium.com/a'),
     ]);
+    verticalState.general = [eng.entry];
 
-    const __r_output = await handleSearch(
+    const r = await handleSearch(
       { query: 'react', include_domains: ['nonexistent.dev'], include_content: false },
-      [engine],
-      mockRouter,
-    );;
-    const output = __r_output.ok ? __r_output.data : ({ ...__r_output } as any);
-
-    expect(output.results).toEqual([]);
-    expect(output.error).toBeUndefined();
+      [],
+      fakeRouter,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.results).toEqual([]);
   });
 
-  // 6. Overfetch: engines receive maxResults * 3 when domain filters active
-  it('overfetches from engines when domain filters are active', async () => {
-    const engine = makeEngine([]);
-
-    await handleSearch(
-      { query: 'react', max_results: 5, include_domains: ['react.dev'], include_content: false },
-      [engine],
-      mockRouter,
-    );
-
-    expect(engine.search).toHaveBeenCalledWith(
-      'react',
-      expect.objectContaining({
-        maxResults: 15, // 5 * 3
-      }),
-    );
-  });
-
-  // 7. Without domain filters, engines receive maxResults * 2 (existing behavior)
-  it('uses standard overfetch factor when no domain filters', async () => {
-    const engine = makeEngine([]);
-
-    await handleSearch(
-      { query: 'react', max_results: 5, include_content: false },
-      [engine],
-      mockRouter,
-    );
-
-    expect(engine.search).toHaveBeenCalledWith(
-      'react',
-      expect.objectContaining({
-        maxResults: 10, // 5 * 2
-      }),
-    );
-  });
-
-  // 8. include_domains passed to engine for SearXNG native filtering
-  it('passes include_domains to engine options for SearXNG', async () => {
-    const engine = makeEngine([]);
+  // 6. include_domains is threaded into the engine search options for native
+  // engine-side filtering (the orchestrator still hard-filters defensively
+  // after fusion, but the engines get the hint too).
+  it('passes include_domains to engine options for native filtering', async () => {
+    const eng = makeEntry('bing', []);
+    verticalState.general = [eng.entry];
 
     await handleSearch(
       { query: 'react', include_domains: ['react.dev', 'github.com'], include_content: false },
-      [engine],
-      mockRouter,
+      [],
+      fakeRouter,
     );
 
-    expect(engine.search).toHaveBeenCalledWith(
+    expect(eng.search).toHaveBeenCalledWith(
       'react',
       expect.objectContaining({
         includeDomains: ['react.dev', 'github.com'],
       }),
     );
+  });
+
+  // 7. exclude_domains is likewise threaded into the engine search options.
+  it('passes exclude_domains to engine options for native filtering', async () => {
+    const eng = makeEntry('bing', []);
+    verticalState.general = [eng.entry];
+
+    await handleSearch(
+      { query: 'react', exclude_domains: ['spam.com'], include_content: false },
+      [],
+      fakeRouter,
+    );
+
+    expect(eng.search).toHaveBeenCalledWith(
+      'react',
+      expect.objectContaining({
+        excludeDomains: ['spam.com'],
+      }),
+    );
+  });
+
+  // 8. max_results is threaded into the engine search options and caps the
+  // final result count. (The legacy provider over-fetched maxResults*N to
+  // survive filter attrition; core passes the caller's value straight through
+  // and hard-caps after fusion — this protects that pass-through + cap.)
+  it('passes max_results to engine options and caps the output', async () => {
+    const eng = makeEntry('bing', [
+      makeResult('bing', 'https://a.example/1'),
+      makeResult('bing', 'https://b.example/2'),
+      makeResult('bing', 'https://c.example/3'),
+      makeResult('bing', 'https://d.example/4'),
+      makeResult('bing', 'https://e.example/5'),
+    ]);
+    verticalState.general = [eng.entry];
+
+    const r = await handleSearch(
+      { query: 'react', max_results: 2, include_content: false },
+      [],
+      fakeRouter,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(eng.search).toHaveBeenCalledWith(
+      'react',
+      expect.objectContaining({ maxResults: 2 }),
+    );
+    expect(r.data.results.length).toBeLessThanOrEqual(2);
   });
 });
