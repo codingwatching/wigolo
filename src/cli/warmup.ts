@@ -2,6 +2,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfig } from '../config.js';
 import { checkPythonAvailable, bootstrapNativeSearxng, getBootstrapState } from '../searxng/bootstrap.js';
+import { checkVenvModule, venvInstallHint } from '../python-env.js';
 import { isProcessAlive } from '../searxng/process.js';
 import { getRerankProvider } from '../providers/rerank-provider.js';
 import { runCommand } from './tui/run-command.js';
@@ -12,7 +13,7 @@ import { runVerify as runVerifyTui } from './tui/verify.js';
 export interface WarmupResult {
   playwright: 'ok' | 'failed';
   playwrightError?: string;
-  searxng: 'ready' | 'bootstrapped' | 'failed' | 'no_python' | 'skipped';
+  searxng: 'ready' | 'bootstrapped' | 'failed' | 'no_python' | 'no_venv' | 'skipped';
   searxngError?: string;
   reranker?: 'ok' | 'failed';
   rerankerError?: string;
@@ -138,6 +139,19 @@ async function runSearxngPhase(dataDir: string, reporter: WarmupReporter): Promi
     reporter.start('searxng', 'Checking search engine (searxng)');
     reporter.fail('searxng', 'Python 3 not found — install Python 3 or set SEARXNG_MODE=docker');
     return { searxng: 'no_python' };
+  }
+
+  // The python3-venv package is not installed by default on Debian/Ubuntu.
+  // Detecting it here lets us print an actionable apt hint and fall back to the
+  // built-in core search backend instead of failing the whole warmup with a
+  // cryptic ensurepip traceback.
+  const venvCheck = checkVenvModule();
+  if (!venvCheck.available) {
+    const hint = venvInstallHint(venvCheck.pythonVersion);
+    reporter.start('searxng', 'Checking search engine (searxng)');
+    reporter.note(`Search engine (searxng): unavailable — ${hint}`);
+    reporter.success('searxng', 'using core backend (no venv module)');
+    return { searxng: 'no_venv', searxngError: hint };
   }
 
   reporter.start('searxng', 'Bootstrapping search engine (searxng) — this may take a minute');

@@ -23,6 +23,12 @@ vi.mock('../../../src/searxng/bootstrap.js', () => ({
   getBootstrapState: vi.fn(),
 }));
 
+vi.mock('../../../src/python-env.js', () => ({
+  checkVenvModule: vi.fn(() => ({ available: true })),
+  venvInstallHint: (v?: string) =>
+    `python3 venv module not available. On Debian/Ubuntu, run: sudo apt install ${v ? `python${v}-venv (or python3-venv)` : 'python3-venv'}. Search will use the built-in core backend until this is fixed.`,
+}));
+
 vi.mock('../../../src/config.js', () => ({
   getConfig: vi.fn(() => ({ dataDir: '/tmp/test-wigolo' })),
 }));
@@ -48,6 +54,7 @@ vi.mock('../../../src/embedding/fastembed-provider.js', () => {
 import { runCommand } from '../../../src/cli/tui/run-command.js';
 import { runWarmup } from '../../../src/cli/warmup.js';
 import { checkPythonAvailable, bootstrapNativeSearxng, getBootstrapState } from '../../../src/searxng/bootstrap.js';
+import { checkVenvModule } from '../../../src/python-env.js';
 
 const ok = { code: 0, stdout: '', stderr: '', timedOut: false };
 const failWith = (msg: string) => ({ code: 1, stdout: '', stderr: msg, timedOut: false });
@@ -60,6 +67,7 @@ describe('runWarmup', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(runCommand).mockResolvedValue(ok);
+    vi.mocked(checkVenvModule).mockReturnValue({ available: true });
   });
 
   it('installs Playwright chromium', async () => {
@@ -123,6 +131,23 @@ describe('runWarmup', () => {
     const result = await runWarmup();
 
     expect(result.searxng).toBe('no_python');
+  });
+
+  it('falls back to core with an actionable apt hint when python3-venv is missing', async () => {
+    // WHY: Debian/Ubuntu ship python3 without the python3-venv package, so the
+    // old behavior bootstrapped, failed with a cryptic ensurepip error, and
+    // left search "failed". Warmup must instead recognize the missing module,
+    // name the exact apt package, and keep search working on the core backend.
+    vi.mocked(getBootstrapState).mockReturnValue(null);
+    vi.mocked(checkPythonAvailable).mockReturnValue(true);
+    vi.mocked(checkVenvModule).mockReturnValue({ available: false, pythonVersion: '3.12' });
+
+    const result = await runWarmup();
+
+    expect(bootstrapNativeSearxng).not.toHaveBeenCalled();
+    expect(result.searxng).toBe('no_venv');
+    expect(result.searxngError).toContain('sudo apt install python3.12-venv');
+    expect(result.searxngError).toContain('core backend');
   });
 
   it('--no-searxng skips the searxng phase entirely (real toggle teeth)', async () => {

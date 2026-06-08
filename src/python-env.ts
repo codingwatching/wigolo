@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfig } from './config.js';
@@ -44,6 +45,88 @@ export function resolvePythonExe(): string {
 /** Test-only: clear the memoized interpreter so platform-mocked tests re-resolve. */
 export function __resetResolvedPythonExe(): void {
   _resolvedPythonExe = null;
+}
+
+export interface VenvModuleCheck {
+  /** True when `python -m venv` can actually create environments. */
+  available: boolean;
+  /** Detected `<major>.<minor>` Python version, when probeable (e.g. `3.12`). */
+  pythonVersion?: string;
+}
+
+/**
+ * Probes whether the Python interpreter can create virtual environments.
+ *
+ * On Debian/Ubuntu the `python3-venv` system package is not installed by
+ * default, so `python3 -m venv <dir>` exits 1 with a cryptic `ensurepip` /
+ * `No module named venv` error. We probe cheaply with `python -m venv --help`
+ * (which loads both `venv` and, on stdlib paths, surfaces the missing-ensurepip
+ * symptom) so callers can emit actionable guidance *before* a real venv
+ * creation fails opaquely.
+ *
+ * The Python version is parsed in the same pass so callers can suggest the
+ * exact package name (`python3.12-venv` for Python 3.12).
+ */
+export function checkVenvModule(pythonExe: string = resolvePythonExe()): VenvModuleCheck {
+  const result: VenvModuleCheck = { available: false };
+
+  const version = spawnSync(
+    pythonExe,
+    ['-c', "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+    { encoding: 'utf-8' },
+  );
+  if (version.status !== 0 || version.error) {
+    // The interpreter itself could not run — that is a "python not available"
+    // problem, not a "venv module missing" one. Report available=true so the
+    // caller's normal flow surfaces the real interpreter error rather than a
+    // misleading apt hint.
+    result.available = true;
+    return result;
+  }
+  const parsed = version.stdout.trim();
+  if (/^\d+\.\d+$/.test(parsed)) result.pythonVersion = parsed;
+
+  // `import ensurepip, venv` is the classic missing-python3-venv tripwire on
+  // Debian: the venv module is present in stdlib but ensurepip is shipped in
+  // the separate `python3-venv` apt package.
+  const probe = spawnSync(pythonExe, ['-c', 'import ensurepip, venv'], { encoding: 'utf-8' });
+  result.available = probe.status === 0 && !probe.error;
+  return result;
+}
+
+/**
+ * Returns true when the given stderr is the recognizable "python3-venv package
+ * missing" symptom rather than some other venv-creation failure. Detection-
+ * driven so callers only show apt guidance when it actually applies.
+ */
+export function isMissingVenvModuleError(stderr: string): boolean {
+  if (!stderr) return false;
+  return (
+    /ensurepip/i.test(stderr) ||
+    /No module named ['"]?venv/i.test(stderr) ||
+    /python3?-venv/i.test(stderr) ||
+    // `python3 -m venv` on Debian prints this when ensurepip is unavailable.
+    /returned non-zero exit status 1.*ensurepip/i.test(stderr) ||
+    /The virtual environment was not created successfully/i.test(stderr)
+  );
+}
+
+/**
+ * Builds an actionable, OS-specific install hint for the missing venv module.
+ * Names the exact `python3.X-venv` package when the version is known, with the
+ * generic `python3-venv` as a fallback. Naming the apt package here is
+ * intentional troubleshooting guidance (the documented warmup/doctor
+ * exception), not implementation-dep leakage.
+ */
+export function venvInstallHint(pythonVersion?: string): string {
+  const versioned = pythonVersion ? `python${pythonVersion}-venv` : undefined;
+  const pkg = versioned ?? 'python3-venv';
+  const suffix = versioned ? ` (or python3-venv)` : '';
+  return (
+    `python3 venv module not available. On Debian/Ubuntu, run: ` +
+    `sudo apt install ${pkg}${suffix}. ` +
+    `Search will use the built-in core backend until this is fixed.`
+  );
 }
 
 /**

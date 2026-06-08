@@ -248,6 +248,42 @@ describe('bootstrapNativeSearxng — failure path', () => {
     expect(downloading.attempts).toBe(2);
   });
 
+  it('writes an actionable python3-venv hint when the venv module is missing', async () => {
+    // WHY: on Debian/Ubuntu python3-venv is not installed by default, so venv
+    // creation died with a cryptic ensurepip error and left users stuck. The
+    // failed state must instead carry "sudo apt install python3.X-venv" so
+    // doctor/warmup can guide the fix, AND route to the core fallback.
+    vi.mocked(spawnSync).mockImplementation((_cmd, args) => {
+      const joined = ((args ?? []) as string[]).join(' ');
+      if (joined.includes('version_info')) {
+        return { status: 0, stdout: '3.12\n', stderr: '', signal: null, pid: 1, output: [], error: undefined } as ReturnType<typeof spawnSync>;
+      }
+      if (joined.includes('import ensurepip')) {
+        return { status: 1, stdout: '', stderr: "No module named 'ensurepip'", signal: null, pid: 1, output: [], error: undefined } as ReturnType<typeof spawnSync>;
+      }
+      // which/where probe + any other step succeed; the proactive venv check
+      // throws before venv creation is ever reached.
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 1, output: [], error: undefined } as ReturnType<typeof spawnSync>;
+    });
+
+    let stateOnDisk = JSON.stringify({ status: 'downloading' });
+    vi.mocked(existsSync).mockImplementation((p) => !String(p).includes('bootstrap.lock'));
+    vi.mocked(readFileSync).mockImplementation((p) => {
+      if (String(p).includes('state.json')) return stateOnDisk;
+      return '';
+    });
+    vi.mocked(writeFileSync).mockImplementation((p, data) => {
+      if (String(p).includes('state.json')) stateOnDisk = String(data);
+    });
+
+    await expect(bootstrapNativeSearxng('/tmp/.wigolo')).rejects.toBeInstanceOf(Error);
+
+    const final = JSON.parse(stateOnDisk) as BootstrapState;
+    expect(final.status).toBe('failed');
+    expect(final.lastError?.message).toContain('sudo apt install python3.12-venv');
+    expect(final.lastError?.message).toContain('core backend');
+  });
+
   it('increments attempts on successive failures', async () => {
     vi.mocked(spawnSync).mockReturnValue({
       status: 1, stdout: '', stderr: 'pip install failure',
