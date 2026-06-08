@@ -17,6 +17,14 @@ vi.mock('node:fs', async () => {
   };
 });
 
+// Mock the bundled Playwright module the same way doctor.test.ts does, so the
+// post-install disk verify can be driven via executablePath() + existsSync.
+vi.mock('playwright', () => ({
+  chromium: { executablePath: vi.fn(() => '/fake/playwright/chromium/chrome') },
+  firefox: { executablePath: vi.fn(() => '/fake/playwright/firefox/firefox') },
+  webkit: { executablePath: vi.fn(() => '/fake/playwright/webkit/webkit') },
+}));
+
 vi.mock('../../../src/searxng/bootstrap.js', () => ({
   checkPythonAvailable: vi.fn(),
   bootstrapNativeSearxng: vi.fn(),
@@ -51,6 +59,7 @@ vi.mock('../../../src/embedding/fastembed-provider.js', () => {
   return { FastembedEmbedProvider };
 });
 
+import { existsSync } from 'node:fs';
 import { runCommand } from '../../../src/cli/tui/run-command.js';
 import { runWarmup } from '../../../src/cli/warmup.js';
 import { checkPythonAvailable, bootstrapNativeSearxng, getBootstrapState } from '../../../src/searxng/bootstrap.js';
@@ -70,16 +79,23 @@ describe('runWarmup', () => {
     vi.mocked(checkVenvModule).mockReturnValue({ available: true });
   });
 
-  it('installs Playwright chromium', async () => {
+  it('installs chromium via the bundled Playwright CLI, not bare npx', async () => {
+    // WHY (GH #116): `npx playwright install` resolves a *separate* Playwright
+    // version, so the install revision can differ from the bundled
+    // playwright-core revision doctor/runtime resolve. Warmup must spawn node
+    // against the bundled cli.js so the install revision == the checked one.
     vi.mocked(getBootstrapState).mockReturnValue({ status: 'ready', searxngPath: '/tmp/searxng' });
 
     const result = await runWarmup();
 
-    expect(runCommand).toHaveBeenCalledWith(
-      'npx',
-      ['playwright', 'install', 'chromium'],
-      expect.objectContaining({ timeout: expect.any(Number) }),
-    );
+    const [cmd, args] = vi.mocked(runCommand).mock.calls[0] as [string, string[], unknown];
+    expect(cmd).toBe(process.execPath);
+    expect(args).toContain('install');
+    expect(args).toContain('chromium');
+    // The CLI argument must point at the project's node_modules playwright,
+    // never a bare `npx playwright` invocation.
+    expect(args[0]).toMatch(/node_modules[\\/]playwright[\\/]cli\.js$/);
+    expect(args[0]).not.toBe('npx');
     expect(result.playwright).toBe('ok');
   });
 
@@ -91,6 +107,30 @@ describe('runWarmup', () => {
 
     expect(result.playwright).toBe('failed');
     expect(result.playwrightError).toBe('install failed');
+  });
+
+  it('reports chromium FAILED when install exits 0 but binary is missing on disk', async () => {
+    // WHY (GH #116): warmup historically trusted only the install command's
+    // exit code and reported "ok" while doctor found the binary absent. The
+    // post-install disk verify must catch this and report failure instead.
+    vi.mocked(getBootstrapState).mockReturnValue({ status: 'ready', searxngPath: '/tmp/searxng' });
+    vi.mocked(runCommand).mockResolvedValue(ok); // install "succeeds"
+    vi.mocked(existsSync).mockReturnValue(false); // ...but binary is not on disk
+
+    const result = await runWarmup();
+
+    expect(result.playwright).toBe('failed');
+    expect(result.playwrightError).toContain('missing on disk');
+  });
+
+  it('reports chromium ok when install exits 0 and the binary is present on disk', async () => {
+    vi.mocked(getBootstrapState).mockReturnValue({ status: 'ready', searxngPath: '/tmp/searxng' });
+    vi.mocked(runCommand).mockResolvedValue(ok);
+    vi.mocked(existsSync).mockReturnValue(true);
+
+    const result = await runWarmup();
+
+    expect(result.playwright).toBe('ok');
   });
 
   it('reports searxng already ready', async () => {

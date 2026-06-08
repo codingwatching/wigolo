@@ -9,7 +9,10 @@ vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
   return {
     ...actual,
-    existsSync: vi.fn().mockReturnValue(false),
+    // Default true: the post-install disk verify (GH #116) treats existsSync
+    // false as a failed install. These tests assert the install *plumbing*, so
+    // the binary is considered present unless a case overrides it.
+    existsSync: vi.fn().mockReturnValue(true),
     readFileSync: vi.fn(),
     writeFileSync: vi.fn(),
     mkdirSync: vi.fn(),
@@ -18,6 +21,14 @@ vi.mock('node:fs', async () => {
     chmodSync: vi.fn(),
   };
 });
+
+// Mock the bundled Playwright module so the post-install disk verify can call
+// executablePath() without launching real browsers.
+vi.mock('playwright', () => ({
+  chromium: { executablePath: vi.fn(() => '/fake/playwright/chromium/chrome') },
+  firefox: { executablePath: vi.fn(() => '/fake/playwright/firefox/firefox') },
+  webkit: { executablePath: vi.fn(() => '/fake/playwright/webkit/webkit') },
+}));
 
 vi.mock('../../../src/searxng/bootstrap.js', () => ({
   checkPythonAvailable: vi.fn().mockReturnValue(false),
@@ -42,6 +53,8 @@ vi.mock('../../../src/embedding/fastembed-provider.js', () => {
   return { FastembedEmbedProvider };
 });
 
+import { existsSync } from 'node:fs';
+import { chromium, firefox } from 'playwright';
 import { runCommand } from '../../../src/cli/tui/run-command.js';
 import { runWarmup } from '../../../src/cli/warmup.js';
 
@@ -211,5 +224,37 @@ describe('warmup --firefox flag', () => {
 
     const result = await runWarmup(['--firefox']);
     expect(result.firefox).toBe('failed');
+  });
+
+  it('installs Firefox via the bundled Playwright CLI, not bare npx', async () => {
+    // WHY (GH #116): install must use the bundled cli.js so the revision
+    // matches what doctor/runtime resolve.
+    await runWarmup(['--firefox']);
+
+    const calls = vi.mocked(runCommand).mock.calls;
+    const firefoxCall = calls.find((c) => (c[1] as string[]).includes('firefox'));
+    expect(firefoxCall).toBeDefined();
+    expect(firefoxCall?.[0]).toBe(process.execPath);
+    expect((firefoxCall?.[1] as string[])[0]).toMatch(/node_modules[\\/]playwright[\\/]cli\.js$/);
+  });
+
+  it('reports Firefox FAILED when install exits 0 but the binary is missing on disk', async () => {
+    // WHY (GH #116): honest per-browser status. A clean exit is not enough —
+    // the binary must exist on disk (doctor's parity probe), else report fail.
+    vi.mocked(runCommand).mockResolvedValue(ok);
+    // chromium present so the gating browser passes; firefox missing on disk.
+    vi.mocked(existsSync).mockImplementation((p) =>
+      String(p).includes('firefox') ? false : true,
+    );
+
+    const result = await runWarmup(['--firefox']);
+
+    expect(result.firefox).toBe('failed');
+    expect(result.firefoxError).toContain('missing on disk');
+    // chromium (gating browser) must still report ok independently.
+    expect(result.playwright).toBe('ok');
+    // sanity: the probe used the bundled executablePath() APIs.
+    expect(vi.mocked(firefox.executablePath)).toHaveBeenCalled();
+    expect(vi.mocked(chromium.executablePath)).toHaveBeenCalled();
   });
 });
