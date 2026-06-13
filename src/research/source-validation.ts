@@ -31,6 +31,13 @@ const OVERLAP_FLOOR = 0.1;
 // Mainstream search-engine domain labels whose /search path is a results page.
 // Matched on label boundaries (not substrings) so "task.evil.com" or
 // "flask.palletsprojects.com" are never mistaken for "ask." engines.
+//
+// These are SERP-JUNK FILTER labels for research source validation — NOT
+// search-engine adapter registrations. 'startpage' here means "a
+// startpage.com/search URL appearing in a result pool is a SERP, reject it";
+// startpage.com is a real, operating engine, so the label is live (Wave-2 W3
+// kept it deliberately — do not confuse it with the never-built startpage
+// search ADAPTER and remove it; that would re-leak startpage SERPs).
 const SEARCH_ENGINE_LABELS = new Set([
   'google',
   'bing',

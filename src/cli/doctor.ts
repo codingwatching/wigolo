@@ -200,7 +200,11 @@ export function formatEngineHealthLines(entries: EngineHealthEntry[]): string[] 
       e.breaker && e.breaker !== 'closed'
         ? ` [breaker ${e.breaker}${e.lastError ? ` — ${e.lastError.slice(0, 60)}` : ''}]`
         : '';
-    lines.push(`  ${name} ${vertical} ${suffix}${breakerNote}`);
+    // Wave-2 W3: an informational note about a KNOWN, non-user-fixable
+    // limitation (e.g. mojeek IP-reputation 403s). Rendered even for "ok"
+    // engines so doctor is honest about why an engine may go dark.
+    const limitationNote = e.note ? ` — note: ${e.note}` : '';
+    lines.push(`  ${name} ${vertical} ${suffix}${breakerNote}${limitationNote}`);
   }
   return lines;
 }

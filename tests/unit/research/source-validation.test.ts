@@ -32,6 +32,19 @@ describe('classifyUrlShape', () => {
     });
   });
 
+  it('rejects a startpage.com results page as serp (Wave-2 W3 decision lock)', () => {
+    // WHY: the 'startpage' label in SEARCH_ENGINE_LABELS is a live SERP-junk
+    // filter — startpage.com is a real, operating search engine whose results
+    // pages can enter a research source pool. Wave-2 W3 considered dropping
+    // this label (mistaken for a dead never-built engine adapter) and kept it:
+    // dropping it would re-leak startpage SERPs into briefs. This test locks
+    // that decision so the label is not removed by a future reader.
+    expect(classifyUrlShape('https://www.startpage.com/search?q=fts5+vs+vector+db')).toEqual({
+      reject: true,
+      reason: 'serp',
+    });
+  });
+
   it('rejects a blog-search results path as serp on any host', () => {
     // WHY: the leaked Japanese junk source was a blog-search results page; its
     // host is not a mainstream engine, so the path signature must catch it.

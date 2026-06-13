@@ -73,6 +73,20 @@ describe('formatEngineHealthLines', () => {
     expect(lines.find((l) => l.includes('marginalia'))).toMatch(/breaker half-open/);
   });
 
+  // Wave-2 W3 (honest engine-pool health): an informational note (e.g.
+  // mojeek's IP-reputation limitation) renders even when the engine is "ok"
+  // and the breaker is closed, so the doctor output is honest about why an
+  // engine may intermittently go dark.
+  it('renders an informational note for ok engines that carry one', () => {
+    const entries: EngineHealthEntry[] = [
+      { name: 'mojeek', vertical: 'general', status: 'ok', note: 'intermittent 403s (IP reputation)' },
+    ];
+    const lines = formatEngineHealthLines(entries);
+    const mojeek = lines.find((l) => l.includes('mojeek'))!;
+    expect(mojeek).toMatch(/ok/);
+    expect(mojeek).toContain('intermittent 403s (IP reputation)');
+  });
+
   it('does not render breaker info for closed or never-tripped breakers', () => {
     const entries: EngineHealthEntry[] = [
       { name: 'bing', vertical: 'general', status: 'ok', breaker: 'closed' },
