@@ -1,0 +1,148 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`extraction regression — content-root must not alter clean pages > article.html extraction is byte-stable 1`] = `
+{
+  "author": "Jane Developer",
+  "description": "A comprehensive guide to building modern web scrapers with TypeScript",
+  "language": "en",
+  "markdown": "Web scraping has evolved significantly over the past decade. What once required fragile regular expressions and manual HTTP requests can now be accomplished with sophisticated tools that understand page structure, handle JavaScript rendering, and extract meaningful content from the noise of modern web pages.
+
+In this guide, we will walk through the fundamentals of building a robust web scraper using TypeScript. We will cover everything from making HTTP requests to parsing HTML, handling dynamic content, and storing extracted data efficiently.
+
+## Why TypeScript for Web Scraping?
+
+TypeScript brings several advantages to web scraping projects. Static typing catches errors at compile time rather than runtime, which is especially valuable when dealing with unpredictable web content. The rich ecosystem of npm packages provides tools for every aspect of the scraping pipeline.
+
+Additionally, TypeScript's excellent async/await support makes it natural to write concurrent scrapers that can fetch multiple pages simultaneously without blocking.
+
+
+
+## Setting Up Your Project
+
+Start by initializing a new TypeScript project with the following dependencies:
+
+*   **node-fetch** or the built-in \`fetch\` API for HTTP requests
+*   **cheerio** for fast HTML parsing without a browser
+*   **playwright** for pages that require JavaScript rendering
+*   **better-sqlite3** for local data storage
+
+The combination of these tools gives you a flexible foundation that can handle both static and dynamic websites.
+
+## Handling Dynamic Content
+
+Many modern websites rely heavily on JavaScript to render their content. A simple HTTP request will only return the initial HTML shell, missing the actual content that gets loaded by client-side scripts. This is where browser automation tools like Playwright become essential.
+
+Playwright launches a real browser instance, executes JavaScript, and gives you access to the fully rendered DOM. While slower than direct HTTP requests, it ensures you capture all the content a user would see.
+
+[Learn more about Playwright](https://playwright.dev/)
+
+## Extracting Meaningful Content
+
+The real challenge in web scraping is not fetching pages but extracting the meaningful content from them. Modern web pages are filled with navigation menus, advertisements, sidebars, and footer content that you typically want to exclude.
+
+Libraries like Readability and Defuddle solve this problem by analyzing the page structure and identifying the main content area. They use heuristics based on element density, text length, and structural patterns to separate signal from noise.
+
+## Conclusion
+
+Building a web scraper with TypeScript provides a solid foundation for extracting structured data from the web. By combining HTTP clients with smart content extraction, you can build tools that reliably convert messy web pages into clean, usable data.
+
+The key is to start simple and add complexity only as needed. Begin with direct HTTP requests and basic parsing, then add browser automation and sophisticated extraction only for the pages that require it.",
+  "title": "Building Modern Web Scrapers with TypeScript",
+}
+`;
+
+exports[`extraction regression — content-root must not alter clean pages > blog-post.html extraction is byte-stable 1`] = `
+{
+  "author": "Alex Rivera",
+  "description": "A deep dive into building extraction pipelines with multiple fallback strategies",
+  "language": "en",
+  "markdown": "If you've ever tried to extract clean text from web pages, you know the pain. Every site has different markup, different ways of embedding content, and different amounts of noise around the actual article. In this post, I'll walk through building an extraction pipeline that handles all of this gracefully.
+
+## The Problem
+
+Web pages are messy. A typical news article page has navigation headers, advertisement banners, sidebar widgets, newsletter signup forms, related article links, comment sections, and footer content — all surrounding the actual article text you want. A naive approach of just grabbing all text from the page gives you a wall of noise with the article buried somewhere in the middle.
+
+## The Ensemble Approach
+
+The key insight is that no single extraction tool works perfectly on all pages. Some tools excel at news articles but struggle with documentation sites. Others handle blog posts well but fail on forum threads. The solution is to chain multiple extractors in a fallback cascade:
+
+1.  **Site-specific extractors** — hand-crafted rules for known sites like GitHub, Stack Overflow, and MDN
+2.  **Defuddle** — uses structural analysis and content density heuristics
+3.  **Trafilatura** — Python-based extractor with the highest measured F1 score (0.958)
+4.  **Readability** — Mozilla's battle-tested article extraction algorithm
+5.  **Turndown** — raw HTML-to-Markdown as a last resort
+
+Each extractor in the chain is tried in order. If one returns content above a quality threshold (typically 100+ characters of meaningful text), we use that result. If it returns null or too-short content, we try the next one.
+
+## The Subprocess Pattern
+
+Running Trafilatura from a TypeScript/Node.js application requires spawning a Python subprocess. This is the same pattern used for any polyglot tool integration. The key considerations are:
+
+*   Send HTML via stdin (avoids file system overhead and temp file cleanup)
+*   Set a timeout (15 seconds) to prevent hanging processes
+*   Cache availability checks so we don't probe for Python on every request
+*   Handle stderr gracefully — Python prints warnings to stderr even on success
+
+\`\`\`
+
+const proc = spawn('python3', ['-c', script], { timeout: 15000 });
+proc.stdin.write(html);
+proc.stdin.end();
+      
+\`\`\`
+
+## Configuration
+
+The pipeline should be configurable. Not every deployment has Python installed, and not every use case needs Trafilatura's precision. A simple three-way config handles this: \`auto\` (use if installed), \`always\` (require it), or \`never\` (skip it).
+
+## Conclusion
+
+Building an extraction pipeline that degrades gracefully is more about good engineering than clever algorithms. The ensemble approach gives you the best of every world: precision when you can get it, and reliable fallbacks when you can't. The key is to fail silently, log everything, and let the next extractor in the chain take over.",
+  "title": "Building Robust Extraction Pipelines - Alex's Dev Blog",
+}
+`;
+
+exports[`extraction regression — content-root must not alter clean pages > news-article.html extraction is byte-stable 1`] = `
+{
+  "author": "Sarah Chen",
+  "description": "New study reveals significant performance improvements in AI-powered code analysis tools",
+  "language": "en",
+  "markdown": "![AI analyzing code on screen](https://example.com/images/ai-code-analysis-hero.jpg)
+
+AI-powered tools are transforming how developers analyze code. Photo: Tech Daily
+
+A comprehensive benchmarking study released today shows that the latest generation of AI-powered code analysis tools have achieved a 40% improvement in performance compared to their predecessors from just six months ago.
+
+The study, conducted by researchers at the Institute for Software Engineering, tested 15 different tools across a battery of 5,000 real-world code samples spanning 12 programming languages. The results show dramatic improvements in both accuracy and speed.
+
+## Key Findings
+
+Among the most notable findings, the study reports that modern extraction tools now achieve an average F1 score of 0.95 on structured content extraction tasks, up from 0.68 just one year ago. This improvement is attributed to advances in ensemble approaches that combine multiple extraction strategies.
+
+"What we're seeing is a paradigm shift," said Dr. Maria Rodriguez, lead author of the study. "Instead of relying on a single extraction method, the best tools now use a cascading approach — trying the most precise method first and falling back to increasingly general methods."
+
+> "The ensemble approach consistently outperforms any single extraction method. Tools that combine Defuddle, Trafilatura, and Readability achieve the highest measured quality."
+> 
+> Dr. Maria Rodriguez, Institute for Software Engineering
+
+## Performance Metrics
+
+| Tool | F1 Score | Speed (pages/sec) |
+| --- | --- | --- |
+| Ensemble (Defuddle+Trafilatura+Readability) | 0.958 | 12.3 |
+| Trafilatura standalone | 0.944 | 15.7 |
+| Defuddle standalone | 0.921 | 45.2 |
+| Readability standalone | 0.887 | 52.1 |
+
+## Implications for Developers
+
+For developers building applications that need to extract content from web pages, these findings suggest that an ensemble approach is now the clear best practice. The marginal cost of running multiple extractors is small compared to the quality gains.
+
+The full study is available at [the institute's website](https://example.com/study). The dataset used for benchmarking has also been [released publicly](https://example.com/dataset) to encourage reproducible research.
+
+## Conclusion
+
+As AI code analysis tools continue to improve at this pace, we can expect even more sophisticated approaches in the coming months. The key takeaway is clear: ensemble methods that combine the strengths of multiple tools deliver the best results.",
+  "title": "AI Code Analysis Tools See 40% Performance Boost",
+}
+`;
