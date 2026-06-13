@@ -25,6 +25,9 @@ import { allProviders, providerEnvVar, selectProvider } from '../integrations/cl
 import { resolveModel, providerDefaultModel, providerModelEnvVar } from '../integrations/cloud/llm/model-select.js';
 import { readKey } from '../security/key-store.js';
 import { setLogSuppression } from '../logger.js';
+import { isLlmConfigured } from '../integrations/cloud/llm/run.js';
+import { resolveCustomBackend, pickOllamaModel } from '../integrations/cloud/llm/custom-backend.js';
+import { probeOllama, resolveProbeBaseUrl } from './ollama-probe.js';
 
 function out(line = ''): void { process.stderr.write(`${line}\n`); }
 
@@ -254,6 +257,42 @@ export function formatTlsTierLine(
   return `${mode} (${browser}, wreq-js ✓)`;
 }
 
+/**
+ * Build the Ollama (local LLM server) diagnostic lines for doctor. Pure so the
+ * branching can be asserted without a live server.
+ *
+ *   - ollama is the active provider → show resolved base URL + model (always,
+ *     even when the server is mid-run unreachable — runtime falls back
+ *     gracefully, doctor should still report what's configured).
+ *   - no LLM configured AND a local server is reachable → emit an enable-hint.
+ *   - otherwise → no lines (don't nag a user who already configured an LLM, and
+ *     stay silent when no local server is present).
+ *
+ * The hint NEVER auto-enables anything; it only tells the user the lever exists.
+ */
+export function buildOllamaDoctorLines(state: {
+  llmConfigured: boolean;
+  ollamaActive: boolean;
+  reachable: boolean;
+  baseUrl: string;
+  model?: string;
+}): string[] {
+  if (state.ollamaActive) {
+    const lines = [`  local LLM (ollama): ${state.baseUrl}`];
+    if (state.model) lines.push(`    model:     ${state.model}`);
+    if (!state.reachable) {
+      lines.push('    note:      server not reachable now — research falls back to keyless synthesis');
+    }
+    return lines;
+  }
+  if (!state.llmConfigured && state.reachable) {
+    return [
+      `  Local LLM server detected at ${state.baseUrl} — enable essay-grade research synthesis with \`WIGOLO_LLM_PROVIDER=ollama\` (no API key needed).`,
+    ];
+  }
+  return [];
+}
+
 function humanRetry(nextRetryAt?: string): string {
   if (!nextRetryAt) return 'not scheduled';
   const when = new Date(nextRetryAt);
@@ -402,6 +441,40 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
   }
   out(`  cache TTL:   ${cfg.llmCacheTtlDays} days`);
   out(`  per-request: ${cfg.llmMaxCallsPerRequest} call(s) max`);
+
+  // Local LLM server (Ollama) autodetect. Never auto-enables — when ollama is
+  // active we report the resolved base/model; otherwise, when no LLM is
+  // configured and a local server answers, we hint at the keyless lever. The
+  // probe is fail-safe: a down/slow/absent server never errors or stalls.
+  {
+    const ollamaBackend = resolveCustomBackend(process.env);
+    const ollamaActive = ollamaBackend?.isOllama ?? false;
+    const llmConfigured = isLlmConfigured(process.env);
+    const baseUrl = ollamaBackend?.isOllama ? ollamaBackend.url : resolveProbeBaseUrl(process.env);
+    // Skip the network probe when ollama isn't active and an LLM is already
+    // configured — there's nothing to hint at, so don't spend the round-trip.
+    const needProbe = ollamaActive || !llmConfigured;
+    const probe = needProbe ? await probeOllama(baseUrl) : { reachable: false };
+    let model: string | undefined;
+    if (ollamaActive && probe.reachable && !process.env.WIGOLO_LLM_MODEL) {
+      try {
+        model = await pickOllamaModel(baseUrl);
+      } catch {
+        // pickOllamaModel is itself fail-safe, but guard anyway — never break doctor.
+      }
+    } else if (ollamaActive) {
+      model = process.env.WIGOLO_LLM_MODEL;
+    }
+    for (const line of buildOllamaDoctorLines({
+      llmConfigured,
+      ollamaActive,
+      reachable: probe.reachable,
+      baseUrl,
+      model,
+    })) {
+      out(line);
+    }
+  }
 
   out('');
   out('[wigolo doctor] Search backend:');
