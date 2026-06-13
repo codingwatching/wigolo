@@ -27,7 +27,7 @@ import { readKey } from '../security/key-store.js';
 import { setLogSuppression } from '../logger.js';
 import { isLlmConfigured } from '../integrations/cloud/llm/run.js';
 import { resolveCustomBackend, pickOllamaModel } from '../integrations/cloud/llm/custom-backend.js';
-import { probeOllama, resolveProbeBaseUrl } from './ollama-probe.js';
+import { probeOllama, resolveProbeBaseUrl, maybeOllamaHint } from './ollama-probe.js';
 
 function out(line = ''): void { process.stderr.write(`${line}\n`); }
 
@@ -285,12 +285,12 @@ export function buildOllamaDoctorLines(state: {
     }
     return lines;
   }
-  if (!state.llmConfigured && state.reachable) {
-    return [
-      `  Local LLM server detected at ${state.baseUrl} — enable essay-grade research synthesis with \`WIGOLO_LLM_PROVIDER=ollama\` (no API key needed).`,
-    ];
-  }
-  return [];
+  const hint = maybeOllamaHint({
+    reachable: state.reachable,
+    llmConfigured: state.llmConfigured,
+    baseUrl: state.baseUrl,
+  });
+  return hint ? [`  ${hint}`] : [];
 }
 
 function humanRetry(nextRetryAt?: string): string {

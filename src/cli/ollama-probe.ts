@@ -17,6 +17,21 @@ export interface OllamaProbeResult {
 }
 
 /**
+ * Build the discoverability hint shown by doctor/init when a local LLM server
+ * is reachable but no LLM is configured. Returns null (no hint) when an LLM is
+ * already configured — discovery only, never a nag — or when no server answers.
+ * Never auto-enables anything; it only tells the user the keyless lever exists.
+ */
+export function maybeOllamaHint(state: {
+  reachable: boolean;
+  llmConfigured: boolean;
+  baseUrl: string;
+}): string | null {
+  if (!state.reachable || state.llmConfigured) return null;
+  return `Local LLM server detected at ${state.baseUrl} — enable essay-grade research synthesis with \`WIGOLO_LLM_PROVIDER=ollama\` (no API key needed).`;
+}
+
+/**
  * Resolve the base URL the hint should probe + suggest. Env `WIGOLO_LLM_BASE_URL`
  * wins; otherwise the canonical local server. Mirrors slice-2's resolution order
  * for the env layer (config.json `llmBaseUrl` is folded in by callers via

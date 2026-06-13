@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { probeOllama, resolveProbeBaseUrl } from '../../../src/cli/ollama-probe.js';
+import { probeOllama, resolveProbeBaseUrl, maybeOllamaHint } from '../../../src/cli/ollama-probe.js';
 import { DEFAULT_OLLAMA_BASE_URL } from '../../../src/integrations/cloud/llm/custom-backend.js';
 
 describe('resolveProbeBaseUrl', () => {
@@ -63,5 +63,24 @@ describe('probeOllama', () => {
       'http://localhost:11434/api/tags',
       expect.anything(),
     );
+  });
+});
+
+describe('maybeOllamaHint', () => {
+  it('returns a hint string when a server is reachable and no LLM is configured', () => {
+    const hint = maybeOllamaHint({ reachable: true, llmConfigured: false, baseUrl: 'http://localhost:11434' });
+    expect(hint).toMatch(/local llm server detected/i);
+    expect(hint).toContain('http://localhost:11434');
+    expect(hint).toMatch(/WIGOLO_LLM_PROVIDER=ollama/);
+  });
+
+  it('returns null when an LLM is already configured (no nag)', () => {
+    // WHY: the hint is for discovery only — a user who already picked an LLM
+    // must not be pestered to switch.
+    expect(maybeOllamaHint({ reachable: true, llmConfigured: true, baseUrl: 'http://localhost:11434' })).toBeNull();
+  });
+
+  it('returns null when no server is reachable (nothing to enable)', () => {
+    expect(maybeOllamaHint({ reachable: false, llmConfigured: false, baseUrl: 'http://localhost:11434' })).toBeNull();
   });
 });
