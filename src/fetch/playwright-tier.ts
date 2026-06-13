@@ -1,7 +1,7 @@
 import { chromium, type Browser, type BrowserContext } from 'playwright';
 import { existsSync } from 'node:fs';
 import { createLogger } from '../logger.js';
-import { HYDRATION_PROBE_SOURCE } from './hydration-probe.js';
+import { HYDRATION_PROBE_SOURCE, APP_SHELL_ONLY_SOURCE } from './hydration-probe.js';
 import { abortRejection } from '../util/abort.js';
 
 const log = createLogger('playwright-tier');
@@ -87,21 +87,61 @@ export async function fetchWithPlaywright(url: string, opts: { timeoutMs?: numbe
     // hold the slot past the budget.
     if (opts.signal?.aborted) throw opts.signal.reason;
     // SPAs (React/Next.js/etc.) populate the article body after `load` fires.
-    // Wait for either semantic content (a `<main>`/`<article>` containing
-    // substantial text) or for the network to go idle — whichever wins
-    // first. Plain body innerText > N isn't enough because nav-shell sites
-    // (react.dev, nextjs.org) ship a header + sidebar that already exceeds
-    // any reasonable text threshold before the article mounts.
-    // Race against abort too, so an abort DURING the wait rejects promptly;
-    // the normal timeouts are swallowed, only the abort reason propagates.
+    // Nav-shell docs sites (react.dev, nextjs.org) ship a header + sidebar
+    // that clears `networkidle` and exceeds any plain body.innerText threshold
+    // BEFORE the article mounts — so the hydration probe (a `<main>`/`<article>`
+    // with substantial body text) is the gate, NOT a competitor in a race.
+    //
+    // The previous Promise.race([probe, networkidle]) was the SPA nav-only bug:
+    // networkidle settles first on these sites, the race resolves, and
+    // page.content() captures the nav-only shell before the body mounts. Here
+    // we instead (1) let the network settle (bounded, best-effort), then
+    // (2) AWAIT the hydration probe as the gate, then (3) if the probe still
+    // times out and the DOM is an SPA app-shell with no body yet, re-poll once
+    // with a longer budget before giving up. Each wait still races abort so an
+    // abort DURING a wait rejects promptly.
     const hydrationBudget = Math.min(5000, Math.max(800, Math.floor(overall / 6)));
     await Promise.race([
-      page.waitForFunction(HYDRATION_PROBE_SOURCE, undefined, { timeout: hydrationBudget }).catch(() => undefined),
       page.waitForLoadState('networkidle', { timeout: hydrationBudget }).catch(() => undefined),
       abortRejection(opts.signal),
     ]).catch((err) => {
       if (opts.signal?.aborted) throw err;
     });
+    if (opts.signal?.aborted) throw opts.signal.reason;
+
+    let hydrated = await Promise.race([
+      page.waitForFunction(HYDRATION_PROBE_SOURCE, undefined, { timeout: hydrationBudget })
+        .then(() => true)
+        .catch(() => false),
+      abortRejection(opts.signal),
+    ]).catch((err) => {
+      if (opts.signal?.aborted) throw err;
+      return false;
+    });
+
+    // The probe timed out. Distinguish "this is an app-shell still mounting"
+    // (worth a longer re-poll) from "this is just a non-SPA page with no
+    // semantic body" (return as-is). Only escalate on the former, and only if
+    // the remaining budget allows — so already-fast pages pay nothing here.
+    if (!hydrated && !opts.signal?.aborted) {
+      const appShellOnly = await page.evaluate(APP_SHELL_ONLY_SOURCE).catch(() => false);
+      if (appShellOnly) {
+        const escalationBudget = Math.min(6000, Math.max(2000, hydrationBudget * 2));
+        log.debug('app-shell only after first hydration wait; re-polling for body', { url, escalationBudget });
+        hydrated = await Promise.race([
+          page.waitForFunction(HYDRATION_PROBE_SOURCE, undefined, { timeout: escalationBudget })
+            .then(() => true)
+            .catch(() => false),
+          abortRejection(opts.signal),
+        ]).catch((err) => {
+          if (opts.signal?.aborted) throw err;
+          return false;
+        });
+        if (!hydrated) {
+          log.warn('SPA body did not mount within budget; capturing partial content', { url });
+        }
+      }
+    }
     const html = await page.content();
     const text = await page.evaluate(() => document.body?.innerText ?? '');
     return { html, text };
