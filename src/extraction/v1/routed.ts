@@ -6,6 +6,7 @@ import { htmlToMarkdown } from '../markdown.js';
 import { stripBoilerplateDom } from '../boilerplate.js';
 import { createLogger } from '../../logger.js';
 import { classifyContent, type ContentType } from './classifier.js';
+import { isolateContentRoot } from './content-root.js';
 import { extractRecipe } from './recipe.js';
 import { extractProduct } from './product.js';
 import { extractNews } from './news.js';
@@ -46,23 +47,30 @@ export async function routedExtract(input: RoutedExtractInput): Promise<Extracti
   const type = classifyContent(url, html);
   log.debug('classified content', { url, type, blocked });
 
+  // Narrow app-shell/SPA pages to their main-content region before the
+  // category extractors serialize, so a small max_content_chars cap returns
+  // body content instead of leading nav chrome. Inert on clean pages and
+  // unrendered shells (two-factor guard). Classification above stays on the
+  // full html so type detection is unaffected.
+  const scoped = isolateContentRoot(cleanedHtml);
+
   const result = await (async () => {
     switch (type) {
       case 'recipe':
         return (
-          (await extractRecipe(cleanedHtml, url)) ?? (await fallbackChain(cleanedHtml, url))
+          (await extractRecipe(scoped, url)) ?? (await fallbackChain(scoped, url))
         );
       case 'product':
         return (
-          (await extractProduct(cleanedHtml, url)) ?? (await fallbackChain(cleanedHtml, url))
+          (await extractProduct(scoped, url)) ?? (await fallbackChain(scoped, url))
         );
       case 'news':
-        return (await extractNews(cleanedHtml, url)) ?? (await fallbackChain(cleanedHtml, url));
+        return (await extractNews(scoped, url)) ?? (await fallbackChain(scoped, url));
       case 'code':
       case 'docs':
       case 'generic':
       default:
-        return fallbackChain(cleanedHtml, url, type);
+        return fallbackChain(scoped, url, type);
     }
   })();
 

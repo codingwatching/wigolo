@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>React Reference Overview – React</title>
+    <meta name="description" content="API reference for the React library, including built-in hooks and components." />
+  </head>
+  <body>
+    <header>
+      <nav aria-label="Primary">
+        <a href="/">React</a>
+        <a href="/versions">v19.2</a>
+        <a href="/learn">Learn</a>
+        <a href="/reference/react">Reference</a>
+        <a href="/community">Community</a>
+        <a href="/blog">Blog</a>
+      </nav>
+    </header>
+    <main>
+      <h1>React Reference Overview</h1>
+      <p>
+        This section provides detailed reference documentation for working with React.
+        For an introduction to React, please visit the Learn section instead. The React
+        reference documentation is broken down into functional subsections so you can find
+        the API you need quickly.
+      </p>
+      <h2>React</h2>
+      <p>
+        Programmatic React features. Hooks let you use different React features from your
+        components. You can either use the built-in Hooks or combine them to build your own.
+        Components let you split the UI into independent, reusable pieces, and think about
+        each piece in isolation. A component is a function that returns markup describing what
+        should appear on the screen.
+      </p>
+      <h2>Hooks</h2>
+      <p>
+        Hooks let you use state and other React features in your components without writing a
+        class. State Hooks such as useState and useReducer let a component remember information
+        like user input. Context Hooks such as useContext let a component receive information
+        from distant parents without passing it as props. Ref Hooks such as useRef let a
+        component hold some information that isn't used for rendering, like a DOM node or a
+        timeout ID. Effect Hooks let a component connect to and synchronize with external
+        systems. This includes dealing with the network, the browser DOM, animations, widgets
+        written using a different UI library, and other non-React code.
+      </p>
+      <h2>Components</h2>
+      <p>
+        React exposes a few built-in components that you can use in your JSX. The Fragment
+        component, often written as empty angle brackets, lets you group elements without a
+        wrapper node. The Suspense component lets you display a fallback while child components
+        are loading. The Profiler component lets you measure rendering performance of a React
+        tree programmatically. These components form the foundation of how you compose a React
+        application from smaller building blocks.
+      </p>
+      <h2>APIs</h2>
+      <p>
+        These APIs let you create components and interact with React on a deeper level. The
+        createContext API lets you define and provide context to the child components, commonly
+        used together with the useContext Hook. The forwardRef API lets your component expose a
+        DOM node as a ref to a parent. The lazy API lets you defer loading a component's code
+        until it is rendered for the first time, improving the initial load performance of your
+        application.
+      </p>
+    </main>
+    <footer>
+      <nav aria-label="Footer">
+        <a href="/learn">Learn React</a>
+        <a href="/reference/react">API Reference</a>
+        <a href="/community/team">Team</a>
+        <a href="/community/acknowledgements">Acknowledgements</a>
+      </nav>
+      <p>Copyright Meta Platforms, Inc. and affiliates.</p>
+    </footer>
+  </body>
+</html>
