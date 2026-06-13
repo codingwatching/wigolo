@@ -97,6 +97,14 @@ export interface Config {
   tlsBrowser: string;
   /** Successes required before a domain is auto-promoted to TLS-first routing. */
   tlsSuccessThreshold: number;
+  /**
+   * Extra domains (beyond the built-in anti-bot allowlist) that should try the
+   * TLS-impersonation tier FIRST during a content fetch — even when `tlsTier`
+   * is 'off'. Curated for known anti-bot, connection-timeout-prone content
+   * domains (e.g. stackoverflow.com) whose plain-HTTP fetch times out before
+   * returning a response, so the signal-based escalation never fires.
+   */
+  tlsDomains: string[];
 }
 
 /**
@@ -321,6 +329,14 @@ export function getConfig(): Config {
     // fall back to the safe default.
     tlsBrowser: validateTlsBrowser(envStr('WIGOLO_TLS_BROWSER', null, settings, 'tlsBrowser'), 'chrome_142'),
     tlsSuccessThreshold: envInt('WIGOLO_TLS_SUCCESS_THRESHOLD', 3, settings, 'tlsSuccessThreshold'),
+    tlsDomains: (() => {
+      const raw = envStr('WIGOLO_TLS_DOMAINS', null, settings, 'tlsDomains');
+      if (!raw) return [];
+      return raw
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter((s) => s.length > 0);
+    })(),
   };
 
   return cachedConfig;
