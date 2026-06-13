@@ -636,6 +636,17 @@ export interface CrossReference {
   confidence: 'high' | 'medium';
 }
 
+/** A source-quoted comparison tradeoff: the actual sentence from a source that
+ * pairs a compared entity with a comparison term, plus the index of the source
+ * it came from (0-based into the brief's `fetched` view). Captured instead of a
+ * bare keyword so the template renderer can quote a real, cited tradeoff rather
+ * than fabricate directionality. */
+export interface ComparisonTradeoff {
+  text: string;
+  source_index: number;
+  term: string;
+}
+
 export interface CitationGraphEntry {
   claim: string;
   source_indices: number[];
@@ -656,6 +667,10 @@ export interface ResearchBrief {
     comparison?: {
       entities: string[];
       comparison_points: string[];
+      /** Source-quoted tradeoff sentences (entity + comparison term in context)
+       * with the index of the source they came from, so a renderer can cite a
+       * real tradeoff `[n]` instead of inventing a verdict from bare keywords. */
+      tradeoffs: ComparisonTradeoff[];
     };
     gaps: Array<string | { entity: string; reason: string }>;
   };
