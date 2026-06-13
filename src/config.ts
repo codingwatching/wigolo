@@ -78,6 +78,12 @@ export interface Config {
    */
   searchBackend: string | null;
   llmProvider: string | null;
+  /**
+   * Base URL for a custom OpenAI-compatible LLM backend. Only consulted when
+   * `llmProvider` is the `ollama` alias; overrides the default
+   * http://localhost:11434. `null` means "use the default local Ollama base".
+   */
+  llmBaseUrl: string | null;
   llmCacheTtlDays: number;
   llmMaxCallsPerRequest: number;
   /**
@@ -300,6 +306,7 @@ export function getConfig(): Config {
     embeddingMaxTextLength: envInt('WIGOLO_EMBEDDING_MAX_TEXT_LENGTH', 8000, settings, 'embeddingMaxTextLength'),
     searchBackend: envStr('WIGOLO_SEARCH', null, settings, 'searchBackend'),
     llmProvider: envStr('WIGOLO_LLM_PROVIDER', null, settings, 'llmProvider'),
+    llmBaseUrl: envStr('WIGOLO_LLM_BASE_URL', null, settings, 'llmBaseUrl'),
     llmCacheTtlDays: envInt('WIGOLO_LLM_CACHE_TTL_DAYS', 7, settings, 'llmCacheTtlDays'),
     llmMaxCallsPerRequest: envInt('WIGOLO_LLM_MAX_CALLS_PER_REQUEST', 1, settings, 'llmMaxCallsPerRequest'),
     tlsTier: (() => {
