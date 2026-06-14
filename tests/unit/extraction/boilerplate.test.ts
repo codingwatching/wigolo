@@ -39,7 +39,7 @@ describe('boilerplate constants', () => {
       '[class*="sticky-cta"]',
       'main [role="banner"]',
       '[role="navigation"]',
-      '[class*="sidebar"]',
+      '[class*="sidebar"]:not([class*="grid"])',
       '[data-collection="docs"]',
     ];
     for (const sel of expected) {
@@ -111,5 +111,46 @@ describe('stripBoilerplateDom', () => {
     expect(out).not.toContain('primary nav');
     expect(out).not.toContain('docs collection');
     expect(out).toContain('kept content');
+  });
+
+  it('still removes real sidebars with compound class names (docs-sidebar, sidebar-nav)', () => {
+    const html = `
+      <html><body>
+        <div class="docs-sidebar"><nav>compound side nav</nav></div>
+        <div class="sidebar-nav">suffix side nav</div>
+        <p>kept content</p>
+      </body></html>
+    `;
+    const { document } = parseHTML(html);
+    stripBoilerplateDom(document);
+    const out = document.body.innerHTML;
+    expect(out).not.toContain('compound side nav');
+    expect(out).not.toContain('suffix side nav');
+    expect(out).toContain('kept content');
+  });
+
+  it('does NOT remove a content-grid wrapper whose class merely contains the substring "sidebar"', () => {
+    // react.dev wraps <main> + the reference-index <aside> in a grid container whose
+    // Tailwind grid-template class is "grid-cols-sidebar-content". A substring match on
+    // "sidebar" wrongly deletes that wrapper — and the entire article body with it.
+    const html = `
+      <html><body>
+        <header><nav><a href="/">React</a></nav></header>
+        <div class="grid grid-cols-only-content lg:grid-cols-sidebar-content 2xl:grid-cols-sidebar-content-toc">
+          <main><h1>React Reference Overview</h1>
+            <p>This section provides detailed reference documentation for working with React.</p>
+          </main>
+          <aside class="sidebar"><nav role="navigation"><a href="/reference/react">Hooks</a></nav></aside>
+        </div>
+      </body></html>
+    `;
+    const { document } = parseHTML(html);
+    stripBoilerplateDom(document);
+    const out = document.body.innerHTML;
+    // The grid wrapper's <main> body must survive.
+    expect(out).toContain('detailed reference documentation');
+    expect(out).toContain('React Reference Overview');
+    // The genuine sidebar/nav inside it is still removed.
+    expect(out).not.toContain('role="navigation"');
   });
 });

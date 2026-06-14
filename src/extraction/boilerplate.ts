@@ -20,7 +20,11 @@ export const BOILERPLATE_SELECTORS: ReadonlyArray<string> = [
   '[class*="sticky-cta"]',
   'main [role="banner"]',
   '[role="navigation"]',
-  '[class*="sidebar"]',
+  // Match genuine sidebars (sidebar, docs-sidebar, sidebar-nav) but exclude CSS
+  // grid layout wrappers whose grid-template class merely contains the substring
+  // (e.g. react.dev's `grid-cols-sidebar-content` wrapping <main>+<aside>) — a
+  // bare [class*="sidebar"] there deletes the whole article body.
+  '[class*="sidebar"]:not([class*="grid"])',
   '[data-collection="docs"]',
 ];
 
