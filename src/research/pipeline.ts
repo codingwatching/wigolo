@@ -164,13 +164,24 @@ export async function runResearchPipeline(
     // The cross-encoder scores off-topic real-content domains (benchmark C1:
     // YouTube / Google Play / Zhihu / MyBroadband) below zero; url-shape and
     // the content gate both pass them because they ARE real, on-domain pages.
-    // Dropping negatives here closes that gap. merged is sorted desc by score,
-    // so merged[0] is the top — always keep it so the pool is never emptied
-    // when the reranker damped everything below zero.
+    // Dropping negatives here closes that gap.
+    //
+    // But the cross-encoder also damps a *moderately*-relevant pool slightly
+    // below zero across the board — those are genuine on-topic sources, not
+    // junk, and dropping all of them collapses standard depth to a handful of
+    // strictly-positive survivors (C1 breadth wobble: standard returned 5-6,
+    // sometimes fewer). merged is sorted desc by score, so the top
+    // `minSources` entries are the reranker's best-ranked candidates: inside
+    // that breadth-keep window the floor is relaxed to drop only clear junk
+    // (HARD_JUNK_FLOOR), so a damped-but-relevant source back-fills the slot.
+    // Outside the window the strict `< 0` rule still drops genuine off-topic
+    // junk that ranks past the pool. i === 0 always survives so the pool is
+    // never emptied when the reranker damped everything below zero.
+    const breadthKeep = Math.max(config.minSources, 1);
     const scoreKept: MergedResult[] = [];
     for (let i = 0; i < merged.length; i++) {
       const m = merged[i];
-      const verdict = i === 0 ? { reject: false } : classifyScoreFloor(m.relevance_score);
+      const verdict = i === 0 ? { reject: false } : classifyScoreFloor(m.relevance_score, i < breadthKeep);
       if (verdict.reject && verdict.reason) {
         rejected_sources.push({ url: m.url, reason: verdict.reason, stage: 'score-floor' });
       } else {

@@ -136,4 +136,28 @@ describe('research pipeline relevance-score floor', () => {
 
     expect(result.sources.length).toBeGreaterThanOrEqual(1);
   });
+
+  it('standard depth keeps >=6 on-topic sources when the reranker damps the whole pool slightly negative', async () => {
+    // WHY (C1 breadth wobble): the cross-encoder scores a *moderately*-relevant
+    // pool slightly below zero across the board — these are genuine on-topic
+    // articles (they pass url-shape + content gates), not the off-topic junk the
+    // floor was built to drop. The old floor kept only merged[0] and dropped the
+    // rest, collapsing standard depth to ~1-5 sources. The fix keeps the top
+    // minSources candidates by rank so standard reliably back-fills to >=6 when
+    // that many on-topic survivors exist. These 9 are the genuine pool; the two
+    // off-topic videos rank below the keep-floor and must still be dropped.
+    const results: RawSearchResult[] = [
+      ...Array.from({ length: 9 }, (_, i) => goodResult(i, -0.05 - i * 0.02)),
+      { title: 'Unrelated video', url: 'https://www.youtube.com/watch?v=junk1', snippet: 'unrelated', relevance_score: -0.95, engine: 'stub' },
+      { title: 'Unrelated video 2', url: 'https://www.youtube.com/watch?v=junk2', snippet: 'unrelated', relevance_score: -0.99, engine: 'stub' },
+    ];
+    const input: ResearchInput = { question: QUESTION, depth: 'standard' };
+
+    const result = await runResearchPipeline(input, [createStubEngine(results)], createStubRouter());
+
+    expect(result.sources.length).toBeGreaterThanOrEqual(6);
+    const urls = result.sources.map((s) => s.url);
+    expect(urls).not.toContain('https://www.youtube.com/watch?v=junk1');
+    expect(urls).not.toContain('https://www.youtube.com/watch?v=junk2');
+  });
 });

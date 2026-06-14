@@ -5,7 +5,7 @@
 // is deliberately NOT a relevance filter; it only drops thin AND off-topic
 // shells so a short on-topic doc and a long off-topic page both survive.
 
-export type UrlShapeReason = 'homepage' | 'serp';
+export type UrlShapeReason = 'homepage' | 'serp' | 'social-promo';
 export type ContentGateReason = 'low-content' | 'low-overlap';
 export type ScoreFloorReason = 'negative-score';
 
@@ -31,6 +31,16 @@ export interface ScoreFloorVerdict {
 // land below zero here even though they pass the url-shape + content gates.
 const SCORE_FLOOR = 0;
 
+// Clear-junk threshold for the top-N breadth keep. The cross-encoder damps a
+// *moderately*-relevant pool to slightly-below-zero logits (≈ -0.05 .. -0.3) —
+// those are genuine on-topic sources, and dropping them collapses standard
+// depth to a handful of strictly-positive survivors (the C1 breadth wobble:
+// standard returned 5-6, sometimes fewer). Off-topic junk lands distinctly
+// lower (benchmark fixtures: -0.4 and below). This floor lets the breadth keep
+// retain the damped-but-relevant band while still rejecting clear junk that the
+// top-N rank window would otherwise pull in when the genuine pool is shallow.
+const HARD_JUNK_FLOOR = -0.35;
+
 /**
  * Classify a candidate research source by its (post-rerank) relevance score.
  * Rejects strictly-negative scores — the cross-encoder's "not relevant"
@@ -38,9 +48,22 @@ const SCORE_FLOOR = 0;
  * or a relevant cross-encoder logit) always survive, so this is a no-op when
  * no cross-encoder ran. The caller is responsible for never emptying the pool
  * (it keeps the single best source as a floor of last resort).
+ *
+ * `withinBreadthKeep` relaxes the threshold for the top-N best-ranked
+ * candidates (by the reranker's own ordering): a slightly-negative,
+ * damped-but-relevant source is kept so standard depth back-fills to >=6 clean
+ * sources, while clearly-negative junk (below HARD_JUNK_FLOOR) is still dropped
+ * even inside the keep window. Outside the keep window the strict `< 0` rule
+ * applies unchanged, so genuine off-topic junk that ranks past the pool is
+ * always rejected.
  */
-export function classifyScoreFloor(relevanceScore: number): ScoreFloorVerdict {
-  if (Number.isFinite(relevanceScore) && relevanceScore < SCORE_FLOOR) {
+export function classifyScoreFloor(
+  relevanceScore: number,
+  withinBreadthKeep = false,
+): ScoreFloorVerdict {
+  if (!Number.isFinite(relevanceScore)) return { reject: false };
+  const floor = withinBreadthKeep ? HARD_JUNK_FLOOR : SCORE_FLOOR;
+  if (relevanceScore < floor) {
     return { reject: true, reason: 'negative-score' };
   }
   return { reject: false };
@@ -87,6 +110,12 @@ function isSearchEngineHost(host: string): boolean {
   return host.split('.').some((label) => SEARCH_ENGINE_LABELS.has(label));
 }
 
+// Match the linkedin domain on label boundaries so a host that merely contains
+// the token as a substring is never treated as LinkedIn.
+function isLinkedInHost(host: string): boolean {
+  return host.split('.').includes('linkedin');
+}
+
 /**
  * Classify a candidate URL by shape alone (no fetch). A bare-root homepage or a
  * search-engine results page is junk for research synthesis. `includeDomains`
@@ -118,6 +147,22 @@ export function classifyUrlShape(url: string, includeDomains?: string[]): UrlSha
     const hasSearchParam = SERP_QUERY_PARAMS.some((p) => parsed.searchParams.has(p));
     if (isSearchPath || hasSearchParam) {
       return { reject: true, reason: 'serp' };
+    }
+  }
+
+  // Social-promo: a bare LinkedIn activity post (/posts/...activity-<digits>)
+  // is a sentence of self-promotion plus a link, not article text — junk for
+  // synthesis. Keyed on the unmistakable `activity-<digits>` post signature
+  // under /posts/ so long-form articles (/pulse/...) and other hosts' /posts/
+  // article paths are never caught. include_domains is honored: if the caller
+  // scoped research to linkedin.com the post is an intentional target.
+  if (isLinkedInHost(host) && /(^|\/)posts\/[^/]*activity-\d+/.test(lowerPath)) {
+    const exempt = (includeDomains ?? []).some((d) => {
+      const dn = d.replace(/^www\./, '').toLowerCase();
+      return host === dn || host.endsWith(`.${dn}`);
+    });
+    if (!exempt) {
+      return { reject: true, reason: 'social-promo' };
     }
   }
 

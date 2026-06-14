@@ -86,6 +86,33 @@ describe('classifyUrlShape', () => {
     expect(classifyUrlShape('https://notgoogle.com/search?q=x')).toEqual({ reject: false });
   });
 
+  it('rejects a bare social-activity post as social-promo', () => {
+    // WHY: a LinkedIn /posts/...activity-<id> URL is an individual promo post —
+    // a sentence of self-promotion plus a link, not article text. The C1 query
+    // surfaced one into the source pool. Its shape (the `activity-<digits>`
+    // segment under /posts/) is unmistakable, so reject it like a homepage/SERP.
+    expect(
+      classifyUrlShape(
+        'https://www.linkedin.com/posts/janedoe_sqlite-vector-search-activity-7123456789012345678-AbCd',
+      ),
+    ).toEqual({ reject: true, reason: 'social-promo' });
+  });
+
+  it('keeps a LinkedIn long-form article (pulse) as real content', () => {
+    // WHY: the social-promo rule must be narrow — a LinkedIn Pulse article is
+    // substantive long-form content and must survive. Over-rejecting all of
+    // linkedin.com would drop legit sources.
+    expect(
+      classifyUrlShape('https://www.linkedin.com/pulse/sqlite-fts5-vs-vector-db-jane-doe'),
+    ).toEqual({ reject: false });
+  });
+
+  it('keeps a non-activity post-shaped path on other hosts', () => {
+    // WHY: the rule keys on the `activity-<digits>` social-post signature, not
+    // the bare word "posts" — a blog at /posts/my-article is real content.
+    expect(classifyUrlShape('https://example.com/posts/my-article')).toEqual({ reject: false });
+  });
+
   it('rejects a malformed URL rather than throwing', () => {
     // WHY: classifyUrlShape must never throw on bad input — an unparseable URL
     // is not a usable source.
