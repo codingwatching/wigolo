@@ -39,7 +39,7 @@ describe('boilerplate constants', () => {
       '[class*="sticky-cta"]',
       'main [role="banner"]',
       '[role="navigation"]',
-      '[class*="sidebar"]',
+      '[class*="sidebar"]:not([class*="grid"])',
       '[data-collection="docs"]',
     ];
     for (const sel of expected) {
