@@ -23,6 +23,8 @@ export interface Config {
   validateTimeoutMs: number;
   maxBrowsers: number;
   browserIdleTimeoutMs: number;
+  browserAcquireTimeoutMs: number;
+  browserAcquireQueueMax: number;
   browserFallbackThreshold: number;
   authStatePath: string | null;
   chromeProfilePath: string | null;
@@ -241,6 +243,8 @@ export function getConfig(): Config {
     validateTimeoutMs: envInt('VALIDATE_TIMEOUT_MS', 5000, settings, 'validateTimeoutMs'),
     maxBrowsers: envInt('MAX_BROWSERS', 3, settings, 'maxBrowsers'),
     browserIdleTimeoutMs: envInt('BROWSER_IDLE_TIMEOUT', 60000, settings, 'browserIdleTimeoutMs'),
+    browserAcquireTimeoutMs: envInt('BROWSER_ACQUIRE_TIMEOUT_MS', 30000, settings, 'browserAcquireTimeoutMs'),
+    browserAcquireQueueMax: envInt('BROWSER_ACQUIRE_QUEUE_MAX', 100, settings, 'browserAcquireQueueMax'),
     browserFallbackThreshold: envInt('BROWSER_FALLBACK_THRESHOLD', 3, settings, 'browserFallbackThreshold'),
     authStatePath: envStr('WIGOLO_AUTH_STATE_PATH', null, settings, 'authStatePath'),
     chromeProfilePath: envStr('WIGOLO_CHROME_PROFILE_PATH', null, settings, 'chromeProfilePath'),
