@@ -6,13 +6,24 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { initSubsystems, createMcpServer, type Subsystems } from '../server.js';
 import { probeHealth } from './health-check.js';
+import { checkAuth, checkOriginHost } from '../studio/auth.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('server');
 
+export interface DaemonAuthConfig {
+  token: string;
+  host: string;
+  port: number;
+}
+
 export interface DaemonOptions {
   port: number;
   host: string;
+  /** When set, every MCP request requires a matching bearer token and passes the Origin/Host guard. `/health` stays open. */
+  auth?: DaemonAuthConfig;
+  /** When > 0, every request is bounded; on expiry a 504 is returned (host path only). */
+  requestTimeoutMs?: number;
 }
 
 export class DaemonHttpServer {
@@ -24,10 +35,14 @@ export class DaemonHttpServer {
   private sseSessions = new Map<string, { transport: SSEServerTransport; server: Server }>();
   private readonly port: number;
   private readonly host: string;
+  private readonly auth: DaemonAuthConfig | null;
+  private readonly requestTimeoutMs: number;
 
   constructor(options: DaemonOptions) {
     this.port = options.port;
     this.host = options.host;
+    this.auth = options.auth ?? null;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 0;
   }
 
   async start(): Promise<string> {
@@ -79,10 +94,35 @@ export class DaemonHttpServer {
     const pathname = url.pathname;
     const method = req.method ?? 'GET';
 
+    // /health is always open — it is a liveness probe (the stdio proxy uses it to
+    // detect a running host) and exposes no tool surface.
     if (pathname === '/health' && method === 'GET') {
       return this.handleHealthRequest(res);
     }
 
+    // Auth + Origin/Host guard for the MCP surface. Host path only: the stdio
+    // server never reaches this code, so stdio behavior is unchanged.
+    if (this.auth) {
+      const origin = checkOriginHost(req, { host: this.auth.host, port: this.auth.port });
+      if (!origin.ok) return this.writeRequestError(res, 403, 'forbidden', origin.reason);
+      const auth = checkAuth(req, this.auth.token);
+      if (!auth.ok) return this.writeRequestError(res, 401, 'unauthorized', auth.reason);
+    }
+
+    const route = () => this.routeRequest(pathname, method, url, req, res);
+    if (this.requestTimeoutMs > 0) {
+      return this.withRequestTimeout(res, route);
+    }
+    return route();
+  }
+
+  private async routeRequest(
+    pathname: string,
+    method: string,
+    url: URL,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     if (pathname === '/mcp' && method === 'POST') {
       return this.handleStreamableHttpRequest(req, res);
     }
@@ -106,6 +146,36 @@ export class DaemonHttpServer {
 
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
+  }
+
+  private writeRequestError(res: ServerResponse, status: number, error: string, reason: string): void {
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error, error_reason: reason, stage: 'daemon' }));
+  }
+
+  /**
+   * Bound a request by total duration. On expiry, return 504 if nothing has been
+   * sent yet; the underlying handler continues but its late writes are guarded by
+   * `res.headersSent`, and its late rejection is swallowed here.
+   */
+  private async withRequestTimeout(res: ServerResponse, work: () => Promise<void>): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timed = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        if (!res.headersSent) {
+          this.writeRequestError(res, 504, 'request timed out', 'request_timeout');
+        }
+        resolve();
+      }, this.requestTimeoutMs);
+    });
+    const guarded = work().catch((err) => {
+      log.debug('request handler error', { error: String(err) });
+    });
+    try {
+      await Promise.race([guarded, timed]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private handleHealthRequest(res: ServerResponse): void {

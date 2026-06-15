@@ -63,6 +63,7 @@ export interface Config {
   healthProbeIntervalMs: number;
   daemonPort: number;
   daemonHost: string;
+  studioRequestTimeoutMs: number;
   pluginsDir: string;
   browserTypes: BrowserType[];
   shellHistoryPath: string;
@@ -297,6 +298,7 @@ export function getConfig(): Config {
       const raw = envStr('WIGOLO_DAEMON_HOST', '127.0.0.1', settings, 'daemonHost');
       return raw?.trim() || '127.0.0.1';
     })(),
+    studioRequestTimeoutMs: envInt('WIGOLO_STUDIO_REQUEST_TIMEOUT_MS', 120000, settings, 'studioRequestTimeoutMs'),
     pluginsDir: (() => {
       const raw = envStr('WIGOLO_PLUGINS_DIR', null, settings, 'pluginsDir');
       if (raw) {
