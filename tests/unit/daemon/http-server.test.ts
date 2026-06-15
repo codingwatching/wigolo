@@ -353,3 +353,160 @@ describe('DaemonHttpServer', () => {
     }
   });
 });
+
+describe('DaemonHttpServer auth + request timeout', () => {
+  beforeEach(() => {
+    resetConfig();
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    resetConfig();
+  });
+
+  const AUTH = { token: 'secret-token-xyz', host: '127.0.0.1', port: 0 };
+  const mcpBody = () =>
+    JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1, params: {} });
+
+  it('rejects POST /mcp with no bearer when auth is enabled (401)', async () => {
+    const { DaemonHttpServer } = await import('../../../src/daemon/http-server.js');
+    const daemon = new DaemonHttpServer({ port: 0, host: '127.0.0.1', auth: AUTH });
+    try {
+      const url = await daemon.start();
+      const resp = await fetch(`${url}/mcp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: mcpBody(),
+      });
+      expect(resp.status).toBe(401);
+    } finally {
+      await daemon.stop();
+    }
+  });
+
+  it('rejects POST /mcp with a wrong bearer (401)', async () => {
+    const { DaemonHttpServer } = await import('../../../src/daemon/http-server.js');
+    const daemon = new DaemonHttpServer({ port: 0, host: '127.0.0.1', auth: AUTH });
+    try {
+      const url = await daemon.start();
+      const resp = await fetch(`${url}/mcp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer nope' },
+        body: mcpBody(),
+      });
+      expect(resp.status).toBe(401);
+    } finally {
+      await daemon.stop();
+    }
+  });
+
+  it('rejects a cross-origin POST /mcp even with a valid bearer (403)', async () => {
+    const { DaemonHttpServer } = await import('../../../src/daemon/http-server.js');
+    const daemon = new DaemonHttpServer({ port: 0, host: '127.0.0.1', auth: AUTH });
+    try {
+      const url = await daemon.start();
+      const resp = await fetch(`${url}/mcp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${AUTH.token}`,
+          Origin: 'http://evil.com',
+        },
+        body: mcpBody(),
+      });
+      expect(resp.status).toBe(403);
+    } finally {
+      await daemon.stop();
+    }
+  });
+
+  it('leaves GET /health open when auth is enabled (200)', async () => {
+    const { DaemonHttpServer } = await import('../../../src/daemon/http-server.js');
+    const daemon = new DaemonHttpServer({ port: 0, host: '127.0.0.1', auth: AUTH });
+    try {
+      const url = await daemon.start();
+      const resp = await fetch(`${url}/health`);
+      expect(resp.status).toBe(200);
+    } finally {
+      await daemon.stop();
+    }
+  });
+
+  it('accepts POST /mcp with the correct bearer (not auth-rejected)', async () => {
+    const { DaemonHttpServer } = await import('../../../src/daemon/http-server.js');
+    const daemon = new DaemonHttpServer({ port: 0, host: '127.0.0.1', auth: AUTH });
+    try {
+      const url = await daemon.start();
+      const resp = await fetch(`${url}/mcp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH.token}` },
+        body: mcpBody(),
+      });
+      expect(resp.status).not.toBe(401);
+      expect(resp.status).not.toBe(403);
+    } finally {
+      await daemon.stop();
+    }
+  });
+
+  it('does not require auth when the auth option is unset (back-compat)', async () => {
+    const { DaemonHttpServer } = await import('../../../src/daemon/http-server.js');
+    const daemon = new DaemonHttpServer({ port: 0, host: '127.0.0.1' });
+    try {
+      const url = await daemon.start();
+      const resp = await fetch(`${url}/mcp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: mcpBody(),
+      });
+      expect(resp.status).not.toBe(401);
+    } finally {
+      await daemon.stop();
+    }
+  });
+
+  it('returns 504 when a request exceeds requestTimeoutMs', async () => {
+    const { DaemonHttpServer } = await import('../../../src/daemon/http-server.js');
+    const http = await import('node:http');
+    const daemon = new DaemonHttpServer({ port: 0, host: '127.0.0.1', requestTimeoutMs: 1 });
+    try {
+      const url = await daemon.start();
+      const parsed = new URL(`${url}/mcp`);
+      // Declare a body but send only part of it and never end the request, so the
+      // server's body read hangs and the request-timeout fires deterministically
+      // (no race with a fast handler path).
+      const status = await new Promise<number>((resolve, reject) => {
+        const req = http.request(
+          {
+            hostname: parsed.hostname,
+            port: parsed.port,
+            path: parsed.pathname,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': '64' },
+          },
+          (res) => {
+            resolve(res.statusCode ?? 0);
+            res.resume();
+          },
+        );
+        req.on('error', reject);
+        req.write('{');
+        setTimeout(() => reject(new Error('no response within 3s')), 3000);
+      });
+      expect(status).toBe(504);
+    } finally {
+      await daemon.stop();
+    }
+  });
+
+  it('does not time out GET /health (health is exempt)', async () => {
+    const { DaemonHttpServer } = await import('../../../src/daemon/http-server.js');
+    const daemon = new DaemonHttpServer({ port: 0, host: '127.0.0.1', requestTimeoutMs: 1 });
+    try {
+      const url = await daemon.start();
+      const resp = await fetch(`${url}/health`);
+      expect(resp.status).toBe(200);
+    } finally {
+      await daemon.stop();
+    }
+  });
+});
