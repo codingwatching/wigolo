@@ -61,7 +61,9 @@ function makeCrashableHostLauncher() {
     const cdp = { sends, send: async (method: string) => { sends.push({ method }); return {}; }, on: () => {}, off: () => {} };
     const page = {
       close: async () => {},
-      goto: async () => null,
+      // Record the navigation on the SAME cdp send-log so ordering vs Fetch.enable
+      // is assertable (Finding A: the interceptor must rebind before the recovery goto).
+      goto: async () => { sends.push({ method: 'goto' }); return null; },
       on: (e: string, cb: () => void) => { if (e === 'crash') state.crashCb = cb; },
     };
     const browser = { close: async () => {}, on: () => {} };
@@ -160,6 +162,27 @@ describe('cli/studio startStudioHost', () => {
     broadcastSpy.mockClear();
     await host.navigate('https://example.com/'); // public → allowed, no error
     expect(broadcastSpy).not.toHaveBeenCalled();
+    await host.navInterceptor.stop();
+    await host.bridge.stop();
+    await host.daemon.stop();
+  });
+
+  it('rebinds the nav interceptor BEFORE the recovery goto on the fresh cdp (Finding A)', async () => {
+    const launcher = makeCrashableHostLauncher();
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: launcher.launch });
+    await host.navigate('https://example.com/'); // sets currentUrl so the recovery re-nav fires
+
+    await launcher.fireCrash();
+    await flush();
+
+    expect(launcher.state.cdps.length).toBe(2); // relaunched
+    const fresh = launcher.state.cdps[1].sends.map((s) => s.method);
+    const enableIdx = fresh.indexOf('Fetch.enable');
+    const gotoIdx = fresh.indexOf('goto');
+    expect(enableIdx).toBeGreaterThanOrEqual(0); // interceptor rebound on the fresh cdp
+    expect(gotoIdx).toBeGreaterThanOrEqual(0); // recovery re-nav happened on the fresh cdp
+    expect(enableIdx).toBeLessThan(gotoIdx); // …and the guard was live BEFORE the navigation
+
     await host.navInterceptor.stop();
     await host.bridge.stop();
     await host.daemon.stop();

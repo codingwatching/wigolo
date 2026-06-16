@@ -151,6 +151,53 @@ describe('SessionBrowser — crash recovery', () => {
     expect(sb.running).toBe(true);
   });
 
+  it('fires onBeforeReNav on the FRESH cdp BEFORE the recovery goto (Finding A)', async () => {
+    // Finding A: the nav interceptor rebinds via onBeforeReNav so it is live on the
+    // fresh CDP BEFORE the recovery re-navigation — otherwise a redirect hop during
+    // recovery is unguarded on the agent path.
+    const fake = makeCrashableFake();
+    const sb = new SessionBrowser({ sessionId: 's1', launch: fake.launch, maxRestarts: 2 });
+    let hookCalls = 0;
+    let hookCdp: unknown = null;
+    let gotosWhenHookRan = -1;
+    sb.onBeforeReNav(async (cdp) => {
+      hookCalls++;
+      hookCdp = cdp;
+      gotosWhenHookRan = fake.calls.gotos.length; // the recovery goto must NOT have run yet
+    });
+    await sb.start();
+    await sb.navigate('https://ex.com/');
+    const firstCdp = sb.cdp;
+    expect(hookCalls).toBe(0); // not fired on initial start/navigate — only on recovery re-nav
+
+    await fake.fireCrash();
+
+    expect(hookCalls).toBe(1);
+    expect(gotosWhenHookRan).toBe(1); // only the original navigate; recovery goto comes AFTER the hook
+    expect(fake.calls.gotos).toEqual(['https://ex.com/', 'https://ex.com/']); // recovery goto did run
+    expect(hookCdp).toBe(sb.cdp); // hook received the fresh post-relaunch cdp
+    expect(hookCdp).not.toBe(firstCdp); // not the dead one
+  });
+
+  it('fails recovery CLOSED when an onBeforeReNav hook throws (no unguarded re-nav)', async () => {
+    // A pre-nav guard that cannot arm (e.g. the nav interceptor's Fetch.enable
+    // rejects on the fresh cdp) must NOT let recovery proceed into an unguarded
+    // re-navigation — the session goes terminal instead (fail-closed).
+    const fake = makeCrashableFake();
+    const sb = new SessionBrowser({ sessionId: 's1', launch: fake.launch, maxRestarts: 3 });
+    sb.onBeforeReNav(async () => { throw new Error('rebind failed'); });
+    let failed = 0;
+    sb.onFailed(() => { failed++; });
+    await sb.start();
+    await sb.navigate('https://ex.com/');
+
+    await fake.fireCrash();
+
+    expect(fake.calls.gotos).toEqual(['https://ex.com/']); // recovery goto did NOT run
+    expect(failed).toBe(1); // session went terminal
+    expect(sb.running).toBe(false);
+  });
+
   it('gives up after maxRestarts crashes: emits failed and goes terminal (no hang, no infinite relaunch)', async () => {
     const fake = makeCrashableFake();
     const sb = new SessionBrowser({ sessionId: 's1', launch: fake.launch, maxRestarts: 1 });
