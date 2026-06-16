@@ -6,6 +6,8 @@ import { checkBindHost } from '../studio/bind.js';
 import { resolveHostToken } from '../studio/auth.js';
 import { SessionRegistry } from '../studio/registry.js';
 import type { Session } from '../studio/session.js';
+import { SessionBrowser, type SessionBrowserLauncher } from '../studio/session-browser.js';
+import { StudioWsHub } from '../studio/ws-hub.js';
 import { writeHandle, removeHandle, studioHandlePath, type SessionHandle } from '../studio/handle.js';
 import { closeDaemonBrowser } from '../fetch/playwright-tier.js';
 
@@ -48,12 +50,16 @@ export interface StudioHostOptions extends StudioArgs {
   dataDir?: string;
   /** Inject a registry (tests). Defaults to a fresh in-memory registry. */
   registry?: SessionRegistry;
+  /** Inject the session-browser launcher (tests). Defaults to the real Playwright launcher. */
+  browserLauncher?: SessionBrowserLauncher;
 }
 
 export interface StudioHost {
   daemon: DaemonHttpServer;
   registry: SessionRegistry;
   session: Session;
+  sessionBrowser: SessionBrowser;
+  hub: StudioWsHub;
   handle: SessionHandle;
   endpoint: string;
 }
@@ -75,11 +81,15 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
     log('using a freshly minted per-launch token (written to the session handle for the local agent)');
   }
 
+  // The WS hub fans frames/input over the host's WebSocket; the daemon authorizes
+  // each upgrade (Origin/Host + subprotocol bearer) before handing it here.
+  const hub = new StudioWsHub();
   const daemon = new DaemonHttpServer({
     port: opts.port,
     host: opts.host,
     auth: { token, host: opts.host },
     requestTimeoutMs: getConfig().studioRequestTimeoutMs,
+    onUpgrade: (req, socket, head) => hub.handleUpgrade(req, socket, head),
   });
 
   // Warm the embedding model BEFORE the host accepts connections.
@@ -93,10 +103,16 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
 
   const registry = opts.registry ?? new SessionRegistry();
   const session = registry.create({ endpoint, token });
+
+  // Bring up the session's dedicated headed browser before publishing the handle,
+  // so the session is fully live (streamable) by the time a client can discover it.
+  const sessionBrowser = new SessionBrowser({ sessionId: session.id, launch: opts.browserLauncher });
+  await sessionBrowser.start();
+
   const handle: SessionHandle = { id: session.id, endpoint, token, pid: process.pid };
   writeHandle(handle, opts.dataDir);
 
-  return { daemon, registry, session, handle, endpoint };
+  return { daemon, registry, session, sessionBrowser, hub, handle, endpoint };
 }
 
 export function runStudio(args: string[]): void {
@@ -112,6 +128,10 @@ export function runStudio(args: string[]): void {
       const shutdown = async () => {
         log('Shutting down studio host…');
         removeHandle();
+        host.hub.closeAll();
+        await host.sessionBrowser.close().catch((e) =>
+          logger.debug('session browser close failed', { error: e instanceof Error ? e.message : String(e) }),
+        );
         host.registry.closeAll();
         try {
           await host.daemon.stop();
