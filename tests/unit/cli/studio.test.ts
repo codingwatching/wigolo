@@ -48,6 +48,32 @@ const fakeBrowserLauncher = async (): Promise<LaunchedSessionBrowser> =>
     cdp: { send: async () => ({}), on: () => {}, off: () => {} },
   }) as unknown as LaunchedSessionBrowser;
 
+// A launcher whose page can be crashed and which hands out a fresh, send-recording
+// cdp per (re)launch — so the HOST wiring (onRecovered→bridge.restart(fresh cdp),
+// onFailed→session_failed) is testable at the startStudioHost boundary.
+function makeCrashableHostLauncher() {
+  const state = {
+    cdps: [] as Array<{ sends: Array<{ method: string }> }>,
+    crashCb: null as null | (() => void | Promise<void>),
+  };
+  const launch = async (): Promise<LaunchedSessionBrowser> => {
+    const sends: Array<{ method: string }> = [];
+    const cdp = { sends, send: async (method: string) => { sends.push({ method }); return {}; }, on: () => {}, off: () => {} };
+    const page = {
+      close: async () => {},
+      goto: async () => null,
+      on: (e: string, cb: () => void) => { if (e === 'crash') state.crashCb = cb; },
+    };
+    const browser = { close: async () => {}, on: () => {} };
+    const context = { close: async () => {} };
+    state.cdps.push(cdp);
+    return { browser, context, page, cdp } as unknown as LaunchedSessionBrowser;
+  };
+  return { launch, state, fireCrash: async () => { if (state.crashCb) await state.crashCb(); } };
+}
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
 describe('cli/studio parseStudioArgs', () => {
   beforeEach(() => resetConfig());
   afterEach(() => resetConfig());
@@ -113,6 +139,29 @@ describe('cli/studio startStudioHost', () => {
     expect(host.bridge).toBeDefined(); // screencast bridge constructed + started
     await host.bridge.stop();
     await host.sessionBrowser.close();
+    await host.daemon.stop();
+  });
+
+  it('wires crash recovery: rebinds the screencast to the fresh cdp, and notifies clients on exhaustion', async () => {
+    process.env.WIGOLO_STUDIO_BROWSER_CRASH_MAX_RESTARTS = '1';
+    resetConfig();
+    const launcher = makeCrashableHostLauncher();
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: launcher.launch });
+    delete process.env.WIGOLO_STUDIO_BROWSER_CRASH_MAX_RESTARTS; // already baked into the SessionBrowser
+    const broadcastSpy = vi.spyOn(host.hub, 'broadcast');
+
+    // crash 1 → recover → bridge.restart(fresh cdp): the NEW session gets a startScreencast
+    await launcher.fireCrash();
+    await flush();
+    expect(launcher.state.cdps.length).toBe(2); // relaunched
+    expect(launcher.state.cdps[1].sends.some((s) => s.method === 'Page.startScreencast')).toBe(true);
+
+    // crash 2 → exceeds maxRestarts(1) → onFailed → clients told the session died (not silent)
+    await launcher.fireCrash();
+    await flush();
+    expect(broadcastSpy).toHaveBeenCalledWith(host.session.id, { t: 'error', reason: 'session_failed' });
+
+    await host.bridge.stop();
     await host.daemon.stop();
   });
 });

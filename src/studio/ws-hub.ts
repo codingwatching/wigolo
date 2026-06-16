@@ -27,6 +27,10 @@ const DEFAULT_HEARTBEAT_MS = 30_000;
 // BOTH `wigolo.stream` (negotiated + echoed in the 101 response) and
 // `wigolo.bearer.<token>` (read by the daemon for auth, never echoed back).
 const STREAM_SUBPROTOCOL = 'wigolo.stream';
+// Inbound client→host messages are tiny ({t:'ack'}, and Phase-1c input/control).
+// Cap the frame size so an authenticated client can't force a 100 MiB allocation
+// (ws's default maxPayload) per message.
+const MAX_INBOUND_MESSAGE_BYTES = 64 * 1024;
 // Per-client send-buffer ceiling. Phase 1's screencast is single-viewer + lock-step
 // (one frame in flight, advance on ack/timeout — see ScreencastBridge), so the
 // primary viewer's buffer is bounded by design; this guard makes any EXTRA client
@@ -54,6 +58,7 @@ export class StudioWsHub {
   // subprotocol negotiates none (browsers accept that).
   private readonly wss = new WebSocketServer({
     noServer: true,
+    maxPayload: MAX_INBOUND_MESSAGE_BYTES,
     handleProtocols: (protocols) => (protocols.has(STREAM_SUBPROTOCOL) ? STREAM_SUBPROTOCOL : false),
   });
   private readonly clients = new Map<string, Set<WebSocket>>();

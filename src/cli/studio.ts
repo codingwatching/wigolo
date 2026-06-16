@@ -134,7 +134,9 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   });
   // On a browser-crash recovery, rebind the screencast to the FRESH cdp (state reset).
   sessionBrowser.onRecovered(() => {
-    void bridge!.restart(sessionBrowser.cdp);
+    void bridge!.restart(sessionBrowser.cdp).catch((e) =>
+      logger.debug('screencast restart after recovery failed', { error: e instanceof Error ? e.message : String(e) }),
+    );
   });
   // If bounded recovery is exhausted, tell connected clients the session died
   // instead of silently going dark.

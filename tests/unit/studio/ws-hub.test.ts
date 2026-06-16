@@ -265,4 +265,13 @@ describe('StudioWsHub — frame fan-out + ack routing (1b.3)', () => {
     expect(h.hub.clientCount('f4')).toBe(1); // still connected
     ws.close();
   });
+
+  it('closes a client that exceeds the inbound message-size cap (no 100MiB allocation)', async () => {
+    const h = await startHub();
+    const ws = new WebSocket(h.url('/studio/big/stream'));
+    await nextMessage(ws);
+    const closed = new Promise<number>((resolve) => ws.on('close', (code) => resolve(code)));
+    ws.send('x'.repeat(70 * 1024)); // > 64 KiB cap → server rejects
+    expect(await closed).toBe(1009); // 1009 = message too big
+  });
 });
