@@ -96,3 +96,34 @@ describe('ScreencastBridge', () => {
     expect(frames).toEqual([]);
   });
 });
+
+describe('ScreencastBridge — restart / rebind after crash recovery', () => {
+  it('restart(newCdp) rebinds to the fresh session and stops listening on the dead one', async () => {
+    const dead = makeFakeCdp();
+    const fresh = makeFakeCdp();
+    const frames: ScreencastFrame[] = [];
+    const bridge = new ScreencastBridge({ cdp: dead.cdp, sink: (fr) => frames.push(fr), ...OPTS });
+    await bridge.start();
+    await bridge.restart(fresh.cdp);
+    expect(dead.frameListeners()).toBe(0); // detached from the dead session
+    expect(fresh.frameListeners()).toBe(1); // attached to the fresh one
+    expect(fresh.sends.some((s) => s.method === 'Page.startScreencast')).toBe(true);
+    dead.emitFrame('STALE', 1); // a frame from the dead session is ignored
+    fresh.emitFrame('NEW', 2);
+    expect(frames.map((x) => x.data)).toEqual(['NEW']);
+  });
+
+  it('restart resets ack/frame state so stale in-flight acks from the dead session do not carry over', async () => {
+    const dead = makeFakeCdp();
+    const fresh = makeFakeCdp();
+    const frames: ScreencastFrame[] = [];
+    const bridge = new ScreencastBridge({ cdp: dead.cdp, sink: (fr) => frames.push(fr), ...OPTS });
+    await bridge.start();
+    dead.emitFrame('A', 1); // forwarded → pending on the dead session
+    dead.emitFrame('B', 2); // held
+    expect(frames.map((x) => x.data)).toEqual(['A']);
+    await bridge.restart(fresh.cdp); // must reset pending=false, drop the stale held
+    fresh.emitFrame('C', 9); // forwards immediately — not blocked by the dead session's pending
+    expect(frames.map((x) => x.data)).toEqual(['A', 'C']);
+  });
+});

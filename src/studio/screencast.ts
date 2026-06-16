@@ -55,7 +55,7 @@ export interface ScreencastBridgeOptions {
 }
 
 export class ScreencastBridge {
-  private readonly cdp: ScreencastCdp;
+  private cdp: ScreencastCdp; // reassigned on restart() after a crash recovery
   private readonly sink: (frame: ScreencastFrame) => void;
   private readonly quality: number;
   private readonly maxWidth: number;
@@ -109,6 +109,22 @@ export class ScreencastBridge {
     await this.cdp.send('Page.stopScreencast').catch((err) =>
       log.debug('stopScreencast failed', { error: err instanceof Error ? err.message : String(err) }),
     );
+  }
+
+  /**
+   * Rebind to a fresh CDP session after a browser-crash recovery (wired to
+   * SessionBrowser.onRecovered). Detaches the dead session and RESETS all
+   * ack/frame state — a frame/ack in flight against the old session is
+   * meaningless against the new one, so it must not carry over.
+   */
+  async restart(newCdp?: ScreencastCdp): Promise<void> {
+    this.cdp.off('Page.screencastFrame', this.onFrame);
+    this.clearAckTimer();
+    this.pending = false;
+    this.held = null;
+    if (newCdp) this.cdp = newCdp;
+    this.started = false;
+    await this.start();
   }
 
   private onFrame = (ev: ScreencastFrameEvent): void => {
