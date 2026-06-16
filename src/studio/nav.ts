@@ -118,6 +118,13 @@ export async function navigateSession(
   if (!verdict.ok) {
     return { ok: false, reason: verdict.code === 'blocked' ? 'navigation_blocked' : `navigation_${verdict.code}` };
   }
-  await browser.navigate(url);
-  return { ok: true };
+  try {
+    await browser.navigate(url);
+    return { ok: true };
+  } catch (err) {
+    // The goto can reject because a redirect HOP was blocked by the interceptor
+    // (or any nav failure) — surface it cleanly rather than throwing into the host.
+    log.debug('navigation failed', { url, error: err instanceof Error ? err.message : String(err) });
+    return { ok: false, reason: 'navigation_failed' };
+  }
 }

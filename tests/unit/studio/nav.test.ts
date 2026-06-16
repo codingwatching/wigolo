@@ -120,4 +120,10 @@ describe('navigateSession', () => {
     expect((await navigateSession(b.browser, 'http://localhost:3000/', { source: 'human' })).ok).toBe(true);
     expect((await navigateSession(b.browser, 'http://localhost:3000/', { source: 'agent' })).ok).toBe(false);
   });
+
+  it('returns ok:false (does not throw) when navigation fails — e.g. a redirect hop was blocked', async () => {
+    const browser = { navigate: async () => { throw new Error('net::ERR_FAILED'); } };
+    const r = await navigateSession(browser, 'https://example.com/', { source: 'human' });
+    expect(r.ok).toBe(false);
+  });
 });
