@@ -179,6 +179,25 @@ describe('SessionBrowser — crash recovery', () => {
     expect(hookCdp).not.toBe(firstCdp); // not the dead one
   });
 
+  it('fails recovery CLOSED when an onBeforeReNav hook throws (no unguarded re-nav)', async () => {
+    // A pre-nav guard that cannot arm (e.g. the nav interceptor's Fetch.enable
+    // rejects on the fresh cdp) must NOT let recovery proceed into an unguarded
+    // re-navigation — the session goes terminal instead (fail-closed).
+    const fake = makeCrashableFake();
+    const sb = new SessionBrowser({ sessionId: 's1', launch: fake.launch, maxRestarts: 3 });
+    sb.onBeforeReNav(async () => { throw new Error('rebind failed'); });
+    let failed = 0;
+    sb.onFailed(() => { failed++; });
+    await sb.start();
+    await sb.navigate('https://ex.com/');
+
+    await fake.fireCrash();
+
+    expect(fake.calls.gotos).toEqual(['https://ex.com/']); // recovery goto did NOT run
+    expect(failed).toBe(1); // session went terminal
+    expect(sb.running).toBe(false);
+  });
+
   it('gives up after maxRestarts crashes: emits failed and goes terminal (no hang, no infinite relaunch)', async () => {
     const fake = makeCrashableFake();
     const sb = new SessionBrowser({ sessionId: 's1', launch: fake.launch, maxRestarts: 1 });

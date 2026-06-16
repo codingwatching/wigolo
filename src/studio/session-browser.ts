@@ -195,9 +195,17 @@ export class SessionBrowser {
       // guard that re-validates redirect hops (the nav interceptor) is live before
       // the goto — otherwise a recovery hop is unguarded on the agent path (Finding A).
       // Awaited: a fire-and-forget rebind could race the goto and re-open the gap.
+      // REQUIRED, not best-effort: if a pre-nav guard cannot arm, fail the recovery
+      // CLOSED (rethrow → the catch below calls fail()) rather than proceed into an
+      // unguarded re-navigation. (onRecovered hooks, by contrast, are post-nav and
+      // best-effort.)
       for (const cb of this.beforeReNavHandlers) {
-        await cb(this.launched.cdp).catch((err) =>
-          log.warn('beforeReNav hook failed', { sessionId: this.sessionId, error: String(err) }));
+        try {
+          await cb(this.launched.cdp);
+        } catch (err) {
+          log.error('beforeReNav hook failed — failing recovery closed', { sessionId: this.sessionId, error: String(err) });
+          throw err;
+        }
       }
       if (this._currentUrl) {
         await this.launched.page

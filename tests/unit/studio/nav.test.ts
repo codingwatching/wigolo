@@ -81,6 +81,22 @@ describe('NavInterceptor', () => {
     expect(f.sends.some((s) => s.method === 'Fetch.failRequest' && s.params.requestId === 'x')).toBe(true);
   });
 
+  it('start() fails CLOSED if Fetch.enable rejects: detaches the listener and rethrows (no half-armed interceptor)', async () => {
+    // A half-armed interceptor (listener attached but Fetch domain NOT enabled →
+    // Chromium emits no requestPaused events) would silently pass navigations
+    // unguarded. start() must leave a clean unbound state and propagate the error
+    // so the caller (e.g. crash recovery) can fail closed.
+    const f = makeFakeCdp();
+    const orig = f.cdp.send;
+    f.cdp.send = async (m: string, p?: Record<string, unknown>) => {
+      if (m === 'Fetch.enable') throw new Error('cdp gone');
+      return orig(m, p);
+    };
+    const iv = new NavInterceptor({ source: 'agent', allowPrivate: false });
+    await expect(iv.start(f.cdp)).rejects.toThrow('cdp gone');
+    expect(f.listenerCount()).toBe(0); // detached — not silently half-armed
+  });
+
   it('rebind() moves interception to a fresh cdp and stops listening on the dead one (crash recovery)', async () => {
     const dead = makeFakeCdp();
     const fresh = makeFakeCdp();

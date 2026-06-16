@@ -58,7 +58,17 @@ export class NavInterceptor {
   async start(cdp: NavCdp): Promise<void> {
     this.cdp = cdp;
     cdp.on('Fetch.requestPaused', this.onPaused);
-    await cdp.send('Fetch.enable', { patterns: [DOCUMENT_PATTERN] });
+    try {
+      await cdp.send('Fetch.enable', { patterns: [DOCUMENT_PATTERN] });
+    } catch (err) {
+      // FAIL-CLOSED: a half-armed interceptor (listener attached but the Fetch
+      // domain NOT enabled → Chromium emits no requestPaused events) would silently
+      // pass every navigation unguarded. Leave a clean unbound state and propagate
+      // so the caller (boot or crash recovery) fails closed rather than open.
+      cdp.off('Fetch.requestPaused', this.onPaused);
+      this.cdp = null;
+      throw err;
+    }
   }
 
   /** Move interception to a fresh CDP session after a crash recovery. */
