@@ -71,19 +71,23 @@ function attrsToObj(a: string[] = []): Record<string, string> {
   return o;
 }
 
+/** Defense-in-depth: bound the recursion so a malformed/hostile tree can't overflow the host. An honest DOM.getDocument tree is a shallow spanning tree, far below this. */
+const MAX_DOM_DEPTH = 2000;
+
 /** Flatten DOM.getDocument(pierce:true) into backendNodeId → DomInfo, crossing shadow roots + same-target frames. */
 function flattenDom(root: DomNode | undefined): Map<number, DomInfo> {
   const map = new Map<number, DomInfo>();
   if (!root) return map;
-  const walk = (node: DomNode, parent: number | null, index: number): void => {
+  const walk = (node: DomNode, parent: number | null, index: number, depth: number): void => {
+    if (depth > MAX_DOM_DEPTH) return; // bounded — never recurse unboundedly on attacker-influenced nesting
     const be = node.backendNodeId;
     if (be != null) map.set(be, { localName: node.localName || node.nodeName || '#', attrs: attrsToObj(node.attributes), parent, index });
     let i = 0;
-    for (const c of node.children ?? []) walk(c, be ?? parent, i++);
-    for (const sr of node.shadowRoots ?? []) walk(sr, be ?? parent, i++); // open AND closed — CDP is privileged
-    if (node.contentDocument) walk(node.contentDocument, be ?? parent, i++);
+    for (const c of node.children ?? []) walk(c, be ?? parent, i++, depth + 1);
+    for (const sr of node.shadowRoots ?? []) walk(sr, be ?? parent, i++, depth + 1); // open AND closed — CDP is privileged
+    if (node.contentDocument) walk(node.contentDocument, be ?? parent, i++, depth + 1);
   };
-  walk(root, null, 0);
+  walk(root, null, 0, 0);
   return map;
 }
 

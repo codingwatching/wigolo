@@ -81,6 +81,15 @@ describe('buildSnapshot — pure AX ⋈ DOM join', () => {
     expect(s.elements.every((e) => e.confidence === undefined)).toBe(true); // distinct fp → high confidence
   });
 
+  it('is bounded on pathological nesting — a hostile deep tree terminates instead of overflowing the host', () => {
+    // Build a chain far deeper than any honest DOM (and past the recursion cap).
+    let node = { backendNodeId: 5000, localName: 'button', attributes: [] };
+    let root = node;
+    for (let d = 0; d < 2100; d++) root = { backendNodeId: 4000 - d, localName: 'div', children: [root] };
+    const ax = [{ ignored: false, role: { value: 'button' }, name: { value: 'Deep' }, backendDOMNodeId: 5000 }];
+    expect(() => buildSnapshot(ax, root, { tokenBudget: 100000 })).not.toThrow(); // bounded, no stack overflow
+  });
+
   it('measures token size and flags over-budget; refMap carries backendNodeId host-side only', () => {
     const s = snap([{ be: 10, role: 'button', name: 'Open' }], { tokenBudget: 100000 });
     expect(s.tokenCount).toBeGreaterThan(0);
