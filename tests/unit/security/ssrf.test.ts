@@ -81,6 +81,18 @@ describe('classifyHost — 6to4 (2002::/16) embedded IPv4 (Finding B)', () => {
     expect(new URL('http://[2002:0808:0808::]/').hostname).toBe('[2002:808:808::]');
     expect(classifyHost('[2002:808:808::]')).toBe('public');
   });
+  it('decodes x.y.0.0 embeddings where the low hextet compresses away (regression: trailing-zero bypass)', () => {
+    // 2002:7f00:0:: normalizes to [2002:7f00::] — one hextet — and must still decode.
+    expect(classifyHost('[2002:7f00::]')).toBe('loopback'); // 127.0.0.0
+    expect(classifyHost('[2002:a00::]')).toBe('private'); // 10.0.0.0
+    expect(classifyHost('[2002:c0a8::]')).toBe('private'); // 192.168.0.0
+    expect(classifyHost('[2002:a9fe::]')).toBe('link_local'); // 169.254.0.0 (metadata range)
+    expect(classifyHost('[2002:808::]')).toBe('public'); // 8.8.0.0 — still public, no over-block
+  });
+  it('decodes a 172.16/12 embedding and is case-insensitive', () => {
+    expect(classifyHost('[2002:ac10:1::]')).toBe('private'); // 172.16.0.1
+    expect(classifyHost('[2002:AC10:1::]')).toBe('private'); // uppercase hex normalizes
+  });
 });
 
 describe('classifyHost — NAT64 (64:ff9b::/96) embedded IPv4 (Finding B)', () => {
@@ -95,6 +107,10 @@ describe('classifyHost — NAT64 (64:ff9b::/96) embedded IPv4 (Finding B)', () =
   });
   it('decodes a trailing dotted-quad NAT64 form too (non-normalized caller defense)', () => {
     expect(classifyHost('[64:ff9b::169.254.169.254]')).toBe('link_local');
+  });
+  it('decodes a 172.16/12 embedding and an x.y.0.0 (trailing-zero) embedding', () => {
+    expect(classifyHost('[64:ff9b::ac10:1]')).toBe('private'); // 172.16.0.1
+    expect(classifyHost('[64:ff9b::7f00:0]')).toBe('loopback'); // 127.0.0.0 (NAT64 keeps the trailing :0)
   });
 });
 

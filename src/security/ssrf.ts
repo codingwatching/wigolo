@@ -77,10 +77,12 @@ function categorizeIpv6(host: string): HostCategory | null {
   // 6to4 (2002::/16): the gateway IPv4 is embedded in the two hextets right after
   // `2002:` (e.g. 2002:7f00:1:: -> 7f00:0001 -> 127.0.0.1). ALL of 2002::/16 is
   // 6to4, so any 2002:-prefixed address decodes; a private/metadata embedding on a
-  // host with 6to4 routing reaches the embedded v4, so block it.
-  const sixToFour = h.match(/^2002:([0-9a-f]{1,4}):([0-9a-f]{1,4})/);
+  // host with 6to4 routing reaches the embedded v4, so block it. The low hextet is
+  // OPTIONAL: when the embedded v4 is x.y.0.0 the trailing zero compresses away
+  // (2002:7f00:0:: normalizes to [2002:7f00::]), so default a missing low hextet to 0.
+  const sixToFour = h.match(/^2002:([0-9a-f]{1,4})(?::([0-9a-f]{1,4}))?/);
   if (sixToFour) {
-    const cat = categorizeIpv4(hexPairToDotted(sixToFour[1], sixToFour[2]));
+    const cat = categorizeIpv4(hexPairToDotted(sixToFour[1], sixToFour[2] ?? '0'));
     if (cat) return cat;
   }
 

@@ -226,6 +226,12 @@ describe('guardUrl SSRF', () => {
       expect(guardUrl('http://[2002:808:808::]/', 'url').ok).toBe(true);
       expect(guardUrl('http://[64:ff9b::808:808]/', 'url').ok).toBe(true);
     });
+
+    it('rejects 6to4 x.y.0.0 metadata-range embedding [2002:a9fe::] (169.254.0.0) — Finding B regression', () => {
+      // The low hextet compresses away here; the metadata RANGE must still be blocked.
+      const r = guardUrl('http://[2002:a9fe::]/', 'url');
+      expect(r.ok).toBe(false);
+    });
   });
 
   describe('rejects malformed inputs', () => {
