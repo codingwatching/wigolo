@@ -81,9 +81,16 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
     log('using a freshly minted per-launch token (written to the session handle for the local agent)');
   }
 
+  const registry = opts.registry ?? new SessionRegistry();
   // The WS hub fans frames/input over the host's WebSocket; the daemon authorizes
-  // each upgrade (Origin/Host + subprotocol bearer) before handing it here.
-  const hub = new StudioWsHub();
+  // each upgrade (Origin/Host + subprotocol bearer) before handing it here. WS
+  // clients are session viewers, so onAttach/onDetach keep the Session's client
+  // count accurate (it backs idle-eviction) for connect AND every disconnect —
+  // graceful close, error, or heartbeat reap of a half-open client.
+  const hub = new StudioWsHub({
+    onAttach: (id) => registry.get(id)?.attach(),
+    onDetach: (id) => registry.get(id)?.detach(),
+  });
   const daemon = new DaemonHttpServer({
     port: opts.port,
     host: opts.host,
@@ -101,7 +108,6 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
 
   const endpoint = await daemon.start();
 
-  const registry = opts.registry ?? new SessionRegistry();
   const session = registry.create({ endpoint, token });
 
   // Bring up the session's dedicated headed browser before publishing the handle,
