@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import WebSocket, { WebSocketServer } from 'ws';
+import type { IncomingMessage } from 'node:http';
+import type { Duplex } from 'node:stream';
 import { resetConfig } from '../../../src/config.js';
 
 vi.mock('../../../src/cache/db.js', () => ({
@@ -529,6 +532,94 @@ describe('DaemonHttpServer auth + request timeout', () => {
         body: mcpBody(),
       });
       expect(resp.status).toBe(401);
+    } finally {
+      await daemon.stop();
+    }
+  });
+});
+
+describe('DaemonHttpServer websocket upgrade seam', () => {
+  beforeEach(() => { resetConfig(); vi.clearAllMocks(); });
+  afterEach(() => { resetConfig(); });
+
+  const AUTH = { token: 'ws-secret-token-1234567890', host: '127.0.0.1', port: 0 };
+
+  async function startWithUpgrade(opts: Record<string, unknown>) {
+    const { DaemonHttpServer } = await import('../../../src/daemon/http-server.js');
+    const wss = new WebSocketServer({ noServer: true });
+    const onUpgrade = vi.fn((req: IncomingMessage, socket: Duplex, head: Buffer) => {
+      wss.handleUpgrade(req, socket, head, (ws) => { ws.send('hello'); });
+    });
+    const daemon = new DaemonHttpServer({ port: 0, host: '127.0.0.1', ...opts, onUpgrade });
+    const url = await daemon.start();
+    return { daemon, wss, onUpgrade, wsUrl: url.replace('http://', 'ws://') };
+  }
+
+  function connect(url: string, protocols: string[], options?: { origin?: string }): Promise<WebSocket> {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(url, protocols, options);
+      ws.on('open', () => resolve(ws));
+      ws.on('error', reject);
+    });
+  }
+
+  it('invokes onUpgrade for an authenticated upgrade with a valid subprotocol bearer', async () => {
+    const { daemon, wss, onUpgrade, wsUrl } = await startWithUpgrade({ auth: AUTH });
+    try {
+      const ws = await connect(`${wsUrl}/studio/x/stream`, [`wigolo.bearer.${AUTH.token}`]);
+      expect(onUpgrade).toHaveBeenCalledTimes(1);
+      ws.close();
+    } finally {
+      wss.close();
+      await daemon.stop();
+    }
+  });
+
+  it('rejects an upgrade with a wrong subprotocol bearer (socket destroyed, onUpgrade not called)', async () => {
+    const { daemon, wss, onUpgrade, wsUrl } = await startWithUpgrade({ auth: AUTH });
+    try {
+      await expect(connect(`${wsUrl}/studio/x/stream`, ['wigolo.bearer.wrong'])).rejects.toBeDefined();
+      expect(onUpgrade).not.toHaveBeenCalled();
+    } finally {
+      wss.close();
+      await daemon.stop();
+    }
+  });
+
+  it('rejects a cross-origin upgrade even with a valid bearer (DNS-rebinding defense)', async () => {
+    const { daemon, wss, onUpgrade, wsUrl } = await startWithUpgrade({ auth: AUTH });
+    try {
+      await expect(
+        connect(`${wsUrl}/studio/x/stream`, [`wigolo.bearer.${AUTH.token}`], { origin: 'http://evil.com' }),
+      ).rejects.toBeDefined();
+      expect(onUpgrade).not.toHaveBeenCalled();
+    } finally {
+      wss.close();
+      await daemon.stop();
+    }
+  });
+
+  it('a websocket upgrade is not bounded by requestTimeoutMs (long-lived, bypasses the 504 path)', async () => {
+    const { daemon, wss, onUpgrade, wsUrl } = await startWithUpgrade({ auth: AUTH, requestTimeoutMs: 1 });
+    try {
+      const ws = await connect(`${wsUrl}/studio/x/stream`, [`wigolo.bearer.${AUTH.token}`]);
+      await new Promise((r) => setTimeout(r, 30)); // well past the 1ms request budget
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+      expect(onUpgrade).toHaveBeenCalledTimes(1);
+      ws.close();
+    } finally {
+      wss.close();
+      await daemon.stop();
+    }
+  });
+
+  it('does not attach an upgrade listener / accepts no upgrade when onUpgrade is unset (back-compat)', async () => {
+    const { DaemonHttpServer } = await import('../../../src/daemon/http-server.js');
+    const daemon = new DaemonHttpServer({ port: 0, host: '127.0.0.1' });
+    const url = await daemon.start();
+    const wsUrl = url.replace('http://', 'ws://');
+    try {
+      await expect(connect(`${wsUrl}/anything`, [])).rejects.toBeDefined();
     } finally {
       await daemon.stop();
     }

@@ -1,13 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server as HttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { Duplex } from 'node:stream';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { initSubsystems, createMcpServer, type Subsystems } from '../server.js';
 import { probeHealth } from './health-check.js';
-import { checkAuth, checkOriginHost } from '../studio/auth.js';
+import { checkAuth, checkAuthSubprotocol, checkOriginHost } from '../studio/auth.js';
 import { createLogger } from '../logger.js';
+
+export type UpgradeHandler = (req: IncomingMessage, socket: Duplex, head: Buffer) => void;
 
 const log = createLogger('server');
 
@@ -23,6 +26,13 @@ export interface DaemonOptions {
   auth?: DaemonAuthConfig;
   /** When > 0, every request is bounded; on expiry a 504 is returned (host path only). */
   requestTimeoutMs?: number;
+  /**
+   * When set, WebSocket upgrades that pass the Origin/Host + subprotocol-bearer
+   * guard are handed to this handler (the Studio host wires its WS hub here).
+   * Long-lived, so it never enters `handleRequest`'s per-request timeout. Host
+   * path only — the stdio server never constructs this server.
+   */
+  onUpgrade?: UpgradeHandler;
 }
 
 export class DaemonHttpServer {
@@ -36,6 +46,7 @@ export class DaemonHttpServer {
   private readonly host: string;
   private readonly auth: DaemonAuthConfig | null;
   private readonly requestTimeoutMs: number;
+  private readonly onUpgrade: UpgradeHandler | null;
   private mcpRequestCount = 0;
 
   constructor(options: DaemonOptions) {
@@ -43,6 +54,7 @@ export class DaemonHttpServer {
     this.host = options.host;
     this.auth = options.auth ?? null;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 0;
+    this.onUpgrade = options.onUpgrade ?? null;
   }
 
   /** Count of MCP (`POST /mcp`) requests handled — observability + round-trip verification. */
@@ -74,6 +86,8 @@ export class DaemonHttpServer {
         }
       });
     });
+
+    this.httpServer.on('upgrade', (req, socket, head) => this.handleUpgrade(req, socket, head));
 
     return new Promise<string>((resolve, reject) => {
       this.httpServer!.on('error', (err) => {
@@ -156,6 +170,29 @@ export class DaemonHttpServer {
   private writeRequestError(res: ServerResponse, status: number, error: string, reason: string): void {
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: false, error, error_reason: reason, stage: 'daemon' }));
+  }
+
+  /**
+   * Authorize a WebSocket upgrade (Origin/Host + subprotocol bearer when auth is
+   * configured) and hand the raw socket to the registered handler. Rejected
+   * upgrades get an HTTP status line and the socket destroyed. Nothing here
+   * enters `handleRequest`, so a long-lived WS is never bounded by the 504
+   * per-request timeout.
+   */
+  private handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+    if (this.auth) {
+      const origin = checkOriginHost(req, { host: this.auth.host });
+      if (!origin.ok) return this.rejectUpgrade(socket, 403, 'Forbidden');
+      const auth = checkAuthSubprotocol(req, this.auth.token);
+      if (!auth.ok) return this.rejectUpgrade(socket, 401, 'Unauthorized');
+    }
+    if (!this.onUpgrade) return this.rejectUpgrade(socket, 404, 'Not Found');
+    this.onUpgrade(req, socket, head);
+  }
+
+  private rejectUpgrade(socket: Duplex, status: number, message: string): void {
+    socket.write(`HTTP/1.1 ${status} ${message}\r\n\r\n`);
+    socket.destroy();
   }
 
   /**
