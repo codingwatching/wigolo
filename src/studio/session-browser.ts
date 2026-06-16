@@ -77,6 +77,7 @@ export class SessionBrowser {
   private recovering = false;
   private restartCount = 0;
   private readonly recoveredHandlers: Array<() => void> = [];
+  private readonly beforeReNavHandlers: Array<(cdp: SessionCdp) => Promise<void>> = [];
   private readonly failedHandlers: Array<() => void> = [];
 
   constructor(opts: SessionBrowserOptions) {
@@ -88,6 +89,16 @@ export class SessionBrowser {
   /** Register a callback fired after a successful crash recovery (the screencast bridge restarts here in 1b). */
   onRecovered(cb: () => void): void {
     this.recoveredHandlers.push(cb);
+  }
+
+  /**
+   * Register an AWAITED callback fired after relaunch but BEFORE the recovery
+   * re-navigation, on the FRESH cdp. The nav interceptor rebinds here so a redirect
+   * hop during recovery is re-validated on the fresh CDP (Finding A); non-nav
+   * rebinds (screencast/input) stay in onRecovered since they don't gate navigation.
+   */
+  onBeforeReNav(cb: (cdp: SessionCdp) => Promise<void>): void {
+    this.beforeReNavHandlers.push(cb);
   }
 
   /** Register a callback fired when recovery is abandoned after maxRestarts (the session is then terminal). */
@@ -180,6 +191,14 @@ export class SessionBrowser {
         viewport: { width: cfg.studioScreencastMaxWidth, height: cfg.studioScreencastMaxHeight },
       });
       this.registerCrashHandlers();
+      // Pre-nav hooks fire on the FRESH cdp BEFORE the recovery re-navigation, so a
+      // guard that re-validates redirect hops (the nav interceptor) is live before
+      // the goto — otherwise a recovery hop is unguarded on the agent path (Finding A).
+      // Awaited: a fire-and-forget rebind could race the goto and re-open the gap.
+      for (const cb of this.beforeReNavHandlers) {
+        await cb(this.launched.cdp).catch((err) =>
+          log.warn('beforeReNav hook failed', { sessionId: this.sessionId, error: String(err) }));
+      }
       if (this._currentUrl) {
         await this.launched.page
           .goto(this._currentUrl, { waitUntil: 'load', timeout: cfg.playwrightNavTimeoutMs })

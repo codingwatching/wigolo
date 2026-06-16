@@ -166,6 +166,13 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   const navPolicy: NavPolicy = { source: 'human', allowPrivate: cfg.studioNavAllowPrivateForHuman };
   const navInterceptor = new NavInterceptor(navPolicy);
   await navInterceptor.start(sessionBrowser.cdp);
+  // Finding A: rebind the nav interceptor on the FRESH cdp BEFORE the crash-recovery
+  // re-navigation (awaited pre-nav hook), so a redirect hop during recovery is
+  // re-validated on the agent path too. Screencast/input rebinds stay in onRecovered
+  // (post-goto) — they don't gate navigation, so their order vs the re-nav is moot.
+  sessionBrowser.onBeforeReNav(async (cdp) => {
+    await navInterceptor.rebind(cdp);
+  });
   const navigate = async (url: string): Promise<void> => {
     const r = await navigateSession(sessionBrowser, url, navPolicy);
     if (!r.ok) hub.broadcast(session.id, { t: 'error', reason: r.reason });
@@ -187,13 +194,11 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
     everyNthFrame: cfg.studioScreencastEveryNthFrame,
     ackTimeoutMs: cfg.studioFrameAckTimeoutMs,
   });
-  // On a browser-crash recovery, rebind BOTH the screencast and the input channel
-  // to the FRESH cdp (each resets its stale state); the control token persists.
+  // On a browser-crash recovery, rebind the screencast + input channel to the FRESH
+  // cdp (each resets its stale state); the control token persists. The nav interceptor
+  // rebinds earlier, via onBeforeReNav above, so it is live before the recovery goto.
   sessionBrowser.onRecovered(() => {
     forwarder.rebind(sessionBrowser.cdp);
-    void navInterceptor.rebind(sessionBrowser.cdp).catch((e) =>
-      logger.debug('nav interceptor rebind after recovery failed', { error: e instanceof Error ? e.message : String(e) }),
-    );
     void bridge!.restart(sessionBrowser.cdp).catch((e) =>
       logger.debug('screencast restart after recovery failed', { error: e instanceof Error ? e.message : String(e) }),
     );

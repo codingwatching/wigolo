@@ -151,6 +151,34 @@ describe('SessionBrowser — crash recovery', () => {
     expect(sb.running).toBe(true);
   });
 
+  it('fires onBeforeReNav on the FRESH cdp BEFORE the recovery goto (Finding A)', async () => {
+    // Finding A: the nav interceptor rebinds via onBeforeReNav so it is live on the
+    // fresh CDP BEFORE the recovery re-navigation — otherwise a redirect hop during
+    // recovery is unguarded on the agent path.
+    const fake = makeCrashableFake();
+    const sb = new SessionBrowser({ sessionId: 's1', launch: fake.launch, maxRestarts: 2 });
+    let hookCalls = 0;
+    let hookCdp: unknown = null;
+    let gotosWhenHookRan = -1;
+    sb.onBeforeReNav(async (cdp) => {
+      hookCalls++;
+      hookCdp = cdp;
+      gotosWhenHookRan = fake.calls.gotos.length; // the recovery goto must NOT have run yet
+    });
+    await sb.start();
+    await sb.navigate('https://ex.com/');
+    const firstCdp = sb.cdp;
+    expect(hookCalls).toBe(0); // not fired on initial start/navigate — only on recovery re-nav
+
+    await fake.fireCrash();
+
+    expect(hookCalls).toBe(1);
+    expect(gotosWhenHookRan).toBe(1); // only the original navigate; recovery goto comes AFTER the hook
+    expect(fake.calls.gotos).toEqual(['https://ex.com/', 'https://ex.com/']); // recovery goto did run
+    expect(hookCdp).toBe(sb.cdp); // hook received the fresh post-relaunch cdp
+    expect(hookCdp).not.toBe(firstCdp); // not the dead one
+  });
+
   it('gives up after maxRestarts crashes: emits failed and goes terminal (no hang, no infinite relaunch)', async () => {
     const fake = makeCrashableFake();
     const sb = new SessionBrowser({ sessionId: 's1', launch: fake.launch, maxRestarts: 1 });
