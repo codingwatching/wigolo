@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mintHostToken, checkAuth, checkOriginHost, resolveHostToken } from '../../../src/studio/auth.js';
+import { mintHostToken, checkAuth, checkAuthSubprotocol, checkOriginHost, resolveHostToken } from '../../../src/studio/auth.js';
 
 describe('studio/auth', () => {
   describe('mintHostToken', () => {
@@ -87,6 +87,45 @@ describe('studio/auth', () => {
 
     it('rejects a foreign Host header', () => {
       expect(checkOriginHost({ headers: { host: 'evil.com' } }, expected)).toMatchObject({ ok: false });
+    });
+  });
+
+  describe('checkAuthSubprotocol', () => {
+    // Browsers cannot set an Authorization header on a WebSocket, so the host
+    // accepts the bearer via the WS subprotocol: new WebSocket(url, ['wigolo.bearer.<token>']).
+    const token = 'studio-token-abc123';
+
+    it('rejects a missing sec-websocket-protocol header', () => {
+      expect(checkAuthSubprotocol({ headers: {} }, token)).toMatchObject({ ok: false });
+    });
+
+    it('rejects a subprotocol list without a wigolo.bearer entry', () => {
+      expect(checkAuthSubprotocol({ headers: { 'sec-websocket-protocol': 'chat, superchat' } }, token)).toMatchObject({ ok: false });
+    });
+
+    it('rejects a wrong bearer token', () => {
+      expect(checkAuthSubprotocol({ headers: { 'sec-websocket-protocol': 'wigolo.bearer.wrong' } }, token)).toMatchObject({ ok: false });
+    });
+
+    it('rejects a different-length token without throwing', () => {
+      expect(() => checkAuthSubprotocol({ headers: { 'sec-websocket-protocol': 'wigolo.bearer.x' } }, token)).not.toThrow();
+      expect(checkAuthSubprotocol({ headers: { 'sec-websocket-protocol': 'wigolo.bearer.x' } }, token)).toMatchObject({ ok: false });
+    });
+
+    it('accepts a matching wigolo.bearer.<token> subprotocol', () => {
+      expect(checkAuthSubprotocol({ headers: { 'sec-websocket-protocol': `wigolo.bearer.${token}` } }, token)).toEqual({ ok: true });
+    });
+
+    it('accepts when the bearer is one of several offered subprotocols', () => {
+      expect(checkAuthSubprotocol({ headers: { 'sec-websocket-protocol': `chat, wigolo.bearer.${token}` } }, token)).toEqual({ ok: true });
+    });
+
+    it('rejects when the expected token is empty (misconfiguration self-defense)', () => {
+      expect(checkAuthSubprotocol({ headers: { 'sec-websocket-protocol': 'wigolo.bearer.' } }, '')).toMatchObject({ ok: false });
+    });
+
+    it('does not accept a token supplied only via the Authorization header (WS uses the subprotocol channel)', () => {
+      expect(checkAuthSubprotocol({ headers: { authorization: `Bearer ${token}` } }, token)).toMatchObject({ ok: false });
     });
   });
 });

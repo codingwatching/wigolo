@@ -6,7 +6,13 @@ const events: string[] = [];
 vi.mock('../../../src/daemon/http-server.js', () => ({
   DaemonHttpServer: class {
     constructor(
-      public options: { port: number; host: string; auth?: { token: string; host: string }; requestTimeoutMs?: number },
+      public options: {
+        port: number;
+        host: string;
+        auth?: { token: string; host: string };
+        requestTimeoutMs?: number;
+        onUpgrade?: unknown;
+      },
     ) {}
     start = vi.fn().mockImplementation(async () => {
       events.push('start');
@@ -31,6 +37,16 @@ vi.mock('../../../src/studio/handle.js', async (importOriginal) => {
 
 import { parseStudioArgs, startStudioHost } from '../../../src/cli/studio.js';
 import { writeHandle } from '../../../src/studio/handle.js';
+import type { LaunchedSessionBrowser } from '../../../src/studio/session-browser.js';
+
+// A fake session-browser launcher: no real Chromium, so the host boots in unit tests.
+const fakeBrowserLauncher = async (): Promise<LaunchedSessionBrowser> =>
+  ({
+    browser: { close: async () => {}, on: () => {} },
+    context: { close: async () => {} },
+    page: { close: async () => {}, goto: async () => null, on: () => {} },
+    cdp: { send: async () => ({}), on: () => {} },
+  }) as unknown as LaunchedSessionBrowser;
 
 describe('cli/studio parseStudioArgs', () => {
   beforeEach(() => resetConfig());
@@ -58,7 +74,7 @@ describe('cli/studio startStudioHost', () => {
   afterEach(() => resetConfig());
 
   it('warms the embedding model BEFORE the session goes live (handle written)', async () => {
-    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false });
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
     expect(events).toContain('warmup');
     // Warmup must complete before the host listens and before the handle is published.
     expect(events.indexOf('warmup')).toBeLessThan(events.indexOf('start'));
@@ -67,7 +83,7 @@ describe('cli/studio startStudioHost', () => {
   });
 
   it('writes a handle carrying the session id, endpoint, and token', async () => {
-    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false });
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
     expect(writeHandle).toHaveBeenCalled();
     const written = vi.mocked(writeHandle).mock.lastCall?.[0];
     expect(written?.endpoint).toBe('http://127.0.0.1:7777');
@@ -79,7 +95,22 @@ describe('cli/studio startStudioHost', () => {
 
   it('refuses a non-loopback bind without --allow-remote', async () => {
     await expect(
-      startStudioHost({ port: 0, host: '0.0.0.0', allowRemote: false }),
+      startStudioHost({ port: 0, host: '0.0.0.0', allowRemote: false, browserLauncher: fakeBrowserLauncher }),
     ).rejects.toThrow(/allow-remote/i);
+  });
+
+  it('wires the websocket hub (onUpgrade) into the daemon and starts the session browser', async () => {
+    const host = await startStudioHost({
+      port: 0,
+      host: '127.0.0.1',
+      allowRemote: false,
+      browserLauncher: fakeBrowserLauncher,
+    });
+    expect(typeof host.daemon.options.onUpgrade).toBe('function'); // hub wired to the upgrade seam
+    expect(host.hub).toBeDefined();
+    expect(host.hub.clientCount(host.session.id)).toBe(0);
+    expect(host.sessionBrowser.running).toBe(true); // session browser live before the handle is published
+    await host.sessionBrowser.close();
+    await host.daemon.stop();
   });
 });

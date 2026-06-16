@@ -62,6 +62,34 @@ export function checkAuth(req: AuthRequestLike, expectedToken: string): AuthChec
   return { ok: true };
 }
 
+/** Subprotocol value carrying the bearer: `new WebSocket(url, ['wigolo.bearer.<token>'])`. */
+const SUBPROTOCOL_BEARER_PREFIX = 'wigolo.bearer.';
+
+/**
+ * Validate the bearer offered via the WebSocket subprotocol header. A browser
+ * `WebSocket` cannot set an `Authorization` header, so the host accepts the
+ * token through `Sec-WebSocket-Protocol` instead — kept off the URL/query so it
+ * never lands in access logs or a `Referer`. Same constant-time, length-guarded
+ * compare as `checkAuth`.
+ */
+export function checkAuthSubprotocol(req: AuthRequestLike, expectedToken: string): AuthCheck {
+  if (expectedToken.length === 0) return { ok: false, reason: 'no_expected_token' };
+  const raw = firstHeader(req.headers['sec-websocket-protocol']);
+  if (!raw) return { ok: false, reason: 'missing_bearer' };
+
+  const entry = raw
+    .split(',')
+    .map((s) => s.trim())
+    .find((p) => p.startsWith(SUBPROTOCOL_BEARER_PREFIX));
+  if (!entry) return { ok: false, reason: 'missing_bearer' };
+
+  const provided = Buffer.from(entry.slice(SUBPROTOCOL_BEARER_PREFIX.length));
+  const expected = Buffer.from(expectedToken);
+  if (provided.length !== expected.length) return { ok: false, reason: 'bad_bearer' };
+  if (!timingSafeEqual(provided, expected)) return { ok: false, reason: 'bad_bearer' };
+  return { ok: true };
+}
+
 /** Parse the hostname out of an Origin URL or a `host[:port]` Host header. */
 function hostnameOf(value: string): string | null {
   try {

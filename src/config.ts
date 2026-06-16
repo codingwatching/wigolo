@@ -68,6 +68,17 @@ export interface Config {
   studioRequestTimeoutMs: number;
   studioBusyTimeoutMs: number;
   studioAuthToken: string | null;
+  /** Studio session browser headed by default; CI / headless hosts set WIGOLO_STUDIO_HEADLESS=1. */
+  studioBrowserHeadless: boolean;
+  studioScreencastQuality: number;
+  studioScreencastMaxWidth: number;
+  studioScreencastMaxHeight: number;
+  studioScreencastEveryNthFrame: number;
+  /** Drop-under-load: if the client doesn't ack a forwarded frame within this, ack CDP anyway and drop the held frame. */
+  studioFrameAckTimeoutMs: number;
+  studioBrowserCrashMaxRestarts: number;
+  /** Human-initiated Studio navigation may reach localhost/RFC1918 (co-browsing a local dev server). Agent nav is always blocked-by-default (Phase 2). */
+  studioNavAllowPrivateForHuman: boolean;
   pluginsDir: string;
   browserTypes: BrowserType[];
   shellHistoryPath: string;
@@ -307,6 +318,14 @@ export function getConfig(): Config {
     studioRequestTimeoutMs: envInt('WIGOLO_STUDIO_REQUEST_TIMEOUT_MS', 120000, settings, 'studioRequestTimeoutMs'),
     studioBusyTimeoutMs: envInt('WIGOLO_SQLITE_BUSY_TIMEOUT_MS', 5000, settings, 'studioBusyTimeoutMs'),
     studioAuthToken: envStr('WIGOLO_STUDIO_TOKEN', null, settings, 'studioAuthToken'),
+    studioBrowserHeadless: envBool('WIGOLO_STUDIO_HEADLESS', false, settings, 'studioBrowserHeadless'),
+    studioScreencastQuality: envInt('WIGOLO_STUDIO_SCREENCAST_QUALITY', 60, settings, 'studioScreencastQuality'),
+    studioScreencastMaxWidth: envInt('WIGOLO_STUDIO_SCREENCAST_MAX_WIDTH', 1280, settings, 'studioScreencastMaxWidth'),
+    studioScreencastMaxHeight: envInt('WIGOLO_STUDIO_SCREENCAST_MAX_HEIGHT', 720, settings, 'studioScreencastMaxHeight'),
+    studioScreencastEveryNthFrame: envInt('WIGOLO_STUDIO_SCREENCAST_EVERY_NTH_FRAME', 1, settings, 'studioScreencastEveryNthFrame'),
+    studioFrameAckTimeoutMs: envInt('WIGOLO_STUDIO_FRAME_ACK_TIMEOUT_MS', 1000, settings, 'studioFrameAckTimeoutMs'),
+    studioBrowserCrashMaxRestarts: envInt('WIGOLO_STUDIO_BROWSER_CRASH_MAX_RESTARTS', 2, settings, 'studioBrowserCrashMaxRestarts'),
+    studioNavAllowPrivateForHuman: envBool('WIGOLO_STUDIO_NAV_ALLOW_PRIVATE_FOR_HUMAN', true, settings, 'studioNavAllowPrivateForHuman'),
     pluginsDir: (() => {
       const raw = envStr('WIGOLO_PLUGINS_DIR', null, settings, 'pluginsDir');
       if (raw) {
