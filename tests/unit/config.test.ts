@@ -480,5 +480,15 @@ describe('config', () => {
       resetConfig();
       expect(getConfig().studioNavAllowPrivateForHuman).toBe(false);
     });
+
+    it('studioSnapshotTokenBudget defaults to 4000', () => {
+      expect(getConfig().studioSnapshotTokenBudget).toBe(4000);
+    });
+
+    it('reads WIGOLO_STUDIO_SNAPSHOT_TOKEN_BUDGET', () => {
+      process.env.WIGOLO_STUDIO_SNAPSHOT_TOKEN_BUDGET = '8000';
+      resetConfig();
+      expect(getConfig().studioSnapshotTokenBudget).toBe(8000);
+    });
   });
 });

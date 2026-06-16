@@ -79,6 +79,8 @@ export interface Config {
   studioBrowserCrashMaxRestarts: number;
   /** Human-initiated Studio navigation may reach localhost/RFC1918 (co-browsing a local dev server). Agent nav is always blocked-by-default (Phase 2). */
   studioNavAllowPrivateForHuman: boolean;
+  /** Token budget for a single perception snapshot; over-budget snapshots are flagged for spill (Phase 2F). Realistic pages fit; heavy pages spill. */
+  studioSnapshotTokenBudget: number;
   pluginsDir: string;
   browserTypes: BrowserType[];
   shellHistoryPath: string;
@@ -326,6 +328,7 @@ export function getConfig(): Config {
     studioFrameAckTimeoutMs: envInt('WIGOLO_STUDIO_FRAME_ACK_TIMEOUT_MS', 1000, settings, 'studioFrameAckTimeoutMs'),
     studioBrowserCrashMaxRestarts: envInt('WIGOLO_STUDIO_BROWSER_CRASH_MAX_RESTARTS', 2, settings, 'studioBrowserCrashMaxRestarts'),
     studioNavAllowPrivateForHuman: envBool('WIGOLO_STUDIO_NAV_ALLOW_PRIVATE_FOR_HUMAN', true, settings, 'studioNavAllowPrivateForHuman'),
+    studioSnapshotTokenBudget: envInt('WIGOLO_STUDIO_SNAPSHOT_TOKEN_BUDGET', 4000, settings, 'studioSnapshotTokenBudget'),
     pluginsDir: (() => {
       const raw = envStr('WIGOLO_PLUGINS_DIR', null, settings, 'pluginsDir');
       if (raw) {
