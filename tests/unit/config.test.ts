@@ -412,4 +412,73 @@ describe('config', () => {
       expect(getConfig().reranker).toBe('none');
     });
   });
+
+  describe('config — studio screencast + session browser (phase 1)', () => {
+    it('studioBrowserHeadless defaults to false (headed session browser per spec)', () => {
+      expect(getConfig().studioBrowserHeadless).toBe(false);
+    });
+
+    it('reads WIGOLO_STUDIO_HEADLESS=1 as true (CI / headless host)', () => {
+      process.env.WIGOLO_STUDIO_HEADLESS = '1';
+      resetConfig();
+      expect(getConfig().studioBrowserHeadless).toBe(true);
+    });
+
+    it('studioScreencastQuality defaults to 60', () => {
+      expect(getConfig().studioScreencastQuality).toBe(60);
+    });
+
+    it('reads WIGOLO_STUDIO_SCREENCAST_QUALITY', () => {
+      process.env.WIGOLO_STUDIO_SCREENCAST_QUALITY = '40';
+      resetConfig();
+      expect(getConfig().studioScreencastQuality).toBe(40);
+    });
+
+    it('studioScreencastMaxWidth / MaxHeight default to 1280 x 720', () => {
+      expect(getConfig().studioScreencastMaxWidth).toBe(1280);
+      expect(getConfig().studioScreencastMaxHeight).toBe(720);
+    });
+
+    it('reads WIGOLO_STUDIO_SCREENCAST_MAX_WIDTH / _HEIGHT', () => {
+      process.env.WIGOLO_STUDIO_SCREENCAST_MAX_WIDTH = '1600';
+      process.env.WIGOLO_STUDIO_SCREENCAST_MAX_HEIGHT = '900';
+      resetConfig();
+      expect(getConfig().studioScreencastMaxWidth).toBe(1600);
+      expect(getConfig().studioScreencastMaxHeight).toBe(900);
+    });
+
+    it('studioScreencastEveryNthFrame defaults to 1', () => {
+      expect(getConfig().studioScreencastEveryNthFrame).toBe(1);
+    });
+
+    it('studioFrameAckTimeoutMs defaults to 1000', () => {
+      expect(getConfig().studioFrameAckTimeoutMs).toBe(1000);
+    });
+
+    it('reads WIGOLO_STUDIO_FRAME_ACK_TIMEOUT_MS', () => {
+      process.env.WIGOLO_STUDIO_FRAME_ACK_TIMEOUT_MS = '500';
+      resetConfig();
+      expect(getConfig().studioFrameAckTimeoutMs).toBe(500);
+    });
+
+    it('studioBrowserCrashMaxRestarts defaults to 2', () => {
+      expect(getConfig().studioBrowserCrashMaxRestarts).toBe(2);
+    });
+
+    it('reads WIGOLO_STUDIO_BROWSER_CRASH_MAX_RESTARTS', () => {
+      process.env.WIGOLO_STUDIO_BROWSER_CRASH_MAX_RESTARTS = '5';
+      resetConfig();
+      expect(getConfig().studioBrowserCrashMaxRestarts).toBe(5);
+    });
+
+    it('studioNavAllowPrivateForHuman defaults to true (co-browsing localhost is a primary use case)', () => {
+      expect(getConfig().studioNavAllowPrivateForHuman).toBe(true);
+    });
+
+    it('reads WIGOLO_STUDIO_NAV_ALLOW_PRIVATE_FOR_HUMAN=false as false', () => {
+      process.env.WIGOLO_STUDIO_NAV_ALLOW_PRIVATE_FOR_HUMAN = 'false';
+      resetConfig();
+      expect(getConfig().studioNavAllowPrivateForHuman).toBe(false);
+    });
+  });
 });
