@@ -106,10 +106,14 @@ export class NavInterceptor {
     if (!cdp) return;
     const pending = [...this.inFlight];
     this.inFlight.clear();
+    // Cancel the in-flight load FIRST so the browser stops emitting further redirect
+    // hops, THEN fail any hop still paused at the interceptor — shrinks the window in
+    // which a new redirect hop could arrive mid-abort and be evaluated under the
+    // (looser) post-reclaim human policy.
+    await cdp.send('Page.stopLoading').catch(() => {});
     for (const requestId of pending) {
       await cdp.send('Fetch.failRequest', { requestId, errorReason: 'Aborted' }).catch(() => {});
     }
-    await cdp.send('Page.stopLoading').catch(() => {});
   }
 
   private onPaused = (event: NavRequestPaused): void => {
