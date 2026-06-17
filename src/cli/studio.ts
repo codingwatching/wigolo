@@ -13,8 +13,9 @@ import { InputForwarder } from '../studio/input.js';
 import { SessionController } from '../studio/session-control.js';
 import { NavInterceptor, navigateSession, type NavPolicy } from '../studio/nav.js';
 import { StudioWsHub } from '../studio/ws-hub.js';
-import { writeHandle, removeHandle, studioHandlePath, type SessionHandle } from '../studio/handle.js';
+import { writeHandle, removeHandle, studioHandlePath, setMyInstanceId, type SessionHandle } from '../studio/handle.js';
 import { closeDaemonBrowser } from '../fetch/playwright-tier.js';
+import { randomUUID } from 'node:crypto';
 
 const logger = createLogger('cli');
 
@@ -90,6 +91,12 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   if (minted) {
     log('using a freshly minted per-launch token (written to the session handle for the local agent)');
   }
+
+  // Collision-resistant host-instance id, set in memory BEFORE the handle is published.
+  // The studio_* dispatch self-reference guard matches on this (not pid) — pid reuse
+  // across a dead host can't false-match, and a non-host process holds no id.
+  const instanceId = randomUUID();
+  setMyInstanceId(instanceId);
 
   const registry = opts.registry ?? new SessionRegistry();
   // Late-bound: the screencast bridge is created once the session browser is up,
@@ -208,7 +215,7 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   sessionBrowser.onFailed(() => hub.broadcast(session.id, { t: 'error', reason: 'session_failed' }));
   await bridge.start();
 
-  const handle: SessionHandle = { id: session.id, endpoint, token, pid: process.pid };
+  const handle: SessionHandle = { id: session.id, endpoint, token, pid: process.pid, instanceId };
   writeHandle(handle, opts.dataDir);
 
   return { daemon, registry, session, sessionBrowser, bridge, controller, navInterceptor, navigate, hub, handle, endpoint };

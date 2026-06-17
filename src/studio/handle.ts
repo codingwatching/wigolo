@@ -13,6 +13,27 @@ export interface SessionHandle {
   endpoint: string;
   token: string;
   pid: number;
+  /**
+   * Collision-resistant host-instance id (random per launch). The self-reference
+   * guard matches on THIS, not `pid`: a bare-pid check false-positives across PID
+   * reuse (a dead host leaves a stale handle, the OS hands its pid to a new stdio
+   * server, which would wrongly refuse-self instead of proxying / reporting
+   * no-reachable-host). A non-host process holds no instance id, so it cannot match.
+   */
+  instanceId: string;
+}
+
+/**
+ * The current process's host-instance id, set ONLY in the live host process at
+ * launch (in memory). The self-reference check is `handle.instanceId === getMyInstanceId()`
+ * — null in any non-host process, so it can never false-match.
+ */
+let myInstanceId: string | null = null;
+export function setMyInstanceId(id: string | null): void {
+  myInstanceId = id;
+}
+export function getMyInstanceId(): string | null {
+  return myInstanceId;
 }
 
 function studioDir(dataDir?: string): string {
