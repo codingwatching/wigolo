@@ -52,4 +52,9 @@ export class StudioEventQueue {
   get pending(): number {
     return this.buffer.length;
   }
+
+  /** High-water seq (latest enqueued). Used to detect an event slipping in during an async snapshot capture. */
+  get cursor(): number {
+    return this.seq;
+  }
 }

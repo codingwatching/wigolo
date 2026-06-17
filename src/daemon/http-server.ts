@@ -6,6 +6,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { initSubsystems, createMcpServer, type Subsystems } from '../server.js';
+import type { StudioHostHandlers } from './studio-dispatch.js';
 import { probeHealth } from './health-check.js';
 import { checkAuth, checkAuthSubprotocol, checkOriginHost } from '../studio/auth.js';
 import { createLogger } from '../logger.js';
@@ -48,6 +49,7 @@ export class DaemonHttpServer {
   private readonly requestTimeoutMs: number;
   private readonly onUpgrade: UpgradeHandler | null;
   private mcpRequestCount = 0;
+  private studioHost: StudioHostHandlers | null = null;
 
   constructor(options: DaemonOptions) {
     this.port = options.port;
@@ -55,6 +57,18 @@ export class DaemonHttpServer {
     this.auth = options.auth ?? null;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 0;
     this.onUpgrade = options.onUpgrade ?? null;
+  }
+
+  /**
+   * Inject the live studio host handlers (late setter). cli/studio.ts calls this AFTER
+   * start() builds the subsystems but BEFORE the handle is published — closing the
+   * window where a studio_* call could arrive with studioHost unset. The lazy
+   * per-session createMcpServer reads subsystems.studioHost, so a late-set value is
+   * picked up by every subsequent agent connection.
+   */
+  setStudioHost(handlers: StudioHostHandlers): void {
+    this.studioHost = handlers;
+    if (this.subsystems) this.subsystems.studioHost = handlers;
   }
 
   /** Count of MCP (`POST /mcp`) requests handled — observability + round-trip verification. */
@@ -68,6 +82,7 @@ export class DaemonHttpServer {
 
     try {
       this.subsystems = await initSubsystems();
+      if (this.studioHost) this.subsystems.studioHost = this.studioHost; // apply if set before start()
     } catch (err) {
       log.error('Failed to initialize subsystems', { error: String(err) });
       throw err;

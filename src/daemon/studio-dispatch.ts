@@ -25,7 +25,7 @@ export interface StudioObserveInput {
   /** The event cursor the agent last received; events ≤ this are acked. */
   since?: number;
   /** The snapshot id the agent currently holds; a mismatch forces a full snapshot. */
-  baseId?: string;
+  base_id?: string;
   /** Retrieve a previously spilled full snapshot by ref. */
   snapshot_ref?: string;
 }
@@ -54,8 +54,18 @@ export interface StudioObserveOutput {
   vision?: VisionSubResult;
 }
 
+/** A typed failure from a host handler (e.g. an evicted spill fetch) — surfaced as a tool error, NOT a bare null a caller could read as "no content". */
+export interface StudioToolError {
+  error_reason: string;
+  hint: string;
+}
+
+export function isStudioToolError(x: StudioObserveOutput | StudioToolError): x is StudioToolError {
+  return typeof (x as StudioToolError).error_reason === 'string';
+}
+
 export interface StudioHostHandlers {
-  observe(input: StudioObserveInput): Promise<StudioObserveOutput>;
+  observe(input: StudioObserveInput): Promise<StudioObserveOutput | StudioToolError>;
 }
 
 export interface McpToolResult {
@@ -88,6 +98,7 @@ export async function dispatchStudioTool(
   if (studioHost) {
     if (name === 'studio_observe') {
       const data = await studioHost.observe(args as StudioObserveInput);
+      if (isStudioToolError(data)) return refusal(data.error_reason, data.hint); // typed error → tool error, not silent
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }], isError: false };
     }
     return refusal('unknown_studio_tool', `No host handler for ${name}.`);
