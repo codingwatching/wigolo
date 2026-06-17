@@ -12,7 +12,7 @@
  *
  * An over-budget diff (a big change or a navigation's full payload) spills too.
  */
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfig } from '../../config.js';
 import { countTokens } from '../../search/tokens.js';
@@ -77,6 +77,49 @@ export interface DiffFitResult {
   diff: SnapshotDiff | null;
   summary?: { added: number; removed: number; churn: number; changed: number };
   spillRef: string | null;
+}
+
+export interface SpillGcResult {
+  evicted: number;
+  bytes: number;
+}
+
+/**
+ * Bound the content-addressed spill dir by TOTAL BYTES (it holds PNG screenshots from
+ * 2G, far larger than text snapshots — a count cap is insufficient). REFERENCE-AWARE:
+ * a ref in `protect` (one a live snapshot/diff/vision still points at) is NEVER evicted,
+ * even if it is the oldest. Eviction is oldest-mtime-first among the unprotected. A
+ * later fetch of an evicted ref returns null (the caller must surface that fail-loud,
+ * never silently return nothing).
+ */
+export function enforceSpillBudget(opts: { maxBytes: number; protect?: ReadonlySet<string>; dataDir?: string }): SpillGcResult {
+  const dir = spillDir(opts.dataDir);
+  let files: Array<{ name: string; ref: string; size: number; mtimeMs: number }>;
+  try {
+    files = readdirSync(dir)
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => {
+        const st = statSync(join(dir, f));
+        return { name: f, ref: 'spill:' + f.slice(0, -'.json'.length), size: st.size, mtimeMs: st.mtimeMs };
+      });
+  } catch {
+    return { evicted: 0, bytes: 0 }; // dir absent → nothing to GC
+  }
+  let total = files.reduce((sum, f) => sum + f.size, 0);
+  const protect = opts.protect ?? new Set<string>();
+  const evictable = files.filter((f) => !protect.has(f.ref)).sort((a, b) => a.mtimeMs - b.mtimeMs);
+  let evicted = 0;
+  for (const f of evictable) {
+    if (total <= opts.maxBytes) break;
+    try {
+      unlinkSync(join(dir, f.name));
+      total -= f.size;
+      evicted += 1;
+    } catch {
+      /* already gone — ignore */
+    }
+  }
+  return { evicted, bytes: total };
 }
 
 /** A diff that itself blows the budget (big change / navigation) spills whole; a small counts summary stays inline. */

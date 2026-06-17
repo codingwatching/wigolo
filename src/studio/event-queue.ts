@@ -1,0 +1,55 @@
+/**
+ * Per-session queue of human events (navigations now; marks/comments in Phase 3) that
+ * `studio_observe` drains for the agent. Delivery is EXACTLY-ONCE via a cursor-ack,
+ * the same discipline 2F's base-id gave the diff:
+ *
+ *  - `drainSince(cursor)` returns events newer than the consumer's last-acked cursor
+ *    and trims the acked ones — but it does NOT remove the newer events until the
+ *    cursor advances. So if the observe response is lost crossing the stdio↔host
+ *    proxy, the next drain at the same cursor REPLAYS them (no silent loss).
+ *  - Bounded: on overflow the oldest events drop and the `dropped` count is surfaced
+ *    once (fail-loud), so the consumer can force a full resync rather than silently
+ *    proceed on a gappy event stream.
+ */
+
+export interface StudioEvent {
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface DrainedEvents {
+  events: Array<StudioEvent & { seq: number }>;
+  /** High-water seq; the consumer passes this back as `since` next turn (its ack). */
+  cursor: number;
+  /** Events lost to overflow since the previous drain — non-zero means "resync, your stream has a gap". */
+  dropped: number;
+}
+
+export class StudioEventQueue {
+  private buffer: Array<StudioEvent & { seq: number }> = [];
+  private seq = 0;
+  private dropped = 0;
+
+  constructor(private readonly cap: number) {}
+
+  enqueue(event: StudioEvent): void {
+    this.seq += 1;
+    this.buffer.push({ ...event, seq: this.seq });
+    while (this.buffer.length > this.cap) {
+      this.buffer.shift();
+      this.dropped += 1;
+    }
+  }
+
+  /** Trim events the consumer acked (seq ≤ since), then return everything newer. Does not drop unacked events. */
+  drainSince(since: number): DrainedEvents {
+    this.buffer = this.buffer.filter((e) => e.seq > since);
+    const dropped = this.dropped;
+    this.dropped = 0;
+    return { events: [...this.buffer], cursor: this.seq, dropped };
+  }
+
+  get pending(): number {
+    return this.buffer.length;
+  }
+}
