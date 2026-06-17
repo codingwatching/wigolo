@@ -76,6 +76,31 @@ describe('escalate — crop-first, budgeted, untrusted, region-carrying', () => 
     expect(await escalate(cdp, { trigger: 'canvas', region }, budget, { inlineByteCap: 1_000_000, dataDir: dir })).toEqual({ ok: false, reason: 'vision_budget_exceeded' });
   });
 
+  it('rejects an invalid region (non-finite / non-positive dims) — invalid_region, no capture', async () => {
+    const { cdp, calls } = makeCdp();
+    const b = new VisionBudget(3, 4_000_000);
+    for (const bad of [{ x: 0, y: 0, width: NaN, height: 50 }, { x: 0, y: 0, width: -5, height: 50 }, { x: 0, y: 0, width: 100, height: Infinity }]) {
+      expect(await escalate(cdp, { trigger: 'canvas', region: bad }, b, { inlineByteCap: 262144, dataDir: dir })).toEqual({ ok: false, reason: 'invalid_region' });
+    }
+    expect(calls.some((c) => c.method === 'Page.captureScreenshot')).toBe(false); // never captured a malformed region
+  });
+
+  it('CLAMPS a hostile oversize region to the hard cap so a single capture cannot be unbounded (security)', async () => {
+    const { cdp, calls } = makeCdp();
+    const r = await escalate(cdp, { trigger: 'canvas', region: { x: 0, y: 0, width: 100000, height: 100000 } }, new VisionBudget(3, 4_000_000), { inlineByteCap: 262144, dataDir: dir });
+    expect(r.ok).toBe(true);
+    const clip = calls.find((c) => c.method === 'Page.captureScreenshot')?.params?.clip as { width: number; height: number };
+    expect(clip.width).toBe(4096); // clamped to MAX_REGION_PX — not a 100000px single-shot
+    expect(clip.height).toBe(4096);
+    if (r.ok) { expect(r.result.region.width).toBe(4096); expect(r.result.region.height).toBe(4096); } // echoes the captured (clamped) region
+  });
+
+  it('maps a rejecting CDP capture to capture_failed (no uncaught throw)', async () => {
+    const cdp = { send: async (m: string) => { if (m === 'Page.captureScreenshot') throw new Error('protocol error'); return {}; } };
+    const r = await escalate(cdp, { trigger: 'canvas', region }, new VisionBudget(3, 4_000_000), { inlineByteCap: 262144, dataDir: dir });
+    expect(r).toEqual({ ok: false, reason: 'capture_failed' });
+  });
+
   it('byte-bound: a cropped PNG over the inline cap spills to a ref (retrievable); under stays inline', async () => {
     const big = makeCdp(400_000);
     const rBig = await escalate(big.cdp, { trigger: 'canvas', region }, new VisionBudget(3, 4_000_000), { inlineByteCap: 262144, dataDir: dir });
