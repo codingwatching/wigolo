@@ -68,12 +68,21 @@ export interface VisionCdp {
 
 export type EscalateResult =
   | { ok: true; result: VisionResult }
-  | { ok: false; reason: 'unknown_trigger' | 'vision_budget_exceeded' | 'capture_failed' };
+  | { ok: false; reason: 'unknown_trigger' | 'vision_budget_exceeded' | 'invalid_region' | 'capture_failed' };
 
 export interface EscalateOptions {
   inlineByteCap: number;
   dataDir?: string;
 }
+
+/**
+ * Hard cap on a single capture's clip dimensions. The region is page-influenced (box
+ * geometry), so without this a hostile page reporting an enormous element could force
+ * ONE giant rasterization before the per-turn byte budget catches the NEXT call.
+ * Deliberately NOT operator-tunable — a clamp you cannot crank up to unsafe is safer
+ * than one you can.
+ */
+const MAX_REGION_PX = 4096;
 
 /** Capture a cropped screenshot for a closed-set trigger, within budget. Fail-loud on an unknown trigger or budget exhaustion. */
 export async function escalate(
@@ -85,12 +94,25 @@ export async function escalate(
   if (!VISION_TRIGGERS.has(req.trigger)) return { ok: false, reason: 'unknown_trigger' };
   if (!budget.canEscalate()) return { ok: false, reason: 'vision_budget_exceeded' };
 
-  const { x, y, width, height } = req.region;
-  const shot = (await cdp.send('Page.captureScreenshot', {
-    format: 'png',
-    clip: { x, y, width, height, scale: 1 }, // crop-first — the ROI, not the viewport
-    captureBeyondViewport: true,
-  })) as { data?: string };
+  // Sanitize + clamp the page-influenced region: reject malformed dims, and bound the
+  // clip so ONE capture can't be unbounded (the byte budget only catches the NEXT call).
+  // Clamping (not refusing) keeps an over-large element's ROI useful.
+  const { x: rx, y: ry, width: rw, height: rh } = req.region;
+  if (![rx, ry, rw, rh].every((n) => Number.isFinite(n)) || rw <= 0 || rh <= 0) {
+    return { ok: false, reason: 'invalid_region' };
+  }
+  const region: Region = { x: Math.max(0, rx), y: Math.max(0, ry), width: Math.min(rw, MAX_REGION_PX), height: Math.min(rh, MAX_REGION_PX) };
+
+  let shot: { data?: string };
+  try {
+    shot = (await cdp.send('Page.captureScreenshot', {
+      format: 'png',
+      clip: { ...region, scale: 1 }, // crop-first — the (clamped) ROI, not the viewport
+      captureBeyondViewport: true,
+    })) as { data?: string };
+  } catch {
+    return { ok: false, reason: 'capture_failed' }; // a rejecting CDP send is reported as data, not thrown
+  }
   if (!shot.data) return { ok: false, reason: 'capture_failed' };
 
   const bytes = Buffer.byteLength(shot.data, 'base64');
@@ -101,5 +123,5 @@ export async function escalate(
       ? { format: 'png', spillRef: writeSpill({ format: 'png', base64: shot.data }, opts.dataDir) }
       : { format: 'png', base64: shot.data };
 
-  return { ok: true, result: { trigger: req.trigger, region: req.region, image, bytes, trusted: false } };
+  return { ok: true, result: { trigger: req.trigger, region, image, bytes, trusted: false } }; // echo the CAPTURED (clamped) region
 }

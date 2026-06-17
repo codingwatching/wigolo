@@ -13,8 +13,17 @@ import { InputForwarder } from '../studio/input.js';
 import { SessionController } from '../studio/session-control.js';
 import { NavInterceptor, navigateSession, type NavPolicy } from '../studio/nav.js';
 import { StudioWsHub } from '../studio/ws-hub.js';
-import { writeHandle, removeHandle, studioHandlePath, type SessionHandle } from '../studio/handle.js';
+import { writeHandle, removeHandle, studioHandlePath, setMyInstanceId, type SessionHandle } from '../studio/handle.js';
 import { closeDaemonBrowser } from '../fetch/playwright-tier.js';
+import { PageSnapshotter } from '../studio/perception/snapshot.js';
+import { StudioEventQueue } from '../studio/event-queue.js';
+import { createObserver } from '../studio/observe.js';
+import { randomUUID } from 'node:crypto';
+
+/** Bounded human-event buffer; overflow is fail-loud (drained events surface a dropped count → resync). */
+const STUDIO_EVENT_QUEUE_MAX = 256;
+/** Total byte budget the spill-dir GC enforces (snapshots + diffs + vision PNGs). In-code, not operator-tunable. */
+const STUDIO_SPILL_MAX_BYTES = 64 * 1024 * 1024;
 
 const logger = createLogger('cli');
 
@@ -90,6 +99,12 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   if (minted) {
     log('using a freshly minted per-launch token (written to the session handle for the local agent)');
   }
+
+  // Collision-resistant host-instance id, set in memory BEFORE the handle is published.
+  // The studio_* dispatch self-reference guard matches on this (not pid) — pid reuse
+  // across a dead host can't false-match, and a non-host process holds no id.
+  const instanceId = randomUUID();
+  setMyInstanceId(instanceId);
 
   const registry = opts.registry ?? new SessionRegistry();
   // Late-bound: the screencast bridge is created once the session browser is up,
@@ -173,9 +188,16 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   sessionBrowser.onBeforeReNav(async (cdp) => {
     await navInterceptor.rebind(cdp);
   });
+
+  // Perception + the agent's observe path. The event queue records human navigations
+  // (marks/comments are Phase 3) for studio_observe to drain exactly-once.
+  const eventQueue = new StudioEventQueue(STUDIO_EVENT_QUEUE_MAX);
+  const snapshotter = new PageSnapshotter({ tokenBudget: cfg.studioSnapshotTokenBudget });
+
   const navigate = async (url: string): Promise<void> => {
     const r = await navigateSession(sessionBrowser, url, navPolicy);
-    if (!r.ok) hub.broadcast(session.id, { t: 'error', reason: r.reason });
+    if (r.ok) eventQueue.enqueue({ type: 'navigation', url }); // human nav → the agent learns of it via studio_observe
+    else hub.broadcast(session.id, { t: 'error', reason: r.reason });
   };
   onNavHandler = (msg) => {
     void navigate(typeof msg.url === 'string' ? msg.url : '');
@@ -208,7 +230,20 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   sessionBrowser.onFailed(() => hub.broadcast(session.id, { t: 'error', reason: 'session_failed' }));
   await bridge.start();
 
-  const handle: SessionHandle = { id: session.id, endpoint, token, pid: process.pid };
+  // Wire studio_observe to the live session and inject it into the daemon's shared
+  // dispatcher BEFORE the handle is published — closing the self-loop window (a
+  // studio_* call can't arrive, find the handle pointing at us, and proxy into a loop
+  // before studioHost is set). snapshot() reads sessionBrowser.cdp live (survives recovery rebind).
+  const observe = createObserver({
+    snapshot: () => snapshotter.snapshot(sessionBrowser.cdp),
+    eventQueue,
+    inlineBudget: cfg.studioSnapshotTokenBudget,
+    spillMaxBytes: STUDIO_SPILL_MAX_BYTES,
+    dataDir: opts.dataDir,
+  });
+  daemon.setStudioHost({ observe });
+
+  const handle: SessionHandle = { id: session.id, endpoint, token, pid: process.pid, instanceId };
   writeHandle(handle, opts.dataDir);
 
   return { daemon, registry, session, sessionBrowser, bridge, controller, navInterceptor, navigate, hub, handle, endpoint };

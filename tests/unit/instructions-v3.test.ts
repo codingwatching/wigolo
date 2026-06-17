@@ -111,7 +111,9 @@ describe('TOOL_DESCRIPTIONS v3 entries', () => {
     // and `watch` (slice B3). Real implementations land in those slices.
     expect(keys).toContain('diff');
     expect(keys).toContain('watch');
-    expect(keys.length).toBe(10);
+    // Phase 2H: the first studio_* tool — the agent's read-only perception of the session.
+    expect(keys).toContain('studio_observe');
+    expect(keys.length).toBe(11);
   });
 
   it('find_similar description mentions url and concept inputs', () => {
@@ -205,8 +207,8 @@ describe('ToolName type', () => {
     // contract this test locks in.
     const validNames: ToolName[] = [
       'fetch', 'search', 'crawl', 'cache', 'extract',
-      'find_similar', 'research', 'agent', 'diff', 'watch',
+      'find_similar', 'research', 'agent', 'diff', 'watch', 'studio_observe',
     ];
-    expect(validNames.length).toBe(10);
+    expect(validNames.length).toBe(11);
   });
 });

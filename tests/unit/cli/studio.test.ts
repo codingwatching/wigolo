@@ -18,6 +18,7 @@ vi.mock('../../../src/daemon/http-server.js', () => ({
       events.push('start');
       return 'http://127.0.0.1:7777';
     });
+    setStudioHost = vi.fn().mockImplementation(() => { events.push('setStudioHost'); });
     stop = vi.fn().mockResolvedValue(undefined);
   },
 }));
@@ -107,6 +108,16 @@ describe('cli/studio startStudioHost', () => {
     // Warmup must complete before the host listens and before the handle is published.
     expect(events.indexOf('warmup')).toBeLessThan(events.indexOf('start'));
     expect(events.indexOf('warmup')).toBeLessThan(events.indexOf('handle'));
+    await host.daemon.stop();
+  });
+
+  it('wires setStudioHost BEFORE publishing the handle (closes the self-loop window in the real boot sequence)', async () => {
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
+    expect(events).toContain('setStudioHost');
+    expect(events).toContain('handle');
+    // The handle is the only discovery path — setStudioHost must run first so a studio_*
+    // call can't arrive, read the handle pointing at us, and proxy into a self-loop.
+    expect(events.indexOf('setStudioHost')).toBeLessThan(events.indexOf('handle'));
     await host.daemon.stop();
   });
 

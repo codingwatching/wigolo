@@ -579,6 +579,25 @@ export const WATCH_TOOL_SCHEMA = {
   required: ['action'],
 };
 
+export const STUDIO_OBSERVE_TOOL_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    since: {
+      type: 'number',
+      description: 'Event cursor from your last observe; pass it back to receive only newer human events and acknowledge the prior ones.',
+    },
+    base_id: {
+      type: 'string',
+      description: 'The page-snapshot id you currently hold; on a mismatch (reconnect or navigation) you get a fresh full snapshot instead of a diff.',
+    },
+    snapshot_ref: {
+      type: 'string',
+      description: 'Fetch a previously spilled (oversized) snapshot by its reference.',
+    },
+  },
+  required: [],
+};
+
 export const TOOL_SCHEMAS: Record<ToolName, ToolSchema> = {
   fetch: FETCH_TOOL_SCHEMA,
   search: SEARCH_TOOL_SCHEMA,
@@ -590,4 +609,5 @@ export const TOOL_SCHEMAS: Record<ToolName, ToolSchema> = {
   agent: AGENT_TOOL_SCHEMA,
   diff: DIFF_TOOL_SCHEMA,
   watch: WATCH_TOOL_SCHEMA,
+  studio_observe: STUDIO_OBSERVE_TOOL_SCHEMA,
 };

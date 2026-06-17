@@ -55,9 +55,14 @@ import {
   AGENT_TOOL_SCHEMA,
   DIFF_TOOL_SCHEMA,
   WATCH_TOOL_SCHEMA,
+  STUDIO_OBSERVE_TOOL_SCHEMA,
 } from './server/tool-schemas.js';
 import { loadPlugins } from './plugins/loader.js';
 import { PluginRegistry } from './plugins/registry.js';
+// The studio_* seam: routes execute-on-host / proxy / refuse. Reaches the session ONLY
+// through the proxy + the (host-injected) studioHost closure — no session-module import,
+// so the stdio path stays untouched (grep invariant).
+import { dispatchStudioTool, type StudioHostHandlers } from './daemon/studio-dispatch.js';
 import { registerExtractor } from './extraction/pipeline.js';
 import type { FetchInput, SearchInput, SearchEngine, CrawlInput, CacheInput, ExtractInput, FindSimilarInput, ResearchInput, AgentInput, ProgressCallback, WatchJobInput } from './types.js';
 
@@ -85,6 +90,8 @@ export interface Subsystems {
   pluginRegistry: PluginRegistry;
   shutdown: () => Promise<void>;
   bootstrapSearxng: () => Promise<void>;
+  /** Set ONLY in the live Studio host process (injected by cli/studio.ts via DaemonHttpServer.setStudioHost). Undefined on stdio → studio_* calls proxy to the host. */
+  studioHost?: StudioHostHandlers;
 }
 
 export async function initSubsystems(): Promise<Subsystems> {
@@ -353,6 +360,11 @@ export function createMcpServer(subsystems: Subsystems): Server {
         description: TOOL_DESCRIPTIONS.watch,
         inputSchema: WATCH_TOOL_SCHEMA,
       },
+      {
+        name: 'studio_observe',
+        description: TOOL_DESCRIPTIONS.studio_observe,
+        inputSchema: STUDIO_OBSERVE_TOOL_SCHEMA,
+      },
     ],
   }));
 
@@ -523,6 +535,12 @@ export function createMcpServer(subsystems: Subsystems): Server {
         content: [{ type: 'text', text: JSON.stringify(r.ok ? r.data : { error: r.error, error_reason: r.error_reason, stage: r.stage, ...((r as { hint?: string }).hint ? { hint: (r as { hint?: string }).hint } : {}) }, null, 2) }],
         isError: !r.ok,
       };
+    }
+
+    if (name === 'studio_observe') {
+      // Route through the shared seam: execute-on-host (studioHost set) or proxy/refuse on stdio.
+      const result = await dispatchStudioTool(name, (args ?? {}) as Record<string, unknown>, subsystems.studioHost, getConfig().dataDir);
+      return { content: result.content, isError: result.isError };
     }
 
     return {

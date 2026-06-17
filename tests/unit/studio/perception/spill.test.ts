@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, utimesSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeSpill, readSpill, fitElementsToBudget, fitDiffToBudget } from '../../../../src/studio/perception/spill.js';
+import { writeSpill, readSpill, fitElementsToBudget, fitDiffToBudget, enforceSpillBudget } from '../../../../src/studio/perception/spill.js';
 import type { SnapshotElement } from '../../../../src/studio/perception/snapshot.js';
 
 const el = (ref: string, name: string): SnapshotElement => ({ ref, role: 'button', name });
@@ -62,5 +62,36 @@ describe('fitDiffToBudget — an over-budget diff spills too (build-in #3)', () 
     expect(r.diff).toBeNull();
     expect(r.summary).toMatchObject({ added: 100, removed: 0 });
     expect((readSpill(r.spillRef!, dir) as { added: unknown[] }).added.length).toBe(100);
+  });
+});
+
+describe('enforceSpillBudget — reference-aware, byte-bound GC (sized for PNG bytes, fail-loud fetch)', () => {
+  const fileOf = (ref: string) => join(dir, 'studio', 'snapshots', ref.slice('spill:'.length) + '.json');
+  const writeN = (n: number, pad: string) => {
+    const refs = Array.from({ length: n }, (_, i) => writeSpill({ pad: pad.repeat(500), i }, dir));
+    refs.forEach((r, i) => utimesSync(fileOf(r), 1000 + i, 1000 + i)); // deterministic oldest→newest mtimes
+    return refs;
+  };
+
+  it('evicts oldest-first until under the byte budget', () => {
+    const refs = writeN(5, 'x');
+    const total = refs.reduce((s, r) => s + statSync(fileOf(r)).size, 0);
+    const res = enforceSpillBudget({ maxBytes: Math.floor(total * 0.5), dataDir: dir });
+    expect(res.evicted).toBeGreaterThan(0);
+    expect(res.bytes).toBeLessThanOrEqual(Math.floor(total * 0.5));
+    expect(readSpill(refs[0], dir)).toBeNull(); // oldest evicted
+    expect(readSpill(refs[4], dir)).not.toBeNull(); // newest kept
+  });
+
+  it('NEVER evicts a protected (live-referenced) ref, even if it is the oldest', () => {
+    const refs = writeN(4, 'y');
+    enforceSpillBudget({ maxBytes: 600, protect: new Set([refs[0]]), dataDir: dir });
+    expect(readSpill(refs[0], dir)).not.toBeNull(); // protected oldest survives
+  });
+
+  it('a fetch of an evicted ref returns null — the consumer must fail loud, never silently empty', () => {
+    const ref = writeSpill({ pad: 'z'.repeat(2000) }, dir);
+    enforceSpillBudget({ maxBytes: 0, dataDir: dir });
+    expect(readSpill(ref, dir)).toBeNull();
   });
 });
