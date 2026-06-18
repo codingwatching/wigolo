@@ -47,10 +47,11 @@ export interface KeyInput {
 }
 
 /**
- * A page-CSS-px mouse event for the AGENT path. The 2J.1 resolver returns page CSS
- * px (the same coordinate space `Input.dispatchMouseEvent` / `DOM.getBoxModel` /
- * `DOM.getNodeForLocation` share), so these are dispatched verbatim — NOT through
- * the normalized→page mapping the human (downscaled-frame) channel uses.
+ * A page-CSS-px mouse event for the AGENT path. The resolver returns a VIEWPORT-relative
+ * CSS-px centre — the same space `Input.dispatchMouseEvent` and `DOM.getBoxModel` use — so
+ * these are dispatched verbatim, NOT through the normalized→page mapping the human
+ * (downscaled-frame) channel uses. (`DOM.getNodeForLocation`, the resolver's occlusion
+ * hit-test, is DOCUMENT-relative and is scroll-shifted inside the resolver — not here.)
  */
 export interface AgentMouseInput {
   type: 'mousePressed' | 'mouseReleased' | 'mouseMoved' | 'mouseWheel';
