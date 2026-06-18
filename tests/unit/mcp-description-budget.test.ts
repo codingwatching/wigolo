@@ -56,7 +56,7 @@ describe('MCP description token budgets', () => {
     // Slice A1 (2026-05-26): added `diff` + `watch` registration-only stubs
     // alongside the v3 8 tools. Both ship with descriptions so they count
     // toward the per-tool token budget walk.
-    expect(toolEntries.length).toBe(12); // + studio_observe (2H) + studio_act (2I)
+    expect(toolEntries.length).toBe(13); // + studio_observe (2H) + studio_act (2I) + studio_marks (3c)
     expect(argEntries.length).toBeGreaterThan(0); // sanity: walker actually walked
   });
 

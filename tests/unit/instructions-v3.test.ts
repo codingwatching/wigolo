@@ -115,7 +115,9 @@ describe('TOOL_DESCRIPTIONS v3 entries', () => {
     expect(keys).toContain('studio_observe');
     // Phase 2I: the agent's acting verb in the session (navigate; click/type/scroll later).
     expect(keys).toContain('studio_act');
-    expect(keys.length).toBe(12);
+    // Phase 3c: the agent reads the human's marks.
+    expect(keys).toContain('studio_marks');
+    expect(keys.length).toBe(13);
   });
 
   it('studio_act description covers navigation, the control token, and the private/metadata block', () => {
@@ -217,8 +219,8 @@ describe('ToolName type', () => {
     // contract this test locks in.
     const validNames: ToolName[] = [
       'fetch', 'search', 'crawl', 'cache', 'extract',
-      'find_similar', 'research', 'agent', 'diff', 'watch', 'studio_observe', 'studio_act',
+      'find_similar', 'research', 'agent', 'diff', 'watch', 'studio_observe', 'studio_act', 'studio_marks',
     ];
-    expect(validNames.length).toBe(12);
+    expect(validNames.length).toBe(13);
   });
 });
