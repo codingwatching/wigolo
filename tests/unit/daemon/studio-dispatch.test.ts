@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { dispatchStudioTool, type StudioHostHandlers, type McpToolResult } from '../../../src/daemon/studio-dispatch.js';
+import { dispatchStudioTool, type StudioHostHandlers, type McpToolResult, type StudioGeneralizeOutput } from '../../../src/daemon/studio-dispatch.js';
 import { writeHandle, setMyInstanceId, type SessionHandle } from '../../../src/studio/handle.js';
 
 let dir: string;
@@ -120,5 +120,29 @@ describe('dispatchStudioTool — studio_marks routing', () => {
     const r = await dispatchStudioTool('studio_marks', {}, undefined, dir, { proxyFactory: proxyReturning(hostResult) });
     expect(proxyCalls).toEqual([{ name: 'studio_marks', args: {} }]);
     expect(r).toEqual(hostResult); // verbatim — untrusted mark descriptors preserved
+  });
+
+  it('EXECUTE studio_marks{op:generalize} routes the op to the host and serializes the preview (refs + confidence + requires_confirmation)', async () => {
+    const out: StudioGeneralizeOutput = { markId: 'm1', refs: ['e1', 'e2', 'e3'], confidence: 'high', requires_confirmation: true };
+    const handlers: StudioHostHandlers = {
+      ...hostHandlers(),
+      marks: async (input) => {
+        expect(input).toEqual({ op: 'generalize', markId: 'm1' }); // the op + markId reach the host handler intact
+        return out;
+      },
+    };
+    const r = await dispatchStudioTool('studio_marks', { op: 'generalize', markId: 'm1' }, handlers, dir, { proxyFactory: proxyReturning({}) });
+    expect(r.isError).toBe(false);
+    expect(JSON.parse(r.content[0].text)).toEqual(out); // requires_confirmation + refs survive serialization
+    expect(proxyCalls).toEqual([]);
+  });
+
+  it('PROXY studio_marks{op:generalize} forwards the op VERBATIM (preview-only contract preserved across the proxy)', async () => {
+    writeHandle(handle({ instanceId: 'host-FOREIGN' }), dir);
+    setMyInstanceId('host-MINE');
+    const hostResult = { content: [{ type: 'text', text: JSON.stringify({ markId: 'm1', refs: ['e1', 'e2'], confidence: 'medium', requires_confirmation: true }) }], isError: false };
+    const r = await dispatchStudioTool('studio_marks', { op: 'generalize', markId: 'm1' }, undefined, dir, { proxyFactory: proxyReturning(hostResult) });
+    expect(proxyCalls).toEqual([{ name: 'studio_marks', args: { op: 'generalize', markId: 'm1' } }]);
+    expect(r).toEqual(hostResult); // verbatim — requires_confirmation reaches the agent unchanged
   });
 });

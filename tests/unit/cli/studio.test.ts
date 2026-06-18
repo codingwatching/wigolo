@@ -127,6 +127,23 @@ describe('cli/studio startStudioHost', () => {
     await host.daemon.stop();
   });
 
+  it('marksTool routes op=generalize to generalizeMark and the default (no op) to the list view', async () => {
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
+    // generalize on an unknown mark surfaces a typed error (routed to generalizeMark, not the list).
+    expect(await host.marksTool({ op: 'generalize', markId: 'nope' })).toMatchObject({ error_reason: 'no_such_mark' });
+    // no op → the list view (a StudioMarksOutput, never a generalize result).
+    const listed = await host.marksTool({});
+    expect(listed).toEqual({ marks: [] }); // no marks in this fresh session → empty list, NOT a generalize shape
+    await host.daemon.stop();
+  });
+
+  it('generalizeMark refuses missing/unknown marks with typed errors (never a blind preview)', async () => {
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
+    expect(await host.generalizeMark()).toMatchObject({ error_reason: 'missing_mark_id' }); // op without a markId
+    expect(await host.generalizeMark('does-not-exist')).toMatchObject({ error_reason: 'no_such_mark' });
+    await host.daemon.stop();
+  });
+
   it('wires setStudioHost BEFORE publishing the handle (closes the self-loop window in the real boot sequence)', async () => {
     const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
     expect(events).toContain('setStudioHost');

@@ -84,7 +84,10 @@ export interface StudioToolError {
 }
 
 export interface StudioMarksInput {
-  // Phase 3c reads all marks; 3d adds a read-only generalize op (op/markId) here.
+  /** Phase 3c lists marks; 3d adds a read-only `generalize` op (preview the repeating sibling set a mark belongs to). */
+  op?: 'list' | 'generalize';
+  /** The mark to generalize when `op === 'generalize'`. */
+  markId?: string;
   [k: string]: unknown;
 }
 
@@ -105,8 +108,22 @@ export interface StudioMarksOutput {
   marks: StudioMarkView[];
 }
 
+/**
+ * Phase 3d `studio_marks{op:'generalize'}` — a PREVIEW of the repeating sibling set a mark belongs
+ * to (a list/grid the human marked one example of). Carries only opaque host refs + a confidence,
+ * NO page-derived content (no new trust surface). `requires_confirmation` is always true:
+ * generalize is a READ — the agent acts per-ref via studio_act ONLY after the human confirms.
+ */
+export interface StudioGeneralizeOutput {
+  markId: string;
+  /** Live snapshot refs of the matched set, visually ordered — each passed to studio_act after the human confirm. */
+  refs: string[];
+  confidence: 'high' | 'medium' | 'low' | 'none';
+  requires_confirmation: true;
+}
+
 export function isStudioToolError(
-  x: StudioObserveOutput | StudioActOutput | StudioMarksOutput | StudioToolError,
+  x: StudioObserveOutput | StudioActOutput | StudioMarksOutput | StudioGeneralizeOutput | StudioToolError,
 ): x is StudioToolError {
   return typeof (x as StudioToolError).error_reason === 'string';
 }
@@ -114,7 +131,7 @@ export function isStudioToolError(
 export interface StudioHostHandlers {
   observe(input: StudioObserveInput): Promise<StudioObserveOutput | StudioToolError>;
   act(input: StudioActInput): Promise<StudioActOutput | StudioToolError>;
-  marks(input: StudioMarksInput): Promise<StudioMarksOutput | StudioToolError>;
+  marks(input: StudioMarksInput): Promise<StudioMarksOutput | StudioGeneralizeOutput | StudioToolError>;
 }
 
 export interface McpToolResult {

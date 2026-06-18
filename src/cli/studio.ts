@@ -25,13 +25,16 @@ import { createInspector } from '../studio/mark/inspect.js';
 import { MarkStore, type StudioMark } from '../studio/mark/store.js';
 import { buildTarget, buildTargetFromFlat, indexAxByBackendNode, type StructuredTarget } from '../studio/mark/target.js';
 import { heal, type HealResult } from '../studio/mark/heal.js';
+import { generalize, applyGeometry, type GenBox } from '../studio/mark/generalize.js';
 import type {
   StudioObserveInput,
   StudioObserveOutput,
   StudioActInput,
   StudioActOutput,
+  StudioMarksInput,
   StudioMarksOutput,
   StudioMarkView,
+  StudioGeneralizeOutput,
   StudioToolError,
 } from '../daemon/studio-dispatch.js';
 import { randomUUID } from 'node:crypto';
@@ -100,8 +103,12 @@ export interface StudioHost {
   marks: () => StudioMark[];
   /** Re-resolve a stored mark against the CURRENT page via the heal cascade (mark→live ref). Exposed for the headed tests + the Phase-3c studio_marks tool. */
   healMark: (markId: string) => Promise<HealResult | { error: 'no_such_mark' }>;
-  /** The studio_marks tool handler: each mark's descriptor + current heal verdict + a live ref for the actionable ones. Exposed for the headed tests. */
+  /** The studio_marks list view: each mark's descriptor + current heal verdict + a live ref for the actionable ones. Exposed for the headed tests. */
   marksView: () => Promise<StudioMarksOutput>;
+  /** Preview the repeating sibling set a mark belongs to (Phase 3d generalize op — preview-only READ, never acts). Exposed for the headed tests + the studio_marks generalize op. */
+  generalizeMark: (markId?: string) => Promise<StudioGeneralizeOutput | StudioToolError>;
+  /** The studio_marks tool entry: lists marks, or (op='generalize') previews a mark's repeating set. Exposed for the host-boundary/headed tests. */
+  marksTool: (input: StudioMarksInput) => Promise<StudioMarksOutput | StudioGeneralizeOutput | StudioToolError>;
   /** The agent's observe verb (studio_observe) — host-authoritative snapshot + event drain. Exposed for the host-boundary/headed tests. */
   observe: (input: StudioObserveInput) => Promise<StudioObserveOutput | StudioToolError>;
   /** The agent's acting verb (studio_act) — gate + live ref-resolve + the token-gated input channel, host-authoritative. Exposed for the host-boundary tests. */
@@ -347,6 +354,44 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
       }),
     };
   };
+  // The viewport-relative bounding box of a live node (CSS px) for the generalize geometric
+  // tiebreaker; null when the node has no box (display:none / detached) — applyGeometry keeps such
+  // a structural match (not-rendered ≠ off-pattern; the human confirms).
+  const boxForNode = async (backendNodeId: number): Promise<GenBox | null> => {
+    try {
+      const r = (await sessionBrowser.cdp.send('DOM.getBoxModel', { backendNodeId })) as { model?: { content?: number[] } };
+      const q = r.model?.content;
+      if (!q || q.length < 8) return null;
+      const xs = [q[0], q[2], q[4], q[6]];
+      const ys = [q[1], q[3], q[5], q[7]];
+      const x = Math.min(...xs), y = Math.min(...ys);
+      return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+    } catch {
+      return null;
+    }
+  };
+  // studio_marks{op:'generalize'} (3d): preview the repeating sibling set the mark belongs to (a
+  // list/grid the human marked one example of) so the agent can act across it AFTER a human
+  // confirm. PREVIEW-ONLY (requires_confirmation:true) — never acts. The matched refs are the SAME
+  // live refs the 2J resolver resolves at dispatch (one shared ref list, no parallel resolver).
+  const generalizeMark = async (markId?: string): Promise<StudioGeneralizeOutput | StudioToolError> => {
+    if (!markId) return { error_reason: 'missing_mark_id', hint: "op='generalize' needs a markId — read studio_marks for live ids." };
+    const m = markStore.get(markId);
+    if (!m) return { error_reason: 'no_such_mark', hint: 'That mark id is not in the current session. Re-read studio_marks for live ids.' };
+    const structural = generalize(m.target, await buildHealCandidates());
+    // Minimal geometric tiebreaker: box ONLY the structurally-matched set (bounded by the match
+    // count, not the whole page) — a confirm-gated preview, not a hot path.
+    const boxes = new Map<string, GenBox>();
+    for (const match of structural.matches) {
+      const box = await boxForNode(match.backendNodeId);
+      if (box) boxes.set(match.ref, box);
+    }
+    const refined = applyGeometry(structural, boxes);
+    return { markId, refs: refined.refs, confidence: refined.confidence, requires_confirmation: true };
+  };
+  // The studio_marks tool entry: list (default) or generalize a single mark. Thin dispatch only.
+  const marksTool = async (input: StudioMarksInput): Promise<StudioMarksOutput | StudioGeneralizeOutput | StudioToolError> =>
+    input.op === 'generalize' ? generalizeMark(input.markId) : marksView();
 
   bridge = new ScreencastBridge({
     cdp: sessionBrowser.cdp,
@@ -401,12 +446,12 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   // never action-executor.page.* or a raw CDP Input side-channel (those bypass the epoch
   // fence + held-input neutralization).
   const act = createActHandler({ browser: sessionBrowser, controlToken, grant, resolve, channel: controller });
-  daemon.setStudioHost({ observe, act, marks: marksView });
+  daemon.setStudioHost({ observe, act, marks: marksTool });
 
   const handle: SessionHandle = { id: session.id, endpoint, token, pid: process.pid, instanceId };
   writeHandle(handle, opts.dataDir);
 
-  return { daemon, registry, session, sessionBrowser, bridge, controller, navInterceptor, navigate, mark, marks: () => markStore.list(), healMark, marksView, observe, act, grantAgentPrivateNav, hub, handle, endpoint };
+  return { daemon, registry, session, sessionBrowser, bridge, controller, navInterceptor, navigate, mark, marks: () => markStore.list(), healMark, marksView, generalizeMark, marksTool, observe, act, grantAgentPrivateNav, hub, handle, endpoint };
 }
 
 export function runStudio(args: string[]): void {
