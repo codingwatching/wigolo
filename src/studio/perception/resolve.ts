@@ -58,16 +58,20 @@ function quadCenter(q: number[]): { x: number; y: number } {
 
 /**
  * The page's current scroll offset in CSS px (DPR-safe — `cssVisualViewport` is the
- * explicitly-CSS-px field). `DOM.getNodeForLocation` takes DOCUMENT coordinates, so the
- * viewport-relative click centre is shifted by this for the hit-test. Best-effort: a
- * failed/empty metrics read falls back to {0,0} (correct at scrollY=0, no worse than the
- * pre-shift behavior elsewhere).
+ * explicitly-CSS-px field; the deprecated `visualViewport` is device px and would re-break
+ * DPR≠1). `DOM.getNodeForLocation` takes DOCUMENT coordinates, so the viewport-relative
+ * click centre is shifted by this for the hit-test. Returns `null` if the read FAILS — the
+ * caller then fails CLOSED rather than hit-testing blind at viewport coords on a page that
+ * might be scrolled (which would falsely pass an occluded target). A successful read with a
+ * zero offset (the scrollY=0 case) returns {0,0}, not null.
  */
-async function scrollOffset(cdp: PerceptionCdp): Promise<{ x: number; y: number }> {
-  const m = (await cdp.send('Page.getLayoutMetrics').catch(() => ({}))) as {
-    cssVisualViewport?: { pageX?: number; pageY?: number };
-  };
-  return { x: m.cssVisualViewport?.pageX ?? 0, y: m.cssVisualViewport?.pageY ?? 0 };
+async function scrollOffset(cdp: PerceptionCdp): Promise<{ x: number; y: number } | null> {
+  try {
+    const m = (await cdp.send('Page.getLayoutMetrics')) as { cssVisualViewport?: { pageX?: number; pageY?: number } };
+    return { x: m?.cssVisualViewport?.pageX ?? 0, y: m?.cssVisualViewport?.pageY ?? 0 };
+  } catch {
+    return null;
+  }
 }
 
 /** Walk UP from `node` via parent links; true if `target` is `node` or one of its ancestors. */
@@ -98,9 +102,12 @@ export function createResolver(deps: ResolveDeps): (ref: string) => Promise<Reso
 
     // Occlusion hit-test. getNodeForLocation is DOCUMENT-relative (getBoxModel/dispatch are
     // viewport-relative), so query the click centre shifted by the scroll offset — else the
-    // hit-test lands at the wrong document point on a scrolled page. A topmost node that is
-    // neither the target nor a descendant means something is covering it.
+    // hit-test lands at the wrong document point on a scrolled page. If the scroll offset is
+    // unreadable, FAIL CLOSED (treat as occluded → re-observe): hit-testing blind at viewport
+    // coords on a possibly-scrolled page could falsely pass an occluded target. A topmost node
+    // that is neither the target nor a descendant means something is covering it.
     const scroll = await scrollOffset(deps.cdp);
+    if (!scroll) return { error: 'element_occluded' };
     const hit = (await deps.cdp.send('DOM.getNodeForLocation', {
       x: Math.round(center.x + scroll.x),
       y: Math.round(center.y + scroll.y),

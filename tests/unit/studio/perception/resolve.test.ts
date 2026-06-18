@@ -163,6 +163,25 @@ describe('createResolver — live ref → coordinates', () => {
     expect(gnflCalls).toEqual([{ x: 110, y: 205 + SCROLL_Y }]); // queried at the DOCUMENT point, not the viewport point
   });
 
+  it('fails CLOSED (element_occluded) when the scroll offset cannot be read — never hit-tests blind at viewport coords on a possibly-scrolled page', async () => {
+    // If the scroll offset is unavailable we cannot place the document-space hit-test, so we
+    // must refuse rather than silently query the viewport point (which would falsely PASS an
+    // occluded target on a scrolled page — the exact fail-open this guard exists to prevent).
+    const cdp = {
+      send: async (method: string) => {
+        if (method === 'DOM.getBoxModel') return { model: { content: BOX } };
+        if (method === 'Page.getLayoutMetrics') throw new Error('metrics unavailable');
+        if (method === 'DOM.getNodeForLocation') return { backendNodeId: 100 }; // would FALSELY pass if we proceeded
+        return {};
+      },
+    };
+    const resolve = createResolver({
+      snapshot: async () => makeSnapshot({ elements: [{ ref: 'e1', role: 'button', name: 'Go' }], refMap: [['e1', 100]], domParent: [[100, null]] }),
+      cdp,
+    });
+    expect(asErr(await resolve('e1')).error).toBe('element_occluded');
+  });
+
   it('still reports element_occluded under scroll when a real overlay covers the target at the document point', async () => {
     // The fix must not DISABLE occlusion — an overlay genuinely on top at the (correct) doc point still blocks.
     const SCROLL_Y = 2800;
