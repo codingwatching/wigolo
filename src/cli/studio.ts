@@ -16,14 +16,14 @@ import { policyForHolder, type NavGrant } from '../studio/nav-policy.js';
 import { StudioWsHub } from '../studio/ws-hub.js';
 import { writeHandle, removeHandle, studioHandlePath, setMyInstanceId, type SessionHandle } from '../studio/handle.js';
 import { closeDaemonBrowser } from '../fetch/playwright-tier.js';
-import { PageSnapshotter, buildSnapshot, type AxNode, type DomNode } from '../studio/perception/snapshot.js';
+import { PageSnapshotter, buildSnapshot, flattenDom, type AxNode, type DomNode } from '../studio/perception/snapshot.js';
 import { createResolver } from '../studio/perception/resolve.js';
 import { StudioEventQueue } from '../studio/event-queue.js';
 import { createObserver } from '../studio/observe.js';
 import { createActHandler } from '../studio/act.js';
 import { createInspector } from '../studio/mark/inspect.js';
 import { MarkStore, type StudioMark } from '../studio/mark/store.js';
-import { buildTarget, type StructuredTarget } from '../studio/mark/target.js';
+import { buildTarget, buildTargetFromFlat, indexAxByBackendNode, type StructuredTarget } from '../studio/mark/target.js';
 import { heal, type HealResult } from '../studio/mark/heal.js';
 import type {
   StudioObserveInput,
@@ -303,9 +303,13 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
     const ax = (await sessionBrowser.cdp.send('Accessibility.getFullAXTree')) as { nodes?: AxNode[] };
     const doc = (await sessionBrowser.cdp.send('DOM.getDocument', { depth: -1, pierce: true })) as { root?: DomNode };
     const snap = buildSnapshot(ax.nodes ?? [], doc.root, { tokenBudget: cfg.studioSnapshotTokenBudget });
+    // Flatten the DOM + index the AX tree ONCE, then build each candidate from the shared maps —
+    // O(N), not the O(K·N) that re-flattening per candidate would cost on a many-element page.
+    const flat = flattenDom(doc.root).map;
+    const axByBe = indexAxByBackendNode(ax.nodes ?? []);
     const candidates: Array<{ ref: string; target: StructuredTarget }> = [];
     for (const [ref, backendNodeId] of snap.refMap) {
-      const target = buildTarget(ax.nodes ?? [], doc.root, backendNodeId);
+      const target = buildTargetFromFlat(flat, axByBe, backendNodeId);
       if (target) candidates.push({ ref, target });
     }
     return heal(m.target, candidates);

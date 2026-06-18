@@ -61,6 +61,17 @@ describe('heal — self-healing locator cascade (mark → live ref)', () => {
     expect(r.ref).toBeUndefined();
   });
 
+  it('tier PRECEDENCE: a fingerprint-unique match wins over a DIFFERENT role+name match (fingerprint tier runs first)', () => {
+    // eA matches the seed's fingerprint (tier 1) but NOT its role+name; eB matches role+name
+    // (tier 2) but not the fingerprint. Heal must take eA via tier 1 — a reorder to role+name-first
+    // would return eB/medium/role-name and redden this.
+    const r = heal(seed, [
+      cand('eA', { fingerprint: 'FP-seed', role: 'button', name: 'NOT-THE-NAME', backendNodeId: 1 }),
+      cand('eB', { fingerprint: 'DIFFERENT', role: 'button', name: 'Delete', backendNodeId: 2 }),
+    ]);
+    expect(r).toMatchObject({ confidence: 'high', ref: 'eA', backendNodeId: 1, tier: 'fingerprint' });
+  });
+
   it('nothing matches by any tier → none (not found — never a wrong element)', () => {
     const r = heal(seed, [cand('eX', { fingerprint: 'X', role: 'link', name: 'Home', ancestorPath: 'body/nav/a', backendNodeId: 7 })]);
     expect(r.confidence).toBe('none');
