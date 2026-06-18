@@ -146,7 +146,12 @@ export class EmbeddingService {
         log.warn('embedding returned empty vector', { url });
         return;
       }
-      this.providerVerified = true; // a successful real embed proves the provider works (self-heal if the async probe lost the race / failed)
+      // A successful real embed proves the provider works → self-heal providerVerified if the
+      // async probe lost the race or failed. This is the load-bearing self-heal: embedAndStore is
+      // gated on `available` (not providerVerified), so background indexing reaches it even when
+      // the probe failed. (findSimilar does NOT self-heal — its only caller gates on
+      // isSubprocessReady() upstream, so it's unreachable with providerVerified=false anyway.)
+      this.providerVerified = true;
 
       const buffer = Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
       const model = this.provider.modelId;
@@ -213,7 +218,6 @@ export class EmbeddingService {
         log.warn('query embedding failed: empty vector');
         return [];
       }
-      this.providerVerified = true; // a successful real embed proves the provider works (self-heal)
 
       const overscan = excludeUrls && excludeUrls.size > 0
         ? Math.max(topK + excludeUrls.size, topK * 2)
