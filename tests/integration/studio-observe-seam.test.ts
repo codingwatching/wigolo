@@ -59,6 +59,7 @@ describe('studio_observe wiring → seam (createMcpServer dispatch)', () => {
         };
       },
       act: async (input) => ({ ok: true, action: input.action, url: input.url }),
+      marks: async () => ({ marks: [] }),
     };
     const { res, parsed } = await callStudioObserve(stubSubsystems(studioHost));
     expect(observed).toBe(true); // routed through the arm → dispatchStudioTool → studioHost.observe (not dead code)

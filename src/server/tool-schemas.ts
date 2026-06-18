@@ -631,6 +631,12 @@ export const STUDIO_ACT_TOOL_SCHEMA = {
   required: ['action'],
 };
 
+export const STUDIO_MARKS_TOOL_SCHEMA = {
+  type: 'object' as const,
+  properties: {},
+  required: [],
+};
+
 export const TOOL_SCHEMAS: Record<ToolName, ToolSchema> = {
   fetch: FETCH_TOOL_SCHEMA,
   search: SEARCH_TOOL_SCHEMA,
@@ -644,4 +650,5 @@ export const TOOL_SCHEMAS: Record<ToolName, ToolSchema> = {
   watch: WATCH_TOOL_SCHEMA,
   studio_observe: STUDIO_OBSERVE_TOOL_SCHEMA,
   studio_act: STUDIO_ACT_TOOL_SCHEMA,
+  studio_marks: STUDIO_MARKS_TOOL_SCHEMA,
 };

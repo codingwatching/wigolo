@@ -30,6 +30,8 @@ import type {
   StudioObserveOutput,
   StudioActInput,
   StudioActOutput,
+  StudioMarksOutput,
+  StudioMarkView,
   StudioToolError,
 } from '../daemon/studio-dispatch.js';
 import { randomUUID } from 'node:crypto';
@@ -98,6 +100,8 @@ export interface StudioHost {
   marks: () => StudioMark[];
   /** Re-resolve a stored mark against the CURRENT page via the heal cascade (mark→live ref). Exposed for the headed tests + the Phase-3c studio_marks tool. */
   healMark: (markId: string) => Promise<HealResult | { error: 'no_such_mark' }>;
+  /** The studio_marks tool handler: each mark's descriptor + current heal verdict + a live ref for the actionable ones. Exposed for the headed tests. */
+  marksView: () => Promise<StudioMarksOutput>;
   /** The agent's observe verb (studio_observe) — host-authoritative snapshot + event drain. Exposed for the host-boundary/headed tests. */
   observe: (input: StudioObserveInput) => Promise<StudioObserveOutput | StudioToolError>;
   /** The agent's acting verb (studio_act) — gate + live ref-resolve + the token-gated input channel, host-authoritative. Exposed for the host-boundary tests. */
@@ -300,14 +304,13 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   // the cascade to a live snapshot ref — which the existing 2J resolver then takes to coords +
   // occlusion + dispatch (heal does mark→ref, the resolver does ref→action; no parallel resolver).
   // One AX⋈DOM fetch: buildSnapshot gives the candidate refs, buildTarget each candidate's locators.
-  const healMark = async (markId: string): Promise<HealResult | { error: 'no_such_mark' }> => {
-    const m = markStore.get(markId);
-    if (!m) return { error: 'no_such_mark' };
+  // Build the heal candidate set from ONE fresh AX⋈DOM fetch: buildSnapshot gives the candidate
+  // refs, buildTargetFromFlat each candidate's locators off a single shared flatten+AX-index
+  // (O(N), not O(K·N)). Shared by healMark (one mark) and the studio_marks handler (all marks).
+  const buildHealCandidates = async (): Promise<Array<{ ref: string; target: StructuredTarget }>> => {
     const ax = (await sessionBrowser.cdp.send('Accessibility.getFullAXTree')) as { nodes?: AxNode[] };
     const doc = (await sessionBrowser.cdp.send('DOM.getDocument', { depth: -1, pierce: true })) as { root?: DomNode };
     const snap = buildSnapshot(ax.nodes ?? [], doc.root, { tokenBudget: cfg.studioSnapshotTokenBudget });
-    // Flatten the DOM + index the AX tree ONCE, then build each candidate from the shared maps —
-    // O(N), not the O(K·N) that re-flattening per candidate would cost on a many-element page.
     const flat = flattenDom(doc.root).map;
     const axByBe = indexAxByBackendNode(ax.nodes ?? []);
     const candidates: Array<{ ref: string; target: StructuredTarget }> = [];
@@ -315,7 +318,34 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
       const target = buildTargetFromFlat(flat, axByBe, backendNodeId);
       if (target) candidates.push({ ref, target });
     }
-    return heal(m.target, candidates);
+    return candidates;
+  };
+  const healMark = async (markId: string): Promise<HealResult | { error: 'no_such_mark' }> => {
+    const m = markStore.get(markId);
+    if (!m) return { error: 'no_such_mark' };
+    return heal(m.target, await buildHealCandidates());
+  };
+  // studio_marks (3c): the agent reads each mark's page-derived descriptor (trusted:false) + its
+  // CURRENT heal verdict against one fresh snapshot — confident marks carry a live ref to act on,
+  // low/none ask. Healing all marks shares ONE candidate build.
+  const marksView = async (): Promise<StudioMarksOutput> => {
+    const all = markStore.list();
+    if (all.length === 0) return { marks: [] };
+    const candidates = await buildHealCandidates();
+    return {
+      marks: all.map((m) => {
+        const h = heal(m.target, candidates);
+        const view: StudioMarkView = {
+          markId: m.markId,
+          role: m.target.role,
+          name: m.target.name,
+          trusted: false,
+          confidence: h.confidence,
+        };
+        if (h.ref) view.ref = h.ref;
+        return view;
+      }),
+    };
   };
 
   bridge = new ScreencastBridge({
@@ -371,12 +401,12 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   // never action-executor.page.* or a raw CDP Input side-channel (those bypass the epoch
   // fence + held-input neutralization).
   const act = createActHandler({ browser: sessionBrowser, controlToken, grant, resolve, channel: controller });
-  daemon.setStudioHost({ observe, act });
+  daemon.setStudioHost({ observe, act, marks: marksView });
 
   const handle: SessionHandle = { id: session.id, endpoint, token, pid: process.pid, instanceId };
   writeHandle(handle, opts.dataDir);
 
-  return { daemon, registry, session, sessionBrowser, bridge, controller, navInterceptor, navigate, mark, marks: () => markStore.list(), healMark, observe, act, grantAgentPrivateNav, hub, handle, endpoint };
+  return { daemon, registry, session, sessionBrowser, bridge, controller, navInterceptor, navigate, mark, marks: () => markStore.list(), healMark, marksView, observe, act, grantAgentPrivateNav, hub, handle, endpoint };
 }
 
 export function runStudio(args: string[]): void {

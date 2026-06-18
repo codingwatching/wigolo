@@ -561,4 +561,31 @@ describe.skipIf(!RUN)('studio screencast bridge (integration, real browser)', ()
     ws.close();
     host.controller.handleControl({ op: 'reclaim' });
   }, 30_000);
+
+  // ───────────────────────────── Phase 3c: studio_marks ─────────────────────────────
+  it('3c: studio_marks returns the human marks with a live ref the agent acts on (mark → studio_marks → ref → studio_act)', async () => {
+    const html =
+      '<button id="b" onclick="window.__hit=1" style="position:fixed;left:40px;top:40px;width:220px;height:60px">Submit</button>';
+    await host.sessionBrowser.navigate('data:text/html,' + encodeURIComponent(html));
+    const page = host.sessionBrowser.page as unknown as import('playwright').Page;
+    await page.evaluate(() => ((window as unknown as { __hit: number }).__hit = 0));
+    const markId = await markButton('#b');
+
+    // The agent reads the marks: descriptor + untrusted tag + live confidence + a ref to act on.
+    const view = await host.marksView();
+    const m = view.marks.find((x) => x.markId === markId);
+    expect(m, 'studio_marks should surface the mark').toBeTruthy();
+    expect(m!.role).toBe('button');
+    expect(m!.name).toBe('Submit');
+    expect(m!.trusted).toBe(false); // page-derived descriptor — untrusted
+    expect(m!.confidence).toBe('high'); // resolves on the current page…
+    expect(m!.ref).toBeTruthy(); // …with a live ref
+
+    // The agent acts on the mark's ref via studio_act → clicks the real element (full mark→act loop).
+    host.controller.handleControl({ op: 'grant', to: 'agent' });
+    const r = (await host.act({ action: 'click', ref: m!.ref! })) as { ok?: boolean; error_reason?: string };
+    expect(r.error_reason).toBeUndefined();
+    expect(await page.evaluate(() => (window as unknown as { __hit: number }).__hit)).toBe(1);
+    host.controller.handleControl({ op: 'reclaim' });
+  }, 30_000);
 });

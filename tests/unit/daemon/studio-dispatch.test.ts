@@ -17,6 +17,7 @@ const throwingProxy = () => () => ({ callTool: async () => { throw new Error('EC
 const hostHandlers = (): StudioHostHandlers => ({
   observe: async () => ({ id: 'snap1', kind: 'full', elements: [], events: [], eventCursor: 0, eventsDropped: 0, domTruncated: false }),
   act: async (input) => { actCalls++; return { ok: true, action: input.action, url: input.url }; },
+  marks: async () => ({ marks: [] }),
 });
 const reason = (r: McpToolResult) => JSON.parse(r.content[0].text).error_reason as string;
 
@@ -97,5 +98,27 @@ describe('dispatchStudioTool — studio_act routing (authorization is HOST-SIDE)
     expect(r.isError).toBe(true);
     expect(reason(r)).toBe('no_studio_session');
     expect(actCalls).toBe(0);
+  });
+});
+
+describe('dispatchStudioTool — studio_marks routing', () => {
+  it('EXECUTE studio_marks on the host returns the marks view (the agent reads the human marks)', async () => {
+    const handlers: StudioHostHandlers = {
+      ...hostHandlers(),
+      marks: async () => ({ marks: [{ markId: 'm1', role: 'button', name: 'Buy', trusted: false, confidence: 'high', ref: 'e1' }] }),
+    };
+    const r = await dispatchStudioTool('studio_marks', {}, handlers, dir, { proxyFactory: proxyReturning({}) });
+    expect(r.isError).toBe(false);
+    expect(JSON.parse(r.content[0].text)).toEqual({ marks: [{ markId: 'm1', role: 'button', name: 'Buy', trusted: false, confidence: 'high', ref: 'e1' }] });
+    expect(proxyCalls).toEqual([]);
+  });
+
+  it('PROXY studio_marks from stdio forwards VERBATIM (trusted:false on each mark survives)', async () => {
+    writeHandle(handle({ instanceId: 'host-FOREIGN' }), dir);
+    setMyInstanceId('host-MINE');
+    const hostResult = { content: [{ type: 'text', text: JSON.stringify({ marks: [{ markId: 'm1', role: 'link', name: 'Home', trusted: false, confidence: 'low' }] }) }], isError: false };
+    const r = await dispatchStudioTool('studio_marks', {}, undefined, dir, { proxyFactory: proxyReturning(hostResult) });
+    expect(proxyCalls).toEqual([{ name: 'studio_marks', args: {} }]);
+    expect(r).toEqual(hostResult); // verbatim — untrusted mark descriptors preserved
   });
 });

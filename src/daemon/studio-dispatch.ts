@@ -83,13 +83,38 @@ export interface StudioToolError {
   charsLanded?: number;
 }
 
-export function isStudioToolError(x: StudioObserveOutput | StudioActOutput | StudioToolError): x is StudioToolError {
+export interface StudioMarksInput {
+  // Phase 3c reads all marks; 3d adds a read-only generalize op (op/markId) here.
+  [k: string]: unknown;
+}
+
+/** One human mark, as the agent reads it: page-derived descriptors (untrusted) + the CURRENT heal verdict. */
+export interface StudioMarkView {
+  markId: string;
+  role: string;
+  name: string;
+  /** role/name are page-derived — untrusted, like 2G vision + the mark event (Phase 3a). */
+  trusted: false;
+  /** Live re-resolution confidence (heal cascade): high/medium → actionable; low/none → re-observe / ask. */
+  confidence: 'high' | 'medium' | 'low' | 'none';
+  /** The live snapshot ref when confidently resolved (high/medium) — the agent passes it to studio_act. Absent for low/none. */
+  ref?: string;
+}
+
+export interface StudioMarksOutput {
+  marks: StudioMarkView[];
+}
+
+export function isStudioToolError(
+  x: StudioObserveOutput | StudioActOutput | StudioMarksOutput | StudioToolError,
+): x is StudioToolError {
   return typeof (x as StudioToolError).error_reason === 'string';
 }
 
 export interface StudioHostHandlers {
   observe(input: StudioObserveInput): Promise<StudioObserveOutput | StudioToolError>;
   act(input: StudioActInput): Promise<StudioActOutput | StudioToolError>;
+  marks(input: StudioMarksInput): Promise<StudioMarksOutput | StudioToolError>;
 }
 
 export interface McpToolResult {
@@ -133,6 +158,11 @@ export async function dispatchStudioTool(
       // Serialize the full result both ways — a refusal carries `hint` and (for
       // not_holder) `currentEpoch`, which the bare refusal() shape would drop.
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }], isError: isStudioToolError(data) };
+    }
+    if (name === 'studio_marks') {
+      const data = await studioHost.marks(args as StudioMarksInput);
+      if (isStudioToolError(data)) return refusal(data.error_reason, data.hint);
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }], isError: false };
     }
     return refusal('unknown_studio_tool', `No host handler for ${name}.`);
   }
