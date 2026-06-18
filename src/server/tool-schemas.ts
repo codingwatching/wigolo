@@ -633,7 +633,17 @@ export const STUDIO_ACT_TOOL_SCHEMA = {
 
 export const STUDIO_MARKS_TOOL_SCHEMA = {
   type: 'object' as const,
-  properties: {},
+  properties: {
+    op: {
+      type: 'string',
+      enum: ['list', 'generalize'],
+      description: "Omit (or 'list') to read all marks; 'generalize' previews the repeating set a mark belongs to.",
+    },
+    markId: {
+      type: 'string',
+      description: "The mark to generalize (required when op='generalize').",
+    },
+  },
   required: [],
 };
 

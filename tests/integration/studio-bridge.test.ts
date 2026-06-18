@@ -612,4 +612,26 @@ describe.skipIf(!RUN)('studio screencast bridge (integration, real browser)', ()
     expect(m!.ref).toBeUndefined(); // THE SURFACE GUARANTEE: no ref handed to the agent → it must ask, not act
     host.controller.handleControl({ op: 'reclaim' });
   }, 30_000);
+
+  // ───────────────────────────── Phase 3d: generalize ─────────────────────────────
+  it('3d: generalize previews the repeating sibling set from ONE marked list item, and the edit-distance gate excludes an off-pattern row (preview-only — requires_confirmation)', async () => {
+    // A real list of three identical-spine items + a deeply-nested "Sponsored" promo row whose
+    // button shares the role but sits behind extra wrappers (spine edit-distance > 0.3).
+    const html =
+      '<ul style="margin:0;padding:0;list-style:none">' +
+      '<li><button id="a" style="display:block;width:200px;height:40px">Add A</button></li>' +
+      '<li><button id="b" style="display:block;width:200px;height:40px">Add B</button></li>' +
+      '<li><button id="c" style="display:block;width:200px;height:40px">Add C</button></li>' +
+      '<li><div><div><aside><button id="sp" style="display:block;width:200px;height:40px">Sponsored</button></aside></div></div></li>' +
+      '</ul>';
+    await host.sessionBrowser.navigate('data:text/html,' + encodeURIComponent(html));
+    const markId = await markButton('#a'); // the human marks ONE example
+
+    const r = await host.generalizeMark(markId);
+    expect('refs' in r, 'generalize should return a preview, not an error').toBe(true);
+    const g = r as { refs: string[]; confidence: string; requires_confirmation: boolean };
+    expect(g.requires_confirmation).toBe(true); // a READ — the agent never auto-acts on the set
+    expect(g.refs.length).toBe(3); // the three exact-spine list buttons; the nested "Sponsored" row is gated out
+    expect(g.confidence).toBe('high'); // an exact-spine repeating set
+  }, 30_000);
 });
