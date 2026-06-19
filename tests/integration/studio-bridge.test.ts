@@ -838,4 +838,82 @@ describe.skipIf(!RUN)('studio screencast bridge (integration, real browser)', ()
       await new Promise<void>((r) => server.close(() => r()));
     }
   }, 30_000);
+
+  it('6c BOUNDARY (adversarial): an {approval} frame from the studio-browser PAGE context cannot self-approve — the page lacks the WS-upgrade bearer, so its forged current-epoch approve never reaches the channel', async () => {
+    // The approval channel has NO per-message party check; its boundary is the daemon WS-upgrade
+    // auth (per-session bearer subprotocol + Origin/Host, http-server.ts:200). The 2B nav interceptor
+    // is Document-only — it does NOT cover the page's in-page WS to localhost — so the BEARER is the
+    // lock. The page is served from 127.0.0.1 so its Origin PASSES the (loopback-allowing) Origin
+    // check, isolating the bearer as the thing that rejects it. We even hand the page the real
+    // request id (ids are sequential + guessable); it still cannot approve.
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<button id="go" onclick="window.__paid3=1" style="position:fixed;left:40px;top:40px;width:300px;height:60px">Continue</button>');
+    });
+    const port = await new Promise<number>((resolve) => server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port)));
+    const page = host.sessionBrowser.page as unknown as import('playwright').Page;
+    // A LEGIT human client (has the bearer) — only to capture the request id; it never approves.
+    const human = new WebSocket(host.endpoint.replace('http://', 'ws://') + `/studio/${host.session.id}/stream`, ['wigolo.stream', `wigolo.bearer.${host.session.token}`]);
+    try {
+      await new Promise<void>((resolve, reject) => { human.on('open', () => resolve()); human.on('error', reject); });
+      let reqId: number | undefined;
+      human.on('message', (d: WebSocket.RawData) => { const m = JSON.parse(d.toString()); if (m.t === 'approval_request') reqId = m.id as number; });
+
+      await host.sessionBrowser.navigate(`http://127.0.0.1:${port}/checkout`); // loopback Origin → passes the Origin check, isolating the bearer as the lock
+      host.controller.handleControl({ op: 'grant', to: 'agent' });
+      const obs = (await host.observe({})) as { elements?: Array<{ ref: string; role: string }> };
+      const btn = (obs.elements ?? []).find((e) => e.role === 'button');
+
+      const actP = host.act({ action: 'click', ref: btn!.ref }); // HELD pending approval
+      await expect.poll(() => host.approvals.pendingCount, { timeout: 5000 }).toBe(1);
+      expect(reqId, 'request id captured').toBeTypeOf('number');
+
+      const wsUrl = host.endpoint.replace('http://', 'ws://') + `/studio/${host.session.id}/stream`;
+
+      // ATTEMPT A — the LITERAL injected-page context: from the page's own JS, open the control WS
+      // and try to approve the held action at its real id. The page cannot establish the control WS
+      // at all in the studio browser, so it never even reaches the channel (opened === false).
+      const pageOpened = await page.evaluate(
+        ({ wsUrl, id }) =>
+          new Promise<boolean>((resolve) => {
+            let ws: WebSocket;
+            try { ws = new WebSocket(wsUrl, ['wigolo.stream']); } catch { resolve(false); return; }
+            ws.onopen = () => { try { ws.send(JSON.stringify({ t: 'approval', id, decision: 'approve' })); } catch { /* ignore */ } resolve(true); };
+            ws.onerror = () => resolve(false);
+            ws.onclose = () => resolve(false);
+            setTimeout(() => resolve(false), 2500);
+          }),
+        { wsUrl, id: reqId! },
+      );
+      expect(pageOpened, 'the injected page cannot even establish the control WS').toBe(false);
+
+      // ATTEMPT B — faithfully reproduce the page's NETWORK FRAME, deterministically, to isolate the
+      // enforcing lock: a LOOPBACK Origin (so checkOriginHost passes — loopback is allowed), the
+      // NON-SECRET `wigolo.stream` subprotocol (clears the hub's protocol negotiation), the guessed
+      // current id — but NO bearer (the page can't read the 0600 handle). The daemon's
+      // checkAuthSubprotocol MUST reject it. Disable that bearer check and this attempt connects,
+      // approves, and fires → the assertions below redden (mutation-probed; the bearer is the lock).
+      const forged = new WebSocket(wsUrl, ['wigolo.stream'], { origin: `http://127.0.0.1:${port}` });
+      const forgedOutcome = await new Promise<'open' | 'rejected'>((resolve) => {
+        forged.on('open', () => { forged.send(JSON.stringify({ t: 'approval', id: reqId, decision: 'approve' })); resolve('open'); });
+        forged.on('error', () => resolve('rejected'));
+        forged.on('close', () => resolve('rejected'));
+        setTimeout(() => resolve('rejected'), 3000);
+      });
+      forged.close();
+      expect(forgedOutcome, 'a loopback-origin, no-bearer (page-equivalent) upgrade is rejected at the WS bearer check').toBe('rejected');
+
+      // Give any (wrongly-accepted) forged approve time to settle + fire, then prove it did NEITHER.
+      await new Promise((r) => setTimeout(r, 300));
+      expect(host.approvals.pendingCount, 'no forged approve reached the channel — the action is STILL held').toBe(1);
+      expect(await page.evaluate(() => (window as unknown as { __paid3?: number }).__paid3), 'the page was never self-clicked').toBeUndefined();
+
+      // The genuinely-held action is dropped when the human reclaims (not by the page's forged approve).
+      host.controller.handleControl({ op: 'reclaim' });
+      expect(((await actP) as { error_reason?: string }).error_reason).toBe('aborted_reclaimed');
+    } finally {
+      human.close();
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  }, 30_000);
 });
