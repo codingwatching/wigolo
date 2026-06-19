@@ -127,6 +127,23 @@ describe('cli/studio startStudioHost', () => {
     await host.daemon.stop();
   });
 
+  it('audits EVERY action on the host path — the per-session audit log is wired UNCONDITIONALLY (so "every agent action is audited" holds on the real path, not just the optional unit-test dep)', async () => {
+    // The act handler's `audit` dep is optional for unit tests, but the studio host wires it
+    // unconditionally (cli/studio.ts: new SessionAuditLog() -> createActHandler({audit})). This
+    // pins that: drop the wiring and the action would not be recorded -> size stays 0 -> RED.
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
+    try {
+      host.controller.handleControl({ op: 'grant', to: 'agent' }); // the agent holds the token
+      expect(host.audit.size).toBe(0);
+      const r = await host.act({ action: 'navigate', url: 'https://example.com/' });
+      expect(r).toMatchObject({ ok: true, action: 'navigate' });
+      expect(host.audit.size).toBe(1); // recorded — the host path never silently drops an action from the trail
+      expect(host.audit.replay()[0]).toMatchObject({ action: 'navigate', outcome: { ok: true } });
+    } finally {
+      await host.daemon.stop();
+    }
+  });
+
   it('marksTool routes op=generalize to generalizeMark and the default (no op) to the list view', async () => {
     const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
     // generalize on an unknown mark surfaces a typed error (routed to generalizeMark, not the list).

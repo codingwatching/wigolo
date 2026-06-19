@@ -88,6 +88,13 @@ describe('studio/auth', () => {
     it('rejects a foreign Host header', () => {
       expect(checkOriginHost({ headers: { host: 'evil.com' } }, expected)).toMatchObject({ ok: false });
     });
+
+    it('rejects an opaque "null" Origin (a data:/sandboxed-iframe page in the studio browser) — closed-default, not a loopback allowance', () => {
+      // A prompt-injected page served from data: or inside a sandboxed iframe sends `Origin: null`.
+      // It must NOT slip through the loopback allowance — the approval-channel boundary (and the
+      // whole DNS-rebind defense) depends on an unrecognized origin being rejected, never defaulted open.
+      expect(checkOriginHost({ headers: { origin: 'null', host: '127.0.0.1:7777' } }, expected)).toMatchObject({ ok: false });
+    });
   });
 
   describe('checkAuthSubprotocol', () => {
