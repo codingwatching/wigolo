@@ -29,6 +29,8 @@ import type { AgentInputEvent } from './input.js';
 import { isResolveError, type ResolveResult, type ResolveErrorReason } from './perception/resolve.js';
 import type { StudioActInput, StudioActOutput, StudioToolError } from '../daemon/studio-dispatch.js';
 import type { AuditRecordInput, AuditOutcome } from './audit.js';
+import { classifyRisk, type RiskTier, type RiskPatterns } from './risk.js';
+import type { ApprovalDecision, ApprovalRequest } from './approvals.js';
 
 /** The narrow view of the control token the act handler needs (the real ControlToken satisfies it). */
 export interface ActControlToken {
@@ -56,6 +58,28 @@ export interface ActHandlerDeps {
   channel: AgentInputChannel;
   /** Phase 6b: the per-session append-only audit log; every action + outcome is recorded for trust + replay. Optional so the unit tests can omit it. */
   audit?: { record(input: AuditRecordInput): void };
+  /**
+   * Phase 6c: the host↔human approval gate. A risky action (money/credential/destructive per the
+   * deterministic classifier) is HELD for human approval before firing. Optional so unit tests of
+   * the safe paths can omit it — but a RISKY action with no gate wired is refused (fail-closed),
+   * never fired.
+   */
+  approvals?: { request(req: ApprovalRequest): Promise<ApprovalDecision> };
+  /** Phase 6c: the live page URL (host-observed) — the HARD signal the risk classifier weights over the page-controlled element role/name. */
+  currentUrl?: () => string | undefined;
+  /** Phase 6c: override the classifier's pattern set (configurable gate policy). Defaults to the built-in set. */
+  riskPatterns?: RiskPatterns;
+}
+
+/**
+ * The internal result of dispatching one verb: the tool result PLUS the Phase-6c gating metadata
+ * (risk tier + approval decision) when the action passed through the gate. The single audit choke
+ * point records all three from here, so every gating decision is logged.
+ */
+interface ActResolution {
+  result: StudioActOutput | StudioToolError;
+  risk?: RiskTier;
+  approval?: ApprovalDecision;
 }
 
 /** CDP modifier bitmask for Shift. */
@@ -152,7 +176,7 @@ function auditOutcome(result: StudioActOutput | StudioToolError): AuditOutcome {
 export function createActHandler(
   deps: ActHandlerDeps,
 ): (input: StudioActInput) => Promise<StudioActOutput | StudioToolError> {
-  const { browser, controlToken, grant, resolve, channel, audit } = deps;
+  const { browser, controlToken, grant, resolve, channel, audit, approvals, currentUrl, riskPatterns } = deps;
 
   const refused = (currentEpoch: number): StudioToolError => ({ error_reason: 'not_holder', hint: HOLD_HINT, currentEpoch });
   const standDown = (charsLanded?: number): StudioToolError => ({
@@ -160,6 +184,50 @@ export function createActHandler(
     hint: STANDDOWN_HINT,
     ...(charsLanded !== undefined ? { charsLanded } : {}),
   });
+
+  /** Map a non-approval verdict to the tool error the agent sees (do-not-retry hints; never a wrong/silent fire). */
+  const approvalRefusal = (decision: ApprovalDecision): StudioToolError => {
+    if (decision === 'refused')
+      return { error_reason: 'approval_refused', hint: 'The human declined this action — do not retry; ask or take a different step.' };
+    if (decision === 'timeout')
+      return { error_reason: 'approval_timeout', hint: 'The human did not approve this risky action in time — do not retry automatically; ask.' };
+    // 'superseded' is normally caught earlier by the epoch fence (a reclaim advanced the epoch); map it to the same stand-down.
+    return standDown();
+  };
+
+  /**
+   * Phase 6c risk gate. Classify the action (deterministic, code-only — NOT an LLM, which would
+   * read untrusted page content to decide). A SAFE action passes straight through. A risky one
+   * (money/credential/destructive) is HELD for human approval and composed with the 2J epoch fence:
+   *   - FAIL-CLOSED: a risky action with no gate wired is refused, never fired.
+   *   - pre-wait fence: if the grant was already revoked, drop without prompting (no doomed prompt).
+   *   - post-wait fence (the hard composition): a reclaim DURING the wait advances the epoch → the
+   *     human has taken over → never fire the held action, even if it was approved (a late approval
+   *     for a now-stale epoch must not fire into a context the human has since changed).
+   * Returns `{ok}` to proceed to dispatch, or `{blocked}` with the tool error + gating metadata to record.
+   */
+  const applyRiskGate = async (
+    input: StudioActInput,
+    gateEpoch: number,
+    role?: string,
+    name?: string,
+  ): Promise<{ ok: true; risk?: RiskTier; approval?: ApprovalDecision } | { blocked: StudioToolError; risk: RiskTier; approval?: ApprovalDecision }> => {
+    const risk = classifyRisk({ action: input.action, pageUrl: currentUrl?.(), role, name }, riskPatterns);
+    if (risk === 'safe') return { ok: true };
+    if (!approvals)
+      return {
+        blocked: { error_reason: 'approval_unavailable', hint: 'This action needs human approval but no approval channel is connected — open the studio UI.' },
+        risk,
+      };
+    // Pre-wait fence: don't prompt the human for an action whose grant is already gone.
+    if (controlToken.holder !== 'agent' || controlToken.epoch !== gateEpoch) return { blocked: standDown(), risk };
+    const target = typeof input.ref === 'string' ? { ref: input.ref } : undefined;
+    const approval = await approvals.request({ action: input.action, risk, ...(target ? { target } : {}) });
+    // POST-WAIT EPOCH FENCE: a reclaim during the wait advanced the epoch → never fire the stale action.
+    if (controlToken.holder !== 'agent' || controlToken.epoch !== gateEpoch) return { blocked: standDown(), risk, approval };
+    if (approval !== 'approved') return { blocked: approvalRefusal(approval), risk, approval };
+    return { ok: true, risk, approval };
+  };
 
   const navigate = async (input: StudioActInput): Promise<StudioActOutput | StudioToolError> => {
     const url = typeof input.url === 'string' ? input.url : '';
@@ -204,7 +272,7 @@ export function createActHandler(
    */
   const gateAndResolve = async (
     input: StudioActInput,
-  ): Promise<{ ok: true; gateEpoch: number; center: { x: number; y: number } } | StudioToolError> => {
+  ): Promise<{ ok: true; gateEpoch: number; center: { x: number; y: number }; role?: string; name?: string } | StudioToolError> => {
     const gate = controlToken.assertCanDrive('agent');
     if (!gate.ok) return refused(gate.currentEpoch);
     const gateEpoch = controlToken.epoch;
@@ -212,33 +280,40 @@ export function createActHandler(
     if (!ref) return { error_reason: 'missing_ref', hint: `${input.action} requires the \`ref\` of an element from studio_observe.` };
     const resolved = await resolve(ref); // LIVE — fresh snapshot, occlusion hit-test, never cached coords
     if (isResolveError(resolved)) return mapResolveError(resolved.error);
-    return { ok: true, gateEpoch, center: resolved.center };
+    // role/name (page-derived, untrusted) ride along for the 6c risk gate's soft signal.
+    return { ok: true, gateEpoch, center: resolved.center, role: resolved.role, name: resolved.name };
   };
 
-  const clickAct = async (input: StudioActInput): Promise<StudioActOutput | StudioToolError> => {
+  const clickAct = async (input: StudioActInput): Promise<ActResolution> => {
     const g = await gateAndResolve(input);
-    if ('error_reason' in g) return g;
+    if ('error_reason' in g) return { result: g };
+    const gate = await applyRiskGate(input, g.gateEpoch, g.role, g.name);
+    if ('blocked' in gate) return { result: gate.blocked, risk: gate.risk, approval: gate.approval };
     const landed = await channel.dispatchAgentUnit(g.gateEpoch, clickUnit(g.center));
-    if (!landed) return standDown();
-    return { ok: true, action: 'click' };
+    if (!landed) return { result: standDown(), risk: gate.risk, approval: gate.approval };
+    return { result: { ok: true, action: 'click' }, risk: gate.risk, approval: gate.approval };
   };
 
-  const typeAct = async (input: StudioActInput): Promise<StudioActOutput | StudioToolError> => {
+  const typeAct = async (input: StudioActInput): Promise<ActResolution> => {
     const g = await gateAndResolve(input);
-    if ('error_reason' in g) return g;
+    if ('error_reason' in g) return { result: g };
+    // Gate BEFORE focusing/typing — a credential-context type must not even focus the field unapproved.
+    const gate = await applyRiskGate(input, g.gateEpoch, g.role, g.name);
+    if ('blocked' in gate) return { result: gate.blocked, risk: gate.risk, approval: gate.approval };
+    const meta = { risk: gate.risk, approval: gate.approval };
     const text = typeof input.text === 'string' ? input.text : '';
     // Focus the resolved element with a gated click at its centre (same channel, abortable).
     const focused = await channel.dispatchAgentUnit(g.gateEpoch, clickUnit(g.center));
-    if (!focused) return standDown(0);
+    if (!focused) return { result: standDown(0), ...meta };
     let charsLanded = 0;
     for (const ch of text) {
       // Per-unit re-check IS the channel's epoch fence: a reclaim mid-type advances the
       // epoch, so the next keystroke unit is dropped — we stop and report what landed.
       const landed = await channel.dispatchAgentUnit(g.gateEpoch, keystrokeEvents(ch));
-      if (!landed) return standDown(charsLanded);
+      if (!landed) return { result: standDown(charsLanded), ...meta };
       charsLanded++;
     }
-    return { ok: true, action: 'type', charsLanded };
+    return { result: { ok: true, action: 'type', charsLanded }, ...meta };
   };
 
   const scrollAct = async (input: StudioActInput): Promise<StudioActOutput | StudioToolError> => {
@@ -258,36 +333,44 @@ export function createActHandler(
     return { ok: true, action: 'scroll' };
   };
 
-  const dispatch = async (input: StudioActInput): Promise<StudioActOutput | StudioToolError> => {
+  const dispatch = async (input: StudioActInput): Promise<ActResolution> => {
     switch (input.action) {
+      // navigate + scroll are never gated (navigation safety is the SSRF guard's job; scrolling is
+      // not a money/credential/destructive act) — wrap their raw result with no gating metadata.
       case 'navigate':
-        return navigate(input);
+        return { result: await navigate(input) };
       case 'click':
         return clickAct(input);
       case 'type':
         return typeAct(input);
       case 'scroll':
-        return scrollAct(input);
+        return { result: await scrollAct(input) };
       default:
         // Fail loud — don't pretend an unknown verb succeeded.
         return {
-          error_reason: 'action_not_supported',
-          hint: `studio_act supports navigate|click|type|scroll; '${String((input as { action?: unknown }).action)}' is not a known action.`,
+          result: {
+            error_reason: 'action_not_supported',
+            hint: `studio_act supports navigate|click|type|scroll; '${String((input as { action?: unknown }).action)}' is not a known action.`,
+          },
         };
     }
   };
 
   // Every agent action + its resolved outcome lands in the per-session APPEND-ONLY audit
   // log (Phase 6b) — successes, refusals, AND unknown verbs alike, never silently dropped —
-  // for trust + the Phase-7 replay timeline. The optional-chain leaves the args unevaluated
-  // when no log is wired (the unit tests that omit it).
+  // for trust + the Phase-7 replay timeline. Phase 6c adds the gating decision (risk tier +
+  // approval) on a gated action, recorded through this SAME single choke point so every gate
+  // decision is logged from commit one. The optional-chain leaves the args unevaluated when no
+  // log is wired (the unit tests that omit it).
   return async (input: StudioActInput): Promise<StudioActOutput | StudioToolError> => {
-    const result = await dispatch(input);
+    const { result, risk, approval } = await dispatch(input);
     audit?.record({
       action: typeof input.action === 'string' ? input.action : String((input as { action?: unknown }).action),
       epoch: controlToken.epoch,
       target: auditTarget(input),
       outcome: auditOutcome(result),
+      ...(risk ? { risk } : {}),
+      ...(approval ? { approval } : {}),
     });
     return result;
   };
