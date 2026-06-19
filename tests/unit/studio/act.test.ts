@@ -381,10 +381,12 @@ describe('createActHandler — audit log (Phase 6b: every agent action is record
     await act({ action: 'navigate', url: 'https://a/' });
     await act({ action: 'scroll', direction: 'down', amount: 600 });
     await act({ action: 'click', ref: 'e1' });
+    await act({ action: 'type', ref: 'e2', text: 'hi' });
     expect(audit.replay().map((e) => ({ seq: e.seq, action: e.action, outcome: e.outcome }))).toEqual([
       { seq: 1, action: 'navigate', outcome: { ok: true } },
       { seq: 2, action: 'scroll', outcome: { ok: true } },
       { seq: 3, action: 'click', outcome: { ok: true } },
+      { seq: 4, action: 'type', outcome: { ok: true, charsLanded: 2 } }, // success-path charsLanded is audited too
     ]);
   });
 });

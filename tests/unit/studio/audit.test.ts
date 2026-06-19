@@ -43,10 +43,12 @@ describe('SessionAuditLog — per-session append-only audit log', () => {
     expect(log.size).toBe(1);
   });
 
-  it('is APPEND-ONLY: a recorded entry is frozen — a consumer cannot rewrite its outcome after the fact', () => {
+  it('is APPEND-ONLY: a recorded entry is DEEPLY frozen (entry + nested target + outcome) — a consumer cannot rewrite the outcome or target after the fact', () => {
     const log = new SessionAuditLog({ now: () => 0 });
-    const e = log.record({ action: 'navigate', epoch: 0, outcome: { ok: false, error_reason: 'navigation_blocked' } });
+    const e = log.record({ action: 'navigate', epoch: 0, target: { url: 'https://x/' }, outcome: { ok: false, error_reason: 'navigation_blocked' } });
     expect(Object.isFrozen(e)).toBe(true);
+    expect(Object.isFrozen(e.outcome)).toBe(true); // the outcome cannot be flipped to ok:true after the fact — the load-bearing tamper-proof property
+    expect(Object.isFrozen(e.target)).toBe(true); // the target (url/ref) cannot be rewritten either
     expect(Object.isFrozen(log.replay()[0])).toBe(true);
   });
 
