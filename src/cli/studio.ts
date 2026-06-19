@@ -22,6 +22,7 @@ import { StudioEventQueue } from '../studio/event-queue.js';
 import { createObserver } from '../studio/observe.js';
 import { createActHandler } from '../studio/act.js';
 import { SessionAuditLog } from '../studio/audit.js';
+import { SessionApprovals } from '../studio/approvals.js';
 import { createInspector } from '../studio/mark/inspect.js';
 import { MarkStore, type StudioMark } from '../studio/mark/store.js';
 import { buildTarget, buildTargetFromFlat, indexAxByBackendNode, type StructuredTarget } from '../studio/mark/target.js';
@@ -116,6 +117,8 @@ export interface StudioHost {
   act: (input: StudioActInput) => Promise<StudioActOutput | StudioToolError>;
   /** Phase 6b: the per-session append-only audit log of every agent action + outcome (for trust + the Phase-7 replay timeline). Exposed for the timeline + headed tests. */
   audit: SessionAuditLog;
+  /** Phase 6c: the host↔human approval gate — risky actions are held here pending the human's WS answer. Exposed for the headed proof + the Phase-7 approval card. */
+  approvals: SessionApprovals;
   /** Human-only, per-session, revocable: lift the agent's localhost/RFC1918 nav block (cloud-metadata stays blocked). */
   grantAgentPrivateNav: (on: boolean) => void;
   hub: StudioWsHub;
@@ -155,6 +158,7 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   let controller: SessionController | undefined;
   let onNavHandler: ((msg: Record<string, unknown>) => void) | undefined;
   let onMarkHandler: ((msg: Record<string, unknown>) => void) | undefined;
+  let onApprovalHandler: ((msg: Record<string, unknown>) => void) | undefined;
   // The WS hub fans frames/input over the host's WebSocket; the daemon authorizes
   // each upgrade (Origin/Host + subprotocol bearer) before handing it here. WS
   // clients are session viewers, so onAttach/onDetach keep the Session's client
@@ -176,6 +180,9 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
     onControl: (_id, msg) => controller?.handleWireControl(msg),
     onNav: (_id, msg) => onNavHandler?.(msg),
     onMark: (_id, msg) => onMarkHandler?.(msg),
+    // The human's answer to a held risky action ({t:'approval'}). The WS is the human channel, so
+    // an approval can only originate from the human (the agent drives via studio_act, never the WS).
+    onApproval: (_id, msg) => onApprovalHandler?.(msg),
     // Tell a connecting client the current {holder, epoch} so it stamps valid input
     // even if it joins after a flip (defaults before the controller exists).
     helloExtras: () => controller?.controlSnapshot() ?? { holder: 'human', epoch: 0 },
@@ -219,6 +226,14 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   });
   controller = new SessionController(controlToken, forwarder, (msg) => hub.broadcast(session.id, msg));
 
+  // Phase 6c approval gate: hold a risky agent action until the human answers over the WS. The
+  // {t:'approval_request'} goes out via the same per-session broadcast the controller uses; the
+  // human's {t:'approval', id, decision} routes back through the hub's onApproval below. A human
+  // reclaim aborts every pending request (onChange below) so a held action does not survive a
+  // takeover — and the act handler layers the epoch fence on top.
+  const approvals = new SessionApprovals({ broadcast: (msg) => hub.broadcast(session.id, msg) });
+  onApprovalHandler = (msg) => approvals.handleWire(msg);
+
   // Navigation guard. The agent path is fail-closed by default: the agent reaches
   // localhost/RFC1918 only via an explicit, human-issued, revocable per-session grant
   // (cloud-metadata stays blocked for either party in guardNavigation regardless of
@@ -247,7 +262,13 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   // (flip TO the agent) does NOT abort. Crash-recovery re-nav is host-initiated (no
   // token flip) so it is unaffected by this gate.
   controlToken.onChange((s) => {
-    if (s.holder === 'human') void navInterceptor.abortInFlight();
+    if (s.holder === 'human') {
+      void navInterceptor.abortInFlight();
+      // Drop any action held pending approval — a reclaim is a takeover; the held action must not
+      // survive it. The act handler's post-wait epoch fence is the hard backstop; this just makes
+      // the abort prompt rather than waiting for the request to time out.
+      approvals.abortPending();
+    }
   });
   // Human-only, per-session, revocable grant. The agent cannot reach this (it drives
   // via studio_act, not the host API); `grant` is a closure local to this session so
@@ -451,13 +472,32 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   // Phase 6b: the per-session append-only audit log. The act handler records every agent
   // action + its outcome here; the Phase-7 timeline replays it. In-memory now (Phase 4 owns persistence).
   const auditLog = new SessionAuditLog();
-  const act = createActHandler({ browser: sessionBrowser, controlToken, grant, resolve, channel: controller, audit: auditLog });
+  // Phase 6c: the act handler classifies each click/type (deterministic) and HOLDS a risky one for
+  // human approval before firing. currentUrl is the live page URL — the HARD signal the classifier
+  // weights over the page-controlled element role/name; a read failure degrades to undefined (the
+  // soft signal still applies). The gate composes with the epoch fence + logs every decision (6b).
+  const act = createActHandler({
+    browser: sessionBrowser,
+    controlToken,
+    grant,
+    resolve,
+    channel: controller,
+    audit: auditLog,
+    approvals,
+    currentUrl: () => {
+      try {
+        return sessionBrowser.page.url();
+      } catch {
+        return undefined;
+      }
+    },
+  });
   daemon.setStudioHost({ observe, act, marks: marksTool });
 
   const handle: SessionHandle = { id: session.id, endpoint, token, pid: process.pid, instanceId };
   writeHandle(handle, opts.dataDir);
 
-  return { daemon, registry, session, sessionBrowser, bridge, controller, navInterceptor, navigate, mark, marks: () => markStore.list(), healMark, marksView, generalizeMark, marksTool, observe, act, audit: auditLog, grantAgentPrivateNav, hub, handle, endpoint };
+  return { daemon, registry, session, sessionBrowser, bridge, controller, navInterceptor, navigate, mark, marks: () => markStore.list(), healMark, marksView, generalizeMark, marksTool, observe, act, audit: auditLog, approvals, grantAgentPrivateNav, hub, handle, endpoint };
 }
 
 export function runStudio(args: string[]): void {
