@@ -496,8 +496,11 @@ describe.skipIf(!RUN)('studio screencast bridge (integration, real browser)', ()
   it('3b: a marked element re-resolves after DOM drift via the heal cascade — fingerprint survives a volatile re-render, and the healed ref drives a real click (mark→heal→ref→2J act)', async () => {
     // The button's volatile attrs (id/class) will change on re-render; its role+name+stable-attrs
     // (the fingerprint) stay — so heal tier 1 re-resolves it though its backend node id changed.
+    // NB: a NEUTRAL name ("Continue") on purpose — this proves heal, and the agent CLICKS it below;
+    // a money/credential/destructive name (e.g. "Checkout") would now be held by the 6c approval
+    // gate, which this heal proof does not answer. The gate's behaviour is proven by the 6c proofs.
     const html =
-      '<button id="old-1" class="v1" type="submit" style="position:fixed;left:40px;top:40px;width:220px;height:60px">Checkout</button>';
+      '<button id="old-1" class="v1" type="submit" style="position:fixed;left:40px;top:40px;width:220px;height:60px">Continue</button>';
     await host.sessionBrowser.navigate('data:text/html,' + encodeURIComponent(html));
     const page = host.sessionBrowser.page as unknown as import('playwright').Page;
     const markId = await markButton('#old-1');
@@ -509,7 +512,7 @@ describe.skipIf(!RUN)('studio screencast bridge (integration, real browser)', ()
     await page.evaluate(() => {
       (window as unknown as { __hit: number }).__hit = 0;
       document.body.innerHTML =
-        '<button id="new-9" class="v2-rerendered" type="submit" onclick="window.__hit=1" style="position:fixed;left:40px;top:40px;width:220px;height:60px">Checkout</button>';
+        '<button id="new-9" class="v2-rerendered" type="submit" onclick="window.__hit=1" style="position:fixed;left:40px;top:40px;width:220px;height:60px">Continue</button>';
     });
 
     const r = (await host.healMark(markId)) as { confidence: string; ref?: string; tier?: string };
@@ -742,5 +745,97 @@ describe.skipIf(!RUN)('studio screencast bridge (integration, real browser)', ()
     expect(entries[2].seq).toBeGreaterThan(entries[0].seq);  // monotonic, append-only
     expect(Object.isFrozen(entries[2])).toBe(true);          // entries are tamper-proof
     host.controller.handleControl({ op: 'reclaim' });
+  }, 30_000);
+
+  // ───────────────────────────── Phase 6c: risk-tiered approval gate ─────────────────────────────
+  it('6c: a risky action on a real /checkout page is HELD, requests human approval over the WS, and fires only once the human approves — logged with the tier + decision', async () => {
+    // A real HTTP page at a money-context PATH. The classifier's HARD signal is the live page URL
+    // (sessionBrowser.page.url()), so /checkout → money regardless of the (benign) button name.
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<button id="go" onclick="window.__paid=1" style="position:fixed;left:40px;top:40px;width:300px;height:60px">Continue</button>');
+    });
+    const port = await new Promise<number>((resolve) => server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port)));
+    const page = host.sessionBrowser.page as unknown as import('playwright').Page;
+    const ws = new WebSocket(host.endpoint.replace('http://', 'ws://') + `/studio/${host.session.id}/stream`, ['wigolo.stream', `wigolo.bearer.${host.session.token}`]);
+    try {
+      // Open the WS + attach the listener BEFORE any slow await, so 'open' is not missed.
+      await new Promise<void>((resolve, reject) => { ws.on('open', () => resolve()); ws.on('error', reject); });
+      // A real WS client that auto-approves the first approval_request it sees (the human's browser).
+      const seen: Array<Record<string, unknown>> = [];
+      ws.on('message', (data: WebSocket.RawData) => {
+        const m = JSON.parse(data.toString());
+        if (m.t === 'approval_request') { seen.push(m); ws.send(JSON.stringify({ t: 'approval', id: m.id, decision: 'approve' })); }
+      });
+
+      await host.sessionBrowser.navigate(`http://127.0.0.1:${port}/checkout`); // live URL is now money-context
+      const before = host.audit.size;
+
+      host.controller.handleControl({ op: 'grant', to: 'agent' });
+      const obs = (await host.observe({})) as { elements?: Array<{ ref: string; role: string }> };
+      const btn = (obs.elements ?? []).find((e) => e.role === 'button');
+      expect(btn, 'observe should surface the button').toBeTruthy();
+
+      const r = (await host.act({ action: 'click', ref: btn!.ref })) as { ok?: boolean; action?: string; error_reason?: string };
+      expect(r.error_reason, 'the approved action should fire, not error').toBeUndefined();
+      expect(r).toMatchObject({ ok: true, action: 'click' });
+      expect(seen.length, 'the human WAS asked for approval over the WS (not fired silently)').toBe(1);
+      expect(seen[0]).toMatchObject({ t: 'approval_request', action: 'click', risk: 'money' }); // classified from the real /checkout URL
+      await expect.poll(() => page.evaluate(() => (window as unknown as { __paid?: number }).__paid), { timeout: 5000 }).toBe(1); // it actually clicked the page
+
+      const e = host.audit.replay().slice(before).at(-1)!;
+      expect(e).toMatchObject({ action: 'click', risk: 'money', approval: 'approved', outcome: { ok: true } }); // the gate decision is in the trail
+      host.controller.handleControl({ op: 'reclaim' });
+    } finally {
+      ws.close();
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  }, 30_000);
+
+  it('6c EPOCH FENCE: a human reclaim WHILE an action is held for approval drops it — a late approval does NOT fire the now-stale action (aborted_reclaimed, the page is never clicked, logged)', async () => {
+    // The critical composition with the 2J epoch fence: an action held pending approval is in-flight.
+    // A reclaim during the wait must drop it, and a late "approve" for the now-stale epoch must NOT fire.
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<button id="go" onclick="window.__paid2=1" style="position:fixed;left:40px;top:40px;width:300px;height:60px">Continue</button>');
+    });
+    const port = await new Promise<number>((resolve) => server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port)));
+    const page = host.sessionBrowser.page as unknown as import('playwright').Page;
+    const ws = new WebSocket(host.endpoint.replace('http://', 'ws://') + `/studio/${host.session.id}/stream`, ['wigolo.stream', `wigolo.bearer.${host.session.token}`]);
+    try {
+      await new Promise<void>((resolve, reject) => { ws.on('open', () => resolve()); ws.on('error', reject); });
+      let reqId: number | undefined;
+      ws.on('message', (data: WebSocket.RawData) => {
+        const m = JSON.parse(data.toString());
+        if (m.t === 'approval_request') reqId = m.id as number; // capture but do NOT answer yet
+      });
+
+      await host.sessionBrowser.navigate(`http://127.0.0.1:${port}/checkout`);
+      const before = host.audit.size;
+
+      host.controller.handleControl({ op: 'grant', to: 'agent' });
+      const obs = (await host.observe({})) as { elements?: Array<{ ref: string; role: string }> };
+      const btn = (obs.elements ?? []).find((e) => e.role === 'button');
+      expect(btn, 'observe should surface the button').toBeTruthy();
+
+      const actP = host.act({ action: 'click', ref: btn!.ref }); // HELD — pending the human's answer
+      await expect.poll(() => host.approvals.pendingCount, { timeout: 5000 }).toBe(1); // genuinely held + requested
+      expect(reqId, 'the request reached the human WS client').toBeTypeOf('number');
+
+      host.controller.handleControl({ op: 'reclaim' });                 // the human takes over DURING the wait
+      ws.send(JSON.stringify({ t: 'approval', id: reqId, decision: 'approve' })); // a LATE approval for the now-stale epoch
+
+      const r = (await actP) as { error_reason?: string };
+      expect(r.error_reason).toBe('aborted_reclaimed');                 // the held action stood down — not fired
+      await new Promise((res) => setTimeout(res, 200));                 // give any (wrongly-fired) click time to land
+      expect(await page.evaluate(() => (window as unknown as { __paid2?: number }).__paid2)).toBeUndefined(); // the page was NEVER clicked
+
+      const e = host.audit.replay().slice(before).at(-1)!;
+      expect(e).toMatchObject({ action: 'click', risk: 'money', outcome: { error_reason: 'aborted_reclaimed' } }); // dropped, and audited
+      host.controller.handleControl({ op: 'reclaim' });
+    } finally {
+      ws.close();
+      await new Promise<void>((r) => server.close(() => r()));
+    }
   }, 30_000);
 });

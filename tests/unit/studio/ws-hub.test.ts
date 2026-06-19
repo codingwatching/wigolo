@@ -316,4 +316,15 @@ describe('StudioWsHub — frame fan-out + ack routing (1b.3)', () => {
     expect(navs[0]).toMatchObject({ id: 'n1', msg: { url: 'https://example.com/' } });
     ws.close();
   });
+
+  it('routes inbound {t:approval} to onApproval (the human answers a held risky action over the WS — the human channel)', async () => {
+    const approvals: Array<{ id: string; msg: Record<string, unknown> }> = [];
+    const h = await startHub({ onApproval: (id, msg) => approvals.push({ id, msg }) });
+    const ws = new WebSocket(h.url('/studio/ap1/stream'));
+    await nextMessage(ws);
+    ws.send(JSON.stringify({ t: 'approval', id: 7, decision: 'approve' }));
+    await waitFor(() => approvals.length === 1);
+    expect(approvals[0]).toMatchObject({ id: 'ap1', msg: { id: 7, decision: 'approve' } });
+    ws.close();
+  });
 });

@@ -22,6 +22,8 @@ export interface SessionPage {
   close(): Promise<void>;
   goto(url: string, opts?: { waitUntil?: 'load' | 'domcontentloaded' | 'networkidle' | 'commit'; timeout?: number }): Promise<unknown>;
   on(event: 'crash', cb: () => void): void;
+  /** The live main-frame URL (Playwright Page.url()) — the host-observed hard signal the 6c risk gate reads. */
+  url(): string;
 }
 
 export interface SessionCdp {

@@ -53,8 +53,19 @@ describe('createResolver — live ref → coordinates', () => {
     });
     const r = await resolve('e1');
     expect(isResolveError(r)).toBe(false);
-    expect(r).toEqual({ backendNodeId: 100, center: { x: 110, y: 205 } });
+    expect(r).toEqual({ backendNodeId: 100, center: { x: 110, y: 205 }, role: 'button', name: 'Go' });
     expect(f.sends.some((s) => s.method === 'DOM.scrollIntoViewIfNeeded')).toBe(true); // brought on-screen first
+  });
+
+  it('a resolved ref carries the element role + name (the Phase-6c risk classifier reads them as the SOFT, page-derived signal)', async () => {
+    // The resolver already binds the SnapshotElement to look the ref up; surfacing its role/name
+    // gives the gate the (untrusted, page-controlled) element descriptor without a second fetch.
+    const f = makeCdp({ boxByBe: { 100: BOX }, topAt: 100 });
+    const resolve = createResolver({
+      snapshot: async () => makeSnapshot({ elements: [{ ref: 'e1', role: 'button', name: 'Pay $99.00' }], refMap: [['e1', 100]], domParent: [[100, null]] }),
+      cdp: f.cdp,
+    });
+    expect(await resolve('e1')).toMatchObject({ role: 'button', name: 'Pay $99.00' });
   });
 
   it('NEVER uses cached coords: a moved element resolves to its NEW box on the next call', async () => {

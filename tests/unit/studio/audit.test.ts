@@ -52,6 +52,19 @@ describe('SessionAuditLog — per-session append-only audit log', () => {
     expect(Object.isFrozen(log.replay()[0])).toBe(true);
   });
 
+  it('carries the Phase-6c risk tier + approval decision on a gated action (frozen); absent on an ungated one', () => {
+    const log = new SessionAuditLog({ now: () => 0 });
+    const gated = log.record({ action: 'click', epoch: 2, target: { ref: 'e9' }, outcome: { ok: true }, risk: 'money', approval: 'approved' });
+    expect(gated.risk).toBe('money');
+    expect(gated.approval).toBe('approved');
+    expect(Object.isFrozen(gated)).toBe(true);
+    // An ungated (safe) action records NO risk/approval — the keys are ABSENT, not undefined — so the
+    // 6b exact-shape (`toEqual`) assertions for ordinary actions keep holding after this extension.
+    const safe = log.record({ action: 'scroll', epoch: 2, outcome: { ok: true } });
+    expect('risk' in safe).toBe(false);
+    expect('approval' in safe).toBe(false);
+  });
+
   it('size reflects the number of recorded actions and only grows', () => {
     const log = new SessionAuditLog();
     expect(log.size).toBe(0);

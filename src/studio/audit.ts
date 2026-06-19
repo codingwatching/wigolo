@@ -13,6 +13,8 @@
  * The entry is a CLOSED shape (not an open `[k]: unknown` bag) so this channel carries the
  * same compile-time enforcement the observe channel does.
  */
+import type { RiskTier } from './risk.js';
+import type { ApprovalDecision } from './approvals.js';
 
 /** The resolved outcome of one agent action: success, or a typed refusal/failure reason. */
 export type AuditOutcome =
@@ -29,6 +31,10 @@ export interface AuditRecordInput {
   target?: { url?: string; ref?: string; direction?: 'up' | 'down'; amount?: number };
   /** The resolved outcome. */
   outcome: AuditOutcome;
+  /** Phase 6c: the risk tier the deterministic classifier assigned. Absent when the action was not classified risky (safe). */
+  risk?: RiskTier;
+  /** Phase 6c: the human approval decision when the action passed through the gate. Absent when the action was never gated. */
+  approval?: ApprovalDecision;
 }
 
 /** A stamped, immutable audit entry. */
@@ -60,6 +66,8 @@ export class SessionAuditLog {
       epoch: input.epoch,
       ...(input.target ? { target: Object.freeze({ ...input.target }) } : {}),
       outcome: Object.freeze({ ...input.outcome }),
+      ...(input.risk ? { risk: input.risk } : {}),
+      ...(input.approval ? { approval: input.approval } : {}),
       seq: ++this.seq,
       ts: this.now(),
     });

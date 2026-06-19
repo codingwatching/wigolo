@@ -31,6 +31,13 @@ export interface ResolvedTarget {
   backendNodeId: number;
   /** Click point in the page coordinate space the input channel dispatches into. */
   center: { x: number; y: number };
+  /**
+   * The resolved element's a11y role + accessible name (page-derived, UNTRUSTED). Surfaced so the
+   * Phase-6c risk gate can read them as the SOFT signal without a second snapshot fetch. Optional
+   * on the type so callers/fakes that don't need them stay valid; the real resolver always sets them.
+   */
+  role?: string;
+  name?: string;
 }
 
 export type ResolveErrorReason =
@@ -117,6 +124,7 @@ export function createResolver(deps: ResolveDeps): (ref: string) => Promise<Reso
     if (top != null && !isTargetOrDescendant(top, backendNodeId, snap.domParent)) {
       return { error: 'element_occluded' };
     }
-    return { backendNodeId, center };
+    // Surface the page-derived role/name (untrusted) alongside the coords — the 6c risk gate's soft signal.
+    return { backendNodeId, center, role: el.role, name: el.name };
   };
 }
