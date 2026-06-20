@@ -104,4 +104,75 @@ describe('find_similar — captured studio clip via the FTS path (4d slice-2)', 
     expect(source).toBe('studio');
     expect(hit!.trusted).toBe(false);
   });
+
+  it('dedups a clip matching BOTH the FTS and embedding paths to ONE fused result with both signals', async () => {
+    const capture = captureFromPage(
+      { type: 'clip', sessionId: 'sess-x', url: 'https://x.example.com/p', title: 'Capture Notes', markdown: CLIP_MD },
+      { db: getDatabase(), enqueue: () => undefined },
+    );
+    const studioKey = `studio://clip|${capture.id}`;
+
+    // BOTH paths return the SAME clip: embedding (stub) + FTS (CONCEPT matches CLIP_MD).
+    mockEmbeddingState.available = true;
+    mockEmbeddingState.subprocessReady = true;
+    mockEmbeddingState.vectors.set(studioKey, 1);
+    mockEmbeddingState.findSimilarImpl = async () => [{ url: studioKey, score: 0.99 }];
+
+    const out = await handleFindSimilar(
+      { concept: CONCEPT, include_cache: true, include_web: false, include_full_markdown: true, include_ranking_debug: true },
+      [engine],
+      router,
+    );
+    const results = out.ok ? out.data.results : [];
+    // Count ALL studio-sourced results: if the two paths emitted divergent URIs
+    // they would NOT fuse and we'd see two — dedup REQUIRES the identical URI,
+    // so this catches a path whose URI drifts (not just a missing studioKey).
+    const studioResults = results.filter((r) => r.source === 'studio');
+    expect(studioResults).toHaveLength(1); // fused once, not one-per-path
+    expect(studioResults[0].url).toBe(studioKey); // the canonical studio URI
+    // Both signals merged into the one fused result.
+    expect(studioResults[0].ranking_debug?.embedding_rank).toBeDefined();
+    expect(studioResults[0].ranking_debug?.fts5_rank).toBeDefined();
+  });
+
+  it('evidence from an FTS-sourced studio clip carries trusted:false (include_full_markdown)', async () => {
+    captureFromPage(
+      { type: 'clip', sessionId: 'sess-evf', url: 'https://x.example.com/p', title: 'Capture Notes', markdown: CLIP_MD },
+      { db: getDatabase(), enqueue: () => undefined },
+    );
+    mockEmbeddingState.available = false; // FTS lane
+
+    const out = await handleFindSimilar(
+      { concept: CONCEPT, include_cache: true, include_web: false, include_full_markdown: true },
+      [engine],
+      router,
+    );
+    expect(out.ok).toBe(true);
+    const evidence = out.ok ? (out.data.evidence ?? []) : [];
+    expect(evidence.length).toBeGreaterThan(0);
+    for (const e of evidence) expect(e.trusted).toBe(false);
+  });
+
+  it('evidence from an EMBEDDING-sourced studio clip carries trusted:false (covers the merged path)', async () => {
+    const capture = captureFromPage(
+      { type: 'clip', sessionId: 'sess-eve', url: 'https://x.example.com/p', title: 'Capture Notes', markdown: CLIP_MD },
+      { db: getDatabase(), enqueue: () => undefined },
+    );
+    const studioKey = `studio://clip|${capture.id}`;
+    mockEmbeddingState.available = true;
+    mockEmbeddingState.subprocessReady = true;
+    mockEmbeddingState.vectors.set(studioKey, 1);
+    mockEmbeddingState.findSimilarImpl = async () => [{ url: studioKey, score: 0.99 }];
+
+    // unrelated concept → the clip arrives ONLY via the embedding path here.
+    const out = await handleFindSimilar(
+      { concept: 'unrelated zzqqx topic', include_cache: true, include_web: false, include_full_markdown: true },
+      [engine],
+      router,
+    );
+    expect(out.ok).toBe(true);
+    const evidence = out.ok ? (out.data.evidence ?? []) : [];
+    expect(evidence.length).toBeGreaterThan(0);
+    for (const e of evidence) expect(e.trusted).toBe(false);
+  });
 });
