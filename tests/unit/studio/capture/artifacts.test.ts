@@ -403,4 +403,23 @@ describe('studio/capture/artifacts — Phase 4b-3 capture pipeline (RED)', () =>
     expect(rowCount()).toBe(1);
     expect(second.inserted).toBe(false);
   });
+
+  it('P-cross-session identical content under two sessions dedups to one row; session_id stays first-capture provenance', () => {
+    const { deps } = mkDeps();
+    // captureFromPage auto-seeds whichever session it is given (4b-3), so both A and B exist for
+    // the FK. The 4a invariant: content dedups ACROSS sessions — session_id is first-capture
+    // provenance, NOT in the content hash NOR the unique index.
+    const clipA = { type: 'clip', sessionId: 'sess-A', url: 'https://x.example/shared', title: 't', markdown: 'shared body' } as const;
+    const clipB = { type: 'clip', sessionId: 'sess-B', url: 'https://x.example/shared', title: 't', markdown: 'shared body' } as const;
+    const a = captureFromPage(clipA, deps);
+    const b = captureFromPage(clipB, deps);
+    // Mutation: fold sessionId into contentParts → B's content_hash differs → OR-IGNORE misses →
+    // 2 rows → reds. (Pin is green on current code: contentParts(clip) === [markdown], no sessionId.)
+    expect(rowCount(), 'cross-session identical content → one row').toBe(1);
+    expect(b.inserted, 'the second session deduped').toBe(false);
+    expect(b.id, 'returns the original (session-A) row id').toBe(a.id);
+    const row = rowById(a.id);
+    expect(row.session_id, 'first-capture provenance preserved').toBe('sess-A');
+    expect(row.content_trusted, 'page-derived → untrusted').toBe(0);
+  });
 });

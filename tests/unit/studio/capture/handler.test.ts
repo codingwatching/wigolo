@@ -205,8 +205,8 @@ describe('studio/capture/handler — Phase 4c studio_capture boundary (RED)', ()
     expect(jobs[0].contentHash).toBe(ok.content_hash);
   });
 
-  it('C4-4b re-capturing the same content returns the SAME id with inserted:false, not an error', async () => {
-    const { handler } = mkHandler();
+  it('C4-4b re-capturing the same content returns the SAME id with inserted:false, not an error, and does NOT re-enqueue', async () => {
+    const { handler, jobs } = mkHandler();
     const first = await handler({ type: 'clip', content: 'dedupe me', url: 'https://x.example/d' } as StudioCaptureInput) as { artifact_id: number };
     const second = await handler({ type: 'clip', content: 'dedupe me', url: 'https://x.example/d' } as StudioCaptureInput);
     expect(isRefusal(second), 'a dedup hit is success, not a refusal').toBe(false);
@@ -215,6 +215,25 @@ describe('studio/capture/handler — Phase 4c studio_capture boundary (RED)', ()
     expect(ok.inserted).toBe(false);
     expect(ok.artifact_id).toBe(first.artifact_id);
     expect(rowCount()).toBe(1);
+    // Gap A (handler-level): the dedup hit must NOT re-embed — only the first insert enqueued.
+    // Mutation: drop the `inserted &&` guard at artifacts.ts → enqueue fires on dedup → 2 → reds.
+    expect(jobs.length, 'first insert embeds; the dedup hit does not re-enqueue').toBe(1);
+  });
+
+  it('C4-4c dedup id resolves by content (NOT lastInsertRowid) even with an intervening insert', async () => {
+    const { handler } = mkHandler();
+    const a = await handler({ type: 'clip', content: 'AAA', url: 'https://x.example/a' } as StudioCaptureInput) as { artifact_id: number };
+    // Intervening insert: a DIFFERENT clip lands between A and the re-capture of A, so
+    // lastInsertRowid now points at B — distinguishing a content-keyed lookup from a stale rowid.
+    await handler({ type: 'clip', content: 'BBB', url: 'https://x.example/b' } as StudioCaptureInput);
+    const reA = await handler({ type: 'clip', content: 'AAA', url: 'https://x.example/a' } as StudioCaptureInput);
+    const ok = reA as { artifact_id: number; inserted: boolean };
+    expect(ok.inserted).toBe(false);
+    // Gap B (non-vacuous): the deduped id must be A's, resolved by (type,content_hash,
+    // normalized_url). Mutation: id = Number(info.lastInsertRowid) → reA.artifact_id === B's id
+    // ≠ A's → reds (the lastInsertRowid probe that previously stayed green with no intervening insert).
+    expect(ok.artifact_id).toBe(a.artifact_id);
+    expect(rowCount(), 'A + B persisted; the re-capture of A deduped').toBe(2);
   });
 
   // ─── Boundary general form — arbitrary smuggled fields ignored by construction ─
