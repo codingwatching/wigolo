@@ -139,6 +139,39 @@ const MIGRATION_006_URL_CACHE_HTTP_STATUS = '';
 // DBs where the table was never created.
 const MIGRATION_007_DROP_LP_ROUTING = '';
 
+// Phase 4a: Interactive Browser Studio capture schema — creates BOTH durable
+// Studio tables, parent first so the artifacts FK resolves: studio_sessions (the
+// session origin) THEN studio_artifacts (captured marks/clips/notes/qa, deduped
+// per type via symmetric partial unique indexes). Schema only — no FTS5/triggers/
+// insert path yet (later slices, each behind their own tests). Mirrored in
+// 008-studio-artifacts.sql.
+const MIGRATION_008_STUDIO_ARTIFACTS = `
+CREATE TABLE IF NOT EXISTS studio_sessions (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS studio_artifacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL REFERENCES studio_sessions(id),
+  artifact_type TEXT NOT NULL,
+  url TEXT,
+  normalized_url TEXT,
+  content_hash TEXT NOT NULL,
+  fetched_at TEXT NOT NULL,
+  curated_by_human INTEGER NOT NULL DEFAULT 0,
+  content_trusted INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_studio_artifacts_url
+  ON studio_artifacts(normalized_url, artifact_type, content_hash)
+  WHERE normalized_url IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_studio_artifacts_nourl
+  ON studio_artifacts(artifact_type, content_hash)
+  WHERE normalized_url IS NULL;
+`;
+
 export const MIGRATIONS: Migration[] = [
   { name: '001-sqlite-vec', sql: MIGRATION_001_SQLITE_VEC, requiresVec: true },
   { name: '002-feed-items', sql: MIGRATION_002_FEED_ITEMS },
@@ -194,6 +227,7 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  { name: '008-studio-artifacts', sql: MIGRATION_008_STUDIO_ARTIFACTS },
 ];
 
 function isReadOnlyError(err: unknown): boolean {
