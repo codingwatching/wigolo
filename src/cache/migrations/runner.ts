@@ -172,6 +172,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_studio_artifacts_nourl
   WHERE normalized_url IS NULL;
 `;
 
+// Phase 4b-1: Studio capture content columns + searchable FTS index. Adds title /
+// markdown / metadata / created_at to studio_artifacts (008) + an external-content
+// studio_artifacts_fts with sync triggers. SQL is empty — the whole effect is in the
+// postStep, columns-before-triggers, gated on pragma table_info so ADD COLUMN (no
+// `IF NOT EXISTS` in SQLite) stays idempotent. created_at uses a CONSTANT sentinel
+// default so ADD COLUMN succeeds even on a non-empty table (a non-constant default
+// raises "Cannot add a column with non-constant default"). Mirrored in
+// 009-studio-artifacts-content.sql.
+const MIGRATION_009_STUDIO_ARTIFACTS_CONTENT = '';
+
 export const MIGRATIONS: Migration[] = [
   { name: '001-sqlite-vec', sql: MIGRATION_001_SQLITE_VEC, requiresVec: true },
   { name: '002-feed-items', sql: MIGRATION_002_FEED_ITEMS },
@@ -228,6 +238,54 @@ export const MIGRATIONS: Migration[] = [
     },
   },
   { name: '008-studio-artifacts', sql: MIGRATION_008_STUDIO_ARTIFACTS },
+  {
+    name: '009-studio-artifacts-content',
+    sql: MIGRATION_009_STUDIO_ARTIFACTS_CONTENT,
+    postStep: (db) => {
+      // studio_artifacts is created by 008, which runs earlier in this same pass.
+      // Guard for a bare runner-only harness where it might be absent (mirrors 006).
+      const cols = db.pragma('table_info(studio_artifacts)') as Array<{ name: string }>;
+      if (cols.length === 0) return;
+      const names = new Set(cols.map((c) => c.name));
+      // ADD COLUMN has no `IF NOT EXISTS` — gate each on table_info for idempotency.
+      if (!names.has('title')) db.exec('ALTER TABLE studio_artifacts ADD COLUMN title TEXT');
+      if (!names.has('markdown')) db.exec('ALTER TABLE studio_artifacts ADD COLUMN markdown TEXT');
+      if (!names.has('metadata')) db.exec('ALTER TABLE studio_artifacts ADD COLUMN metadata TEXT');
+      // CONSTANT sentinel default (not (datetime('now'))) so ADD COLUMN succeeds even
+      // with rows present; insertArtifact (4b-3) sets created_at explicitly.
+      if (!names.has('created_at')) {
+        db.exec("ALTER TABLE studio_artifacts ADD COLUMN created_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z'");
+      }
+      // External-content FTS5 + sync triggers (feed_items AFTER pattern). The columns
+      // are added above first, so the triggers' column references resolve.
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS studio_artifacts_fts USING fts5(
+          title,
+          markdown,
+          content='studio_artifacts',
+          content_rowid='id'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS studio_artifacts_ai AFTER INSERT ON studio_artifacts BEGIN
+          INSERT INTO studio_artifacts_fts(rowid, title, markdown) VALUES (new.id, new.title, new.markdown);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS studio_artifacts_ad AFTER DELETE ON studio_artifacts BEGIN
+          INSERT INTO studio_artifacts_fts(studio_artifacts_fts, rowid, title, markdown) VALUES('delete', old.id, old.title, old.markdown);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS studio_artifacts_au AFTER UPDATE ON studio_artifacts
+          WHEN old.title IS NOT new.title OR old.markdown IS NOT new.markdown
+        BEGIN
+          INSERT INTO studio_artifacts_fts(studio_artifacts_fts, rowid, title, markdown) VALUES('delete', old.id, old.title, old.markdown);
+          INSERT INTO studio_artifacts_fts(rowid, title, markdown) VALUES (new.id, new.title, new.markdown);
+        END;
+      `);
+      // Index any rows that predate the triggers (none on the forward path; defensive
+      // + covers a seeded table).
+      db.exec(`INSERT INTO studio_artifacts_fts(studio_artifacts_fts) VALUES('rebuild')`);
+    },
+  },
 ];
 
 function isReadOnlyError(err: unknown): boolean {
