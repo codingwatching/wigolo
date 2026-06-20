@@ -83,12 +83,14 @@ describe('migration 008_studio_artifacts — dedup index + trust columns + sessi
   // Optional columns use `'key' in row` so a key can be omitted (column absent →
   // its default/NULL) vs. supplied-as-null (explicit NULL, to fire NOT NULL).
   function insert(
-    row: { type: string; url: string | null; hash: string | null; session?: string | null; curated?: number | null; trusted?: number | null },
+    row: { type: string | null; url: string | null; hash: string | null; fetched?: string | null; session?: string | null; curated?: number | null; trusted?: number | null },
     opts: { ignore?: boolean } = {},
   ): void {
     const verb = opts.ignore ? 'INSERT OR IGNORE' : 'INSERT';
     const cols = ['artifact_type', 'url', 'normalized_url', 'content_hash', 'fetched_at'];
-    const vals: Array<string | number | null> = [row.type, row.url, row.url, row.hash, FETCHED_AT];
+    const vals: Array<string | number | null> = [
+      row.type, row.url, row.url, row.hash, 'fetched' in row ? (row.fetched ?? null) : FETCHED_AT,
+    ];
     if ('session' in row) { cols.push('session_id'); vals.push(row.session ?? null); }
     if ('curated' in row) { cols.push('curated_by_human'); vals.push(row.curated ?? null); }
     if ('trusted' in row) { cols.push('content_trusted'); vals.push(row.trusted ?? null); }
@@ -154,6 +156,16 @@ describe('migration 008_studio_artifacts — dedup index + trust columns + sessi
         insert({ type: 'note', url: null, hash: null, session: 'sess-1' });
       }).toThrow(/NOT NULL constraint failed: studio_artifacts\.content_hash/);
     });
+
+    it('1.5 partition independence: url-less + url-bearing with same (type, hash) stay two rows', () => {
+      // The two partial indexes cover disjoint partitions (normalized_url NULL vs
+      // NOT NULL), so a url-less note and a url-bearing note that share
+      // (artifact_type, content_hash) do NOT collide — guards the idx_nourl WHERE.
+      seedSession('sess-1');
+      insert({ type: 'note', url: null, hash: 'h12', session: 'sess-1' }, { ignore: true });
+      insert({ type: 'note', url: 'https://x/b', hash: 'h12', session: 'sess-1' }, { ignore: true });
+      expect(totalForHash('h12')).toBe(2);
+    });
   });
 
   describe('RED-2 trust columns / schema', () => {
@@ -205,6 +217,36 @@ describe('migration 008_studio_artifacts — dedup index + trust columns + sessi
       expect(() => insert({ type: 'note', url: null, hash: 'h8' })).toThrow(
         /NOT NULL constraint failed: studio_artifacts\.session_id/,
       );
+    });
+
+    it('3.2 FK referential: a session_id absent from studio_sessions raises a FK error', () => {
+      // NO seedSession — reference an id that doesn't exist. session_id is non-null
+      // (its NOT NULL is satisfied) and every other NOT NULL col is valid, so the
+      // ONLY violation is the dangling foreign key. Also proves foreign_keys is
+      // actually ON in the harness — with it OFF this insert would silently succeed.
+      expect(() => insert({ type: 'note', url: null, hash: 'h9', session: 'ghost-session' })).toThrow(
+        /FOREIGN KEY constraint failed/,
+      );
+    });
+  });
+
+  describe('RED-4 core column NOT NULL', () => {
+    // 2.1's PRAGMA asserts notnull only on the trust cols — artifact_type and
+    // fetched_at are unchecked there, so they get their own behavioral pins. Each
+    // supplies a valid session + every other NOT NULL col, so the only violation
+    // is the intended one.
+    it('4.1 artifact_type NOT NULL: insert with artifact_type=NULL raises an integrity error', () => {
+      expect(() => {
+        seedSession('sess-1');
+        insert({ type: null, url: null, hash: 'h10', session: 'sess-1' });
+      }).toThrow(/NOT NULL constraint failed: studio_artifacts\.artifact_type/);
+    });
+
+    it('4.2 fetched_at NOT NULL: insert with fetched_at=NULL raises an integrity error', () => {
+      expect(() => {
+        seedSession('sess-1');
+        insert({ type: 'note', url: null, hash: 'h11', session: 'sess-1', fetched: null });
+      }).toThrow(/NOT NULL constraint failed: studio_artifacts\.fetched_at/);
     });
   });
 });
