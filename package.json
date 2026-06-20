@@ -54,6 +54,7 @@
     "lint": "tsc --noEmit",
     "typecheck:studio": "tsc -p tsconfig.test.json",
     "check:typecheck-gate": "node scripts/check-typecheck-gate.mjs",
+    "check:no-nul": "node scripts/check-no-nul.mjs",
     "typecheck:debt": "node scripts/typecheck-debt-ratchet.mjs",
     "gate:studio": "npm run lint && npm run typecheck:studio && npm run check:typecheck-gate && npm run typecheck:debt",
     "bench:extraction": "tsx benchmarks/extraction/runner.ts",
