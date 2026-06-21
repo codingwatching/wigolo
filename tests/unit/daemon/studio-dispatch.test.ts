@@ -170,9 +170,9 @@ describe('dispatchStudioTool — studio_capture routing', () => {
   it('EXECUTE studio_capture maps a host StudioToolError to an isError refusal', async () => {
     const handlers: StudioHostHandlers = {
       ...hostHandlers(),
-      capture: async () => ({ error_reason: 'unsupported_capture_type', hint: 'clip only' }),
+      capture: async () => ({ error_reason: 'unsupported_capture_type', hint: 'clip and qa only' }),
     };
-    const r = await dispatchStudioTool('studio_capture', { type: 'qa' }, handlers, dir, { proxyFactory: proxyReturning({}) });
+    const r = await dispatchStudioTool('studio_capture', { type: 'screenshot' }, handlers, dir, { proxyFactory: proxyReturning({}) });
     expect(r.isError).toBe(true);
     expect(reason(r)).toBe('unsupported_capture_type');
   });
@@ -235,5 +235,44 @@ describe('dispatchStudioTool — studio_capture qa gate (C5, through dispatch, r
     expect(row.artifact_type).toBe('qa');
     expect(row.session_id).toBe(HOST_SESSION_QA);
     expect(row.normalized_url).toBeNull();
+  });
+
+  // ── PIN-3 — qa structurally can't reach trusted=1 (smuggled trust fields dropped by the thin handler) ──
+  it('PIN-3: smuggled {content_trusted, trusted, curated_by_human} on a qa capture through dispatch cannot escape — persisted content_trusted=0 and curated_by_human=0', async () => {
+    const r = await dispatchStudioTool('studio_capture', {
+      type: 'qa',
+      question: 'What is the moat?',
+      answer: 'Durable local capture.',
+      content_trusted: 1,
+      trusted: true,
+      curated_by_human: 1,
+    }, realHost(), qdir);
+    expect(r.isError).toBe(false);
+    const out = JSON.parse(r.content[0].text) as { artifact_id: number };
+    const row = rowById(out.artifact_id);
+    // The handler reads only the per-type safe fields {type,question,answer} and routes through
+    // captureFromPage (content_trusted literal 0). mutation: artifacts.ts:217 `contentTrusted: 0`
+    // → `1` → RED — proves the by-path literal holds AND the smuggled trust fields are inert.
+    expect(row.content_trusted).toBe(0);
+    expect(row.curated_by_human).toBe(0);
+  });
+
+  // ── PIN-4 — schema required relaxed to [type] → the handler is the sole validator ──
+  it('PIN-4: qa validation through dispatch — missing question → missing_question; missing answer → missing_answer', async () => {
+    const noQ = await dispatchStudioTool('studio_capture', { type: 'qa', answer: 'A' }, realHost(), qdir);
+    expect(noQ.isError).toBe(true);
+    expect((JSON.parse(noQ.content[0].text) as { error_reason: string }).error_reason).toBe('missing_question');
+    const noA = await dispatchStudioTool('studio_capture', { type: 'qa', question: 'Q' }, realHost(), qdir);
+    expect(noA.isError).toBe(true);
+    expect((JSON.parse(noA.content[0].text) as { error_reason: string }).error_reason).toBe('missing_answer');
+  });
+
+  it('PIN-4 regression: clip validation through dispatch still holds — missing url → missing_url; missing content → missing_content', async () => {
+    const noUrl = await dispatchStudioTool('studio_capture', { type: 'clip', content: 'body' }, realHost(), qdir);
+    expect(noUrl.isError).toBe(true);
+    expect((JSON.parse(noUrl.content[0].text) as { error_reason: string }).error_reason).toBe('missing_url');
+    const noContent = await dispatchStudioTool('studio_capture', { type: 'clip', url: 'https://x.example/p' }, realHost(), qdir);
+    expect(noContent.isError).toBe(true);
+    expect((JSON.parse(noContent.content[0].text) as { error_reason: string }).error_reason).toBe('missing_content');
   });
 });

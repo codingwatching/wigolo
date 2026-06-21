@@ -55,6 +55,17 @@ function captureClip(sessionId: string): number {
   ).id;
 }
 
+// C5 PIN-5: a url-less qa pair. Written via captureFromPage (the primitive the studio_capture
+// dispatch/handler calls — the dispatch→handler→captureFromPage write chain is pinned separately
+// at the dispatch seam) so this file stays a pure surfacing test. The answer carries the QUERY
+// terms so it matches the studio FTS index; surfacing is type-agnostic so a qa hydrates like a clip.
+function captureQa(sessionId: string): number {
+  return captureFromPage(
+    { type: 'qa', sessionId, question: 'How does the capture pipeline work?', answer: CLIP_MD },
+    { db: getDatabase(), enqueue: () => undefined },
+  ).id;
+}
+
 describe('cache tool — captured studio artifact (4d slice-3)', () => {
   beforeEach(() => {
     initDatabase(':memory:');
@@ -100,6 +111,18 @@ describe('cache tool — captured studio artifact (4d slice-3)', () => {
       const hit = (out.results ?? []).find((r) => r.url === `studio://note|${note.id}`);
       expect(hit?.source).toBe('studio');
       expect(hit?.trusted).toBe(true);
+    });
+
+    it('surfaces a captured qa pair (url-less) via FTS, hydrated + source=studio + trusted:false, keyed studio://qa|<id> (C5 PIN-5)', async () => {
+      const qaKey = `studio://qa|${captureQa('sess-qa')}`;
+      const out = await handleCache({ query: QUERY });
+      expect(out.error).toBeUndefined();
+      const results = out.results ?? [];
+      const hit = results.find((r) => r.url === qaKey);
+      expect(hit, `expected a cache result for ${qaKey}; got ${JSON.stringify(results.map((r) => r.url))}`).toBeDefined();
+      expect(hit!.markdown).toBe(CLIP_MD); // the qa answer, hydrated by-id (type-agnostic read)
+      expect(hit!.source).toBe('studio');
+      expect(hit!.trusted).toBe(false); // a qa answer is page/agent-derived data, never instructions
     });
 
     it('keeps studio + url_cache identities distinct when they share an integer rowid', async () => {
@@ -161,6 +184,19 @@ describe('cache tool — captured studio artifact (4d slice-3)', () => {
       const studioResults = results.filter((r) => r.source === 'studio');
       expect(studioResults).toHaveLength(1); // fused once, not one-per-side
       expect(studioResults[0].url).toBe(studioKey);
+    });
+
+    it('surfaces a captured qa pair via the hybrid vector side, keyed studio://qa|<id> + trusted:false (C5 PIN-5)', async () => {
+      const qaKey = `studio://qa|${captureQa('sess-qa-h')}`;
+      vecState.size = 1;
+      vecState.results = [vec(qaKey, 0.95)];
+      const out = await handleCache({ query: QUERY, mode: 'hybrid', limit: 10 });
+      expect(out.error).toBeUndefined();
+      const hit = (out.results ?? []).find((r) => r.url === qaKey);
+      expect(hit, `qa should surface via hybrid; got ${JSON.stringify((out.results ?? []).map((r) => r.url))}`).toBeDefined();
+      expect(hit!.markdown).toBe(CLIP_MD);
+      expect(hit!.source).toBe('studio');
+      expect(hit!.trusted).toBe(false);
     });
   });
 });

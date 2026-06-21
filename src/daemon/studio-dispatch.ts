@@ -132,13 +132,17 @@ export interface StudioGeneralizeOutput {
 }
 
 export interface StudioCaptureInput {
-  /** Phase 4c handles `clip` only; `qa` arrives at 4d (save-session-as-research). */
+  /** `clip` (needs content + url) or `qa` (needs question + answer; url-less). */
   type: string;
-  /** The captured content — a clip's markdown. */
-  content: string;
-  /** The page url the clip came from (REQUIRED for a clip; url-less is a 4d qa property). */
-  url: string;
-  /** Extra/smuggled fields are ignored by construction — the handler reads only {type,content,url}. */
+  /** The captured content — a clip's markdown (clip only). */
+  content?: string;
+  /** The page url the clip came from — REQUIRED for a clip; url-less is a qa property. */
+  url?: string;
+  /** The question (qa only). */
+  question?: string;
+  /** The answer (qa only). */
+  answer?: string;
+  /** Extra/smuggled fields are ignored by construction — the handler reads only the per-type safe fields. */
   [k: string]: unknown;
 }
 

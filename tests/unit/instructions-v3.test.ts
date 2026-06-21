@@ -137,6 +137,15 @@ describe('TOOL_DESCRIPTIONS v3 entries', () => {
     expect(desc).not.toContain('CDP'); // no implementation names (user-facing)
   });
 
+  it('studio_capture description covers both the clip and the qa (save-session-as-research) capture types', () => {
+    const desc = TOOL_DESCRIPTIONS.studio_capture;
+    expect(desc).toContain('clip');
+    expect(desc).toMatch(/\bqa\b/); // qa is a first-class capture type (C5)
+    expect(desc).toMatch(/question/i);
+    expect(desc).toMatch(/answer/i);
+    expect(desc).not.toContain('CDP'); // capability language only (user-facing)
+  });
+
   it('find_similar description mentions url and concept inputs', () => {
     const desc = TOOL_DESCRIPTIONS.find_similar;
     expect(desc).toContain('url');

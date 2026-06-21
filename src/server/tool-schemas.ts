@@ -655,20 +655,30 @@ export const STUDIO_CAPTURE_TOOL_SCHEMA = {
   properties: {
     type: {
       type: 'string',
-      enum: ['clip'],
-      description: "What to capture. 'clip' saves a page region's content as a session artifact.",
+      enum: ['clip', 'qa'],
+      description: "What to capture. 'clip' saves a page region (needs content + url); 'qa' saves a question + answer pair from the session (url-less).",
     },
     content: {
       type: 'string',
-      description: 'The content to save (the clip text/markdown).',
+      description: 'The content to save (clip only — the text/markdown).',
     },
     url: {
       type: 'string',
-      description: 'The page url the clip was captured from.',
+      description: 'The page url the clip was captured from (clip only).',
+    },
+    question: {
+      type: 'string',
+      description: 'The question (qa only).',
+    },
+    answer: {
+      type: 'string',
+      description: 'The answer (qa only).',
     },
   },
-  required: ['type', 'content', 'url'],
-  // Client hint only; the host handler is the control (reads only {type,content,url}).
+  // Only `type` is universally required; per-type fields (clip: content+url, qa: question+answer)
+  // are validated by the host handler — the control — not the schema (a verbatim-args proxy makes
+  // additionalProperties:false a client hint, so the handler reads only the per-type safe fields).
+  required: ['type'],
   additionalProperties: false,
 };
 
