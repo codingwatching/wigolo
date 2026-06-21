@@ -190,12 +190,14 @@ describe('extractCitations', () => {
       url: 'https://react.dev/hooks',
       title: 'React Hooks',
       snippet: 'Hooks info',
+      trusted: false,
     });
     expect(citations[1]).toEqual({
       index: 2,
       url: 'https://vuejs.org/guide',
       title: 'Vue Guide',
       snippet: 'Vue info',
+      trusted: false,
     });
   });
 
@@ -603,12 +605,14 @@ describe('runSynthesis level 1 (sampling success)', () => {
         url: 'https://postgres.example/streaming',
         title: 'Streaming Replication',
         snippet: 'WAL streaming overview',
+        trusted: false,
       });
       expect(out.data.citations[1]).toEqual<Citation>({
         index: 2,
         url: 'https://postgres.example/logical',
         title: 'Logical Replication',
         snippet: 'Logical replication overview',
+        trusted: false,
       });
     }
   });

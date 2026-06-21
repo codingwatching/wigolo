@@ -13,7 +13,7 @@ vi.mock('../../../../src/search/answer-synthesis.js', () => ({
     ok: true as const,
     data: {
       answer: 'mocked answer',
-      citations: [{ index: 1, url: 'https://x.example', title: 'x', snippet: '' }],
+      citations: [{ index: 1, url: 'https://x.example', title: 'x', snippet: '', trusted: false }],
       fallback_level: 1 as const,
     },
   })),
@@ -632,8 +632,8 @@ describe('CoreSearchProvider', () => {
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.data.citations).toEqual([
-          { index: 1, url: 'https://a.example', title: 'A', snippet: 'sa' },
-          { index: 2, url: 'https://b.example', title: 'B', snippet: 'sb' },
+          { index: 1, url: 'https://a.example', title: 'A', snippet: 'sa', trusted: false },
+          { index: 2, url: 'https://b.example', title: 'B', snippet: 'sb', trusted: false },
         ]);
         expect(result.data.citations_xml).toBeUndefined();
       }
@@ -698,7 +698,7 @@ describe('CoreSearchProvider', () => {
         ok: true,
         data: {
           answer: 'A says X [1].',
-          citations: [{ index: 1, url: 'https://a.example', title: 'A', snippet: 'sa' }],
+          citations: [{ index: 1, url: 'https://a.example', title: 'A', snippet: 'sa', trusted: false }],
           fallback_level: 1,
         },
       });
@@ -733,8 +733,8 @@ describe('CoreSearchProvider', () => {
         data: {
           answer: 'A answer with [1] and [2].',
           citations: [
-            { index: 1, url: 'https://a.example', title: 'A', snippet: 'first' },
-            { index: 2, url: 'https://b.example', title: 'B', snippet: 'second' },
+            { index: 1, url: 'https://a.example', title: 'A', snippet: 'first', trusted: false },
+            { index: 2, url: 'https://b.example', title: 'B', snippet: 'second', trusted: false },
           ],
           fallback_level: 1,
         },

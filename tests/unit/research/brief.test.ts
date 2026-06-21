@@ -27,6 +27,7 @@ function mkSource(overrides: Partial<ResearchSource> = {}): ResearchSource {
     ].join('\n'),
     relevance_score: 0.9,
     fetched: true,
+    trusted: false,
     ...overrides,
   };
 }

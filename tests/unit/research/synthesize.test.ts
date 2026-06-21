@@ -10,6 +10,7 @@ function makeSource(overrides: Partial<ResearchSource> = {}): ResearchSource {
     relevance_score: overrides.relevance_score ?? 0.9,
     fetched: overrides.fetched ?? true,
     fetch_error: overrides.fetch_error,
+    trusted: overrides.trusted ?? false,
   };
 }
 

@@ -155,7 +155,7 @@ export function buildStructuredFallback(
 
     n += 1;
     bullets.push(`- **${r.title}** — ${keypoint} [${n}]`);
-    citations.push({ index: n, url: r.url, title: r.title, snippet: r.snippet });
+    citations.push({ index: n, url: r.url, title: r.title, snippet: r.snippet, trusted: false });
   }
 
   if (bullets.length === 0) {
@@ -350,7 +350,7 @@ export async function runSynthesis(
 
   const top = results.slice(0, 5);
   const citations: Citation[] = top.map((r, i) => ({
-    index: i + 1, url: r.url, title: r.title, snippet: r.snippet,
+    index: i + 1, url: r.url, title: r.title, snippet: r.snippet, trusted: false,
   }));
   if (citations.length > 0) {
     const lines = citations.map(c => `[${c.index}] ${c.title} — ${c.url}\n${c.snippet ?? ''}`);
@@ -397,6 +397,7 @@ export function extractCitations(
         url: result.url,
         title: result.title,
         snippet: result.snippet,
+        trusted: false,
       });
     }
 

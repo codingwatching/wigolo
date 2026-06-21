@@ -688,6 +688,7 @@ export class CoreSearchProvider implements SearchProvider {
           url: r.url,
           title: r.title,
           snippet: r.snippet,
+          trusted: false, // web search result — page-derived (C4)
         }));
         if (built.length > 0) data.citations = built;
       }

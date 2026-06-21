@@ -304,12 +304,13 @@ export function buildCitationsFromEvidence(
     const r = results[i];
     const base = baseByUrl.get(r.url);
     const citation: Citation = base
-      ? { ...base }
+      ? { ...base } // base Citation already carries its trusted tag
       : {
           index: i + 1,
           url: r.url,
           title: r.title,
           snippet: r.snippet ?? '',
+          trusted: false, // built from a web result — page-derived (C4)
         };
     const primary = primaryByUrl.get(r.url);
     if (primary !== undefined) {

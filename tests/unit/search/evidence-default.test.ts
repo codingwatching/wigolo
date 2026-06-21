@@ -96,7 +96,7 @@ describe('applyEvidenceDefault', () => {
     mockedExtract.mockResolvedValueOnce({
       highlights: [makeHighlight()],
       citations: [
-        { index: 1, url: 'https://example.com/a', title: 'T', snippet: 'snippet text' },
+        { index: 1, url: 'https://example.com/a', title: 'T', snippet: 'snippet text', trusted: false },
       ],
       reranker_used: false,
     });
@@ -153,7 +153,7 @@ describe('buildCitationsFromEvidence', () => {
       },
     ];
     const baseCitations: Citation[] = [
-      { index: 1, url: 'https://example.com/a', title: 'T1', snippet: 's1' },
+      { index: 1, url: 'https://example.com/a', title: 'T1', snippet: 's1', trusted: false },
     ];
     const out = buildCitationsFromEvidence(results, evidence, baseCitations);
     expect(out).toHaveLength(1);
@@ -178,8 +178,8 @@ describe('buildCitationsFromEvidence', () => {
       },
     ];
     const baseCitations: Citation[] = [
-      { index: 1, url: 'https://example.com/a', title: 'T1', snippet: 's1' },
-      { index: 2, url: 'https://example.com/b', title: 'T2', snippet: 's2' },
+      { index: 1, url: 'https://example.com/a', title: 'T1', snippet: 's1', trusted: false },
+      { index: 2, url: 'https://example.com/b', title: 'T2', snippet: 's2', trusted: false },
     ];
     const out = buildCitationsFromEvidence(results, evidence, baseCitations);
     expect(out).toHaveLength(2);
@@ -197,6 +197,7 @@ describe('buildCitationsFromEvidence', () => {
       url: 'https://example.com/a',
       title: 'T1',
       snippet: 's1',
+      trusted: false,
     };
     const evidence = [
       {
