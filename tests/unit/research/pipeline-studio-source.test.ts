@@ -269,4 +269,50 @@ describe('research — studio local-rescue when web is empty (C3 local-rescue)',
     expect(clipSrc!.trusted).toBe(false);
     expect(out.citations.find((c) => c.url === clipKey), 'clip citation').toBeDefined();
   });
+
+  // ── PIN-1 rescue — web-empty + studio-present synthesizes from studio ──
+  it('PIN-1: web-empty + studio-present → studio sources present + report synthesized, no error', async () => {
+    const clipId = seedClip();
+    const out = await runResearchPipeline({ question: QUESTION, depth: 'standard' } as ResearchInput, [stubEngine([])], stubRouter());
+    // mutation: gate the studio collection behind web-present (skip on web-empty) → web-empty
+    // returns no_sources with studio absent → RED.
+    expect(out.error).toBeUndefined();
+    expect(out.sources.find((s) => s.url === `studio://clip|${clipId}`)).toBeDefined();
+    expect(out.report).not.toContain('No sources could be found');
+    expect(out.report.length).toBeGreaterThan(0);
+  });
+
+  // ── PIN-2 truly-empty regression — web-empty + studio-empty stays no_sources ──
+  it('PIN-2: web-empty + studio-empty → the no_sources report, no studio source', async () => {
+    // nothing seeded → studio cache empty
+    const out = await runResearchPipeline({ question: QUESTION, depth: 'standard' } as ResearchInput, [stubEngine([])], stubRouter());
+    // mutation: drop the no_sources guard / always proceed → genuinely-empty no longer reports
+    // no_sources → RED.
+    expect(out.report).toContain('No sources could be found');
+    expect(out.sources).toHaveLength(0);
+    expect(out.citations).toHaveLength(0);
+    expect(out.sources.some((s) => s.url.startsWith('studio://'))).toBe(false);
+  });
+
+  // ── PIN-3 web-present regression — slice-1 behavior persists through the restructure ──
+  it('PIN-3: web-present + studio-present → both surface, studio keeps studio:// identity + trusted:false (slice-1 unchanged)', async () => {
+    const clipId = seedClip();
+    const out = await runResearchPipeline({ question: QUESTION, depth: 'standard' } as ResearchInput, [stubEngine()], stubRouter()); // WEB PRESENT (default results)
+    const clipKey = `studio://clip|${clipId}`;
+    expect(out.error).toBeUndefined();
+    const clip = out.sources.find((s) => s.url === clipKey);
+    expect(clip, 'studio clip present alongside web').toBeDefined();
+    expect(clip!.trusted).toBe(false);
+    expect(out.sources.some((s) => s.url.startsWith('https://')), 'web sources present').toBe(true);
+    expect(out.citations.find((c) => c.url === clipKey)?.trusted).toBe(false);
+  });
+
+  // ── PIN-4 no double-collect — studio FTS runs at most once per pipeline run ──
+  it('PIN-4: collectStudioSources/searchStudioArtifactKeys is invoked AT MOST ONCE per run (web-present)', async () => {
+    seedClip();
+    searchKeysSpy.mockClear();
+    await runResearchPipeline({ question: QUESTION, depth: 'standard' } as ResearchInput, [stubEngine()], stubRouter());
+    // mutation: add a redundant second collectStudioSources on the web-present path → 2 → RED.
+    expect(searchKeysSpy).toHaveBeenCalledTimes(1);
+  });
 });
