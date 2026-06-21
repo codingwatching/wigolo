@@ -51,6 +51,21 @@ const rerankMock = vi.fn(async (query: string, results: MergedSearchResult[]): P
 });
 vi.mock('../../../src/search/rerank.js', () => ({ rerankResults: rerankMock }));
 
+// Count studio FTS calls (PIN-4: at most once per run) while DELEGATING to the real read —
+// the seeded db is queried for real. Spreads ...actual so getStudioArtifactByEmbedKey,
+// studioEmbedKey, and captureFromPage stay real; only searchStudioArtifactKeys is wrapped.
+const { searchKeysSpy } = vi.hoisted(() => ({ searchKeysSpy: vi.fn() }));
+vi.mock('../../../src/studio/capture/artifacts.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/studio/capture/artifacts.js')>();
+  return {
+    ...actual,
+    searchStudioArtifactKeys: (query: string, limit: number): string[] => {
+      searchKeysSpy(query, limit);
+      return actual.searchStudioArtifactKeys(query, limit);
+    },
+  };
+});
+
 const { runResearchPipeline } = await import('../../../src/research/pipeline.js');
 
 const QUESTION = 'wigolo studio capture pipeline dedup moat';
@@ -215,5 +230,43 @@ describe('research — studio_artifacts as local sources (C3 slice-1)', () => {
     expect(out.report).toContain('Forged Heading (9)');
     expect(out.report).not.toContain('## Forged Heading');
     expect(out.report).not.toContain('[9]');
+  });
+});
+
+/**
+ * C3 local-rescue — surface studio sources when web search returns EMPTY. slice-1 injected
+ * studio post-fetch, so the web-empty early-return (pipeline.ts:213) skipped studio entirely.
+ * This collects studio ONCE before the no-sources decision; web-empty + studio-present
+ * synthesizes from studio alone, web-empty + studio-empty stays no_sources, web-present is
+ * byte-unchanged from slice-1. At most one studio FTS call per run.
+ */
+describe('research — studio local-rescue when web is empty (C3 local-rescue)', () => {
+  beforeEach(() => {
+    _resetMigrationGuard();
+    initDatabase(':memory:');
+    extractMock.mockResolvedValue({
+      title: 'Web Extract', markdown: '# Web\n\nGeneric article body about an unrelated subject.',
+      metadata: {}, links: [], images: [], extractor: 'defuddle' as const,
+    });
+    searchKeysSpy.mockClear();
+  });
+  afterEach(() => {
+    closeDatabase();
+  });
+
+  it('RED ANCHOR: web-empty + a matching clip/qa → studio sources synthesized (studio://<type>|<id>, trusted:false), NOT no_sources', async () => {
+    const clipId = seedClip();
+    const qaId = seedQa();
+    const out = await runResearchPipeline({ question: QUESTION, depth: 'standard' } as ResearchInput, [stubEngine([])], stubRouter()); // WEB EMPTY
+    const clipKey = `studio://clip|${clipId}`;
+    const qaKey = `studio://qa|${qaId}`;
+    expect(out.error, 'no error').toBeUndefined();
+    expect(out.report, 'NOT the no_sources report').not.toContain('No sources could be found');
+    expect(out.report.length).toBeGreaterThan(0);
+    const clipSrc = out.sources.find((s) => s.url === clipKey);
+    expect(clipSrc, `clip ${clipKey}; got ${JSON.stringify(out.sources.map((s) => s.url))}`).toBeDefined();
+    expect(out.sources.find((s) => s.url === qaKey), `qa ${qaKey}`).toBeDefined();
+    expect(clipSrc!.trusted).toBe(false);
+    expect(out.citations.find((c) => c.url === clipKey), 'clip citation').toBeDefined();
   });
 });
