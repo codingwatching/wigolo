@@ -33,29 +33,47 @@ export function createCaptureHandler(
   deps: CaptureHandlerDeps,
 ): (input: StudioCaptureInput) => Promise<StudioCaptureOutput | StudioToolError> {
   return async (input: StudioCaptureInput): Promise<StudioCaptureOutput | StudioToolError> => {
-    // Read ONLY the safe fields. Anything else the caller sends (a trust flag, a session id,
-    // a curated flag) is never bound here, so it cannot reach the row.
-    const { type, content, url } = input;
-
-    if (type !== 'clip') {
-      return {
-        error_reason: 'unsupported_capture_type',
-        hint: `studio_capture handles 'clip' only; '${String(type)}' is not capturable through this tool.`,
-      };
-    }
-    if (typeof url !== 'string' || url.trim() === '') {
-      return { error_reason: 'missing_url', hint: 'A clip requires the page url it was captured from.' };
-    }
-    if (typeof content !== 'string' || content === '') {
-      return { error_reason: 'missing_content', hint: 'A clip requires content to capture.' };
-    }
-
+    // Read ONLY the safe per-type fields. Anything else the caller sends (a trust flag, a
+    // session id, a curated flag) is never bound here, so it cannot reach the row.
+    const { type, content, url, question, answer } = input;
     const enqueue = deps.enqueue ?? ((job) => getBackgroundIndexQueue().enqueue(job));
-    // content_trusted=0 + dedup + atomic embed enqueue all live in captureFromPage (4b-3).
-    const result = captureFromPage(
-      { type: 'clip', sessionId: deps.sessionId, url, title: '', markdown: content },
-      { db: deps.db, enqueue },
-    );
-    return { artifact_id: result.id, inserted: result.inserted, content_hash: result.contentHash };
+
+    // content_trusted=0 + dedup + atomic embed enqueue all live in captureFromPage (4b-3). Both
+    // branches route through it (never the human-note trusted=1 path), so neither clip nor qa can
+    // be marked trusted-as-instructions; the session is server-bound deps.sessionId, never a caller field.
+    if (type === 'clip') {
+      if (typeof url !== 'string' || url.trim() === '') {
+        return { error_reason: 'missing_url', hint: 'A clip requires the page url it was captured from.' };
+      }
+      if (typeof content !== 'string' || content === '') {
+        return { error_reason: 'missing_content', hint: 'A clip requires content to capture.' };
+      }
+      const result = captureFromPage(
+        { type: 'clip', sessionId: deps.sessionId, url, title: '', markdown: content },
+        { db: deps.db, enqueue },
+      );
+      return { artifact_id: result.id, inserted: result.inserted, content_hash: result.contentHash };
+    }
+
+    if (type === 'qa') {
+      // qa is url-less: a question + answer pair from the session (the "save session as research"
+      // building block). The answer may be page/agent-derived → content_trusted=0 by the same path.
+      if (typeof question !== 'string' || question.trim() === '') {
+        return { error_reason: 'missing_question', hint: 'A qa capture requires the question.' };
+      }
+      if (typeof answer !== 'string' || answer.trim() === '') {
+        return { error_reason: 'missing_answer', hint: 'A qa capture requires the answer.' };
+      }
+      const result = captureFromPage(
+        { type: 'qa', sessionId: deps.sessionId, question, answer },
+        { db: deps.db, enqueue },
+      );
+      return { artifact_id: result.id, inserted: result.inserted, content_hash: result.contentHash };
+    }
+
+    return {
+      error_reason: 'unsupported_capture_type',
+      hint: `studio_capture handles 'clip' and 'qa'; '${String(type)}' is not capturable through this tool.`,
+    };
   };
 }

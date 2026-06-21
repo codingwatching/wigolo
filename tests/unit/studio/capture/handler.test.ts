@@ -150,9 +150,10 @@ describe('studio/capture/handler — Phase 4c studio_capture boundary (RED)', ()
 
   it('C3-3c unsupported types are refused with a structured StudioToolError and write no row', async () => {
     const { handler } = mkHandler();
-    // qa is unsupported in 4c (it is 4d save-session-as-research output — added there with a
-    // real producer; no dead branch now). note/mark/unknown are likewise not this tool.
-    for (const type of ['qa', 'note', 'mark', 'screenshot', 'bogus']) {
+    // clip + qa are the supported capture types (qa opened in C5 with its real producer).
+    // note (the human-only trusted=1 path), mark (the inspect flow, not this tool), screenshot
+    // (deferred), and unknown types are refused — structured error, no half-write.
+    for (const type of ['note', 'mark', 'screenshot', 'bogus']) {
       const r = await handler({ type, content: 'x', url: 'https://x.example/u' } as StudioCaptureInput);
       // A StudioToolError (the dispatch maps it to isError:true), NOT a success — assert the
       // shape, not only that the table stayed empty (a thrown/malformed result must fail too).
@@ -246,5 +247,101 @@ describe('studio/capture/handler — Phase 4c studio_capture boundary (RED)', ()
     // Only {type,content,url} are read; curated_by_human stays the page-path default 0.
     expect(row.curated_by_human).toBe(0);
     expect(row.content_trusted).toBe(0);
+  });
+});
+
+/**
+ * Phase 4d — qa gate (C5). qa is the second capture-type on studio_capture: a url-less
+ * {question, answer} pair, server-bound session, trusted-0 by the SAME path as clip
+ * (captureFromPage → no trust param). These pin the qa traversal of the pre-existing,
+ * recon-confirmed-qa-ready producer: the NULL-url dedup resolver (qa is its first
+ * intervening-insert exerciser) and the sessionId-not-folded content hash.
+ */
+describe('studio/capture/handler — Phase 4d qa gate (C5)', () => {
+  let dir: string;
+  let db: Database.Database;
+
+  beforeEach(() => {
+    _resetMigrationGuard();
+    dir = mkdtempSync(join(tmpdir(), 'wigolo-studio-c5-'));
+    db = new Database(join(dir, 'cache.db'));
+    db.pragma('foreign_keys = ON');
+    applyMigrations(db, { vecLoaded: false });
+  });
+  afterEach(() => {
+    try { db.close(); } catch { /* ignore */ }
+    try { chmodSync(dir, 0o700); } catch { /* ignore */ }
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  function qaHandler(sessionId: string) {
+    const jobs: IndexJobInput[] = [];
+    const handler = createCaptureHandler({ sessionId, db, enqueue: (j: IndexJobInput) => { jobs.push(j); } });
+    return { handler, jobs };
+  }
+  const rowById = (id: number) => db.prepare('SELECT * FROM studio_artifacts WHERE id = ?').get(id) as Record<string, unknown>;
+  const rowCount = (): number => (db.prepare('SELECT COUNT(*) AS n FROM studio_artifacts').get() as { n: number }).n;
+  const ftsCount = (q: string): number =>
+    (db.prepare('SELECT COUNT(*) AS n FROM studio_artifacts_fts WHERE studio_artifacts_fts MATCH ?')
+      .get(`"${q.replace(/"/g, '""')}"`) as { n: number }).n;
+  const isRefusal = (r: unknown): r is { error_reason: string } =>
+    typeof r === 'object' && r !== null && 'error_reason' in r;
+
+  it('qa happy path — a question+answer pair is captured url-less, content_trusted=0, FTS-searchable on both question and answer, embedded once', async () => {
+    const { handler, jobs } = qaHandler('sess-qa');
+    const r = await handler({ type: 'qa', question: 'How does dedup work?', answer: 'Two symmetric partial unique indexes.' } as StudioCaptureInput);
+    expect(isRefusal(r)).toBe(false);
+    const ok = r as { artifact_id: number; inserted: boolean; content_hash: string };
+    expect(ok.inserted).toBe(true);
+    expect(ok.content_hash).toMatch(/^[0-9a-f]{64}$/);
+    const row = rowById(ok.artifact_id);
+    expect(row.artifact_type).toBe('qa');
+    expect(row.normalized_url).toBeNull();           // url-less
+    expect(row.content_trusted).toBe(0);             // page/agent-derived answer = data, never instructions
+    expect(row.title).toBe('How does dedup work?');  // captureFromPage maps question → title
+    expect(row.markdown).toBe('Two symmetric partial unique indexes.'); // answer → markdown
+    expect(ftsCount('dedup')).toBeGreaterThanOrEqual(1);     // question indexed
+    expect(ftsCount('symmetric')).toBeGreaterThanOrEqual(1); // answer indexed
+    // qa embeds the answer (prose) under the studio-namespaced key on a real insert.
+    expect(jobs.length).toBe(1);
+    expect(jobs[0].url).toBe(`studio://qa|${ok.artifact_id}`);
+  });
+
+  // ── PIN-1 — NULL-url qa dedup resolves by the content key, NOT lastInsertRowid ──
+  it('PIN-1: a re-captured qa dedups to the SAME id with inserted:false, even after an intervening url-less insert (NULL-url resolver, not lastInsertRowid)', async () => {
+    const { handler } = qaHandler('sess-S1');
+    const first = await handler({ type: 'qa', question: 'Q1', answer: 'A1' } as StudioCaptureInput) as { artifact_id: number; inserted: boolean };
+    expect(first.inserted).toBe(true);
+    // MANDATORY intervening url-less insert: a DIFFERENT qa lands between, so lastInsertRowid now
+    // points at qa#2 — this is what makes the lastInsertRowid mutation (m1) non-vacuous (without an
+    // intervening insert the stale rowid coincidentally equals first.artifact_id and the probe stays green).
+    const second = await handler({ type: 'qa', question: 'Q2', answer: 'A2' } as StudioCaptureInput) as { artifact_id: number };
+    expect(second.artifact_id).not.toBe(first.artifact_id);
+    const reFirst = await handler({ type: 'qa', question: 'Q1', answer: 'A1' } as StudioCaptureInput);
+    expect(isRefusal(reFirst)).toBe(false);
+    const ok = reFirst as { artifact_id: number; inserted: boolean };
+    // m1: resolver `const id = existing.id` → `Number(info.lastInsertRowid)` → returns qa#2's id → RED.
+    // m2: drop the `row.normalizedUrl === null ?` branch (always `normalized_url = ?`) → NULL matches
+    //     nothing → resolver `.get()` undefined → `existing.id` throws → RED (loud).
+    expect(ok.artifact_id).toBe(first.artifact_id);
+    expect(ok.inserted).toBe(false);
+    expect(rowCount()).toBe(2); // qa#1 + qa#2 persisted; the re-capture deduped
+  });
+
+  // ── PIN-2 — sessionId is NOT folded into the content hash (cross-session dedup) ──
+  it('PIN-2: identical qa under two DIFFERENT server-bound sessions dedups to ONE row (sessionId not folded into the content hash)', async () => {
+    // Two handlers, each server-bound to a different session — the only way to capture under two
+    // sessions, since the session is never a caller field. A single-session fixture would hide this.
+    const h1 = qaHandler('sess-A').handler;
+    const h2 = qaHandler('sess-B').handler;
+    const first = await h1({ type: 'qa', question: 'Same Q', answer: 'Same A' } as StudioCaptureInput) as { artifact_id: number; inserted: boolean };
+    expect(first.inserted).toBe(true);
+    const second = await h2({ type: 'qa', question: 'Same Q', answer: 'Same A' } as StudioCaptureInput);
+    const ok = second as { artifact_id: number; inserted: boolean };
+    // mutation: contentParts qa [question,answer] → [question,answer,sessionId] → the two hashes
+    // diverge → the second insert is a new row (inserted:true, id2≠id1) → RED.
+    expect(ok.artifact_id).toBe(first.artifact_id);
+    expect(ok.inserted).toBe(false);
+    expect(rowCount()).toBe(1);
   });
 });

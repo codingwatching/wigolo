@@ -175,4 +175,51 @@ describe('find_similar — captured studio clip via the FTS path (4d slice-2)', 
     expect(evidence.length).toBeGreaterThan(0);
     for (const e of evidence) expect(e.trusted).toBe(false);
   });
+
+  // C5 PIN-5: a url-less qa pair surfaces type-agnostically, exactly like a clip. Written via
+  // captureFromPage (the primitive the dispatch/handler calls; the write chain is pinned at the
+  // dispatch seam) — this file is a pure surfacing test.
+  it('surfaces a captured qa pair via FTS (embedding OFF), source=studio + trusted:false, keyed studio://qa|<id> (C5 PIN-5)', async () => {
+    const capture = captureFromPage(
+      { type: 'qa', sessionId: 'sess-qa-fts', question: 'How does the capture pipeline work?', answer: CLIP_MD },
+      { db: getDatabase(), enqueue: () => undefined },
+    );
+    const qaKey = `studio://qa|${capture.id}`;
+    mockEmbeddingState.available = false; // FTS lane — the only way the qa can surface
+    const out = await handleFindSimilar(
+      { concept: CONCEPT, include_cache: true, include_web: false, include_full_markdown: true },
+      [engine],
+      router,
+    );
+    expect(out.ok).toBe(true);
+    const results = out.ok ? out.data.results : [];
+    const hit = results.find((r) => r.url === qaKey);
+    expect(hit, `expected a FTS-path find_similar result for ${qaKey}; got ${JSON.stringify(results.map((r) => r.url))}`).toBeDefined();
+    expect(hit!.markdown).toBe(CLIP_MD);
+    expect(hit!.source).toBe('studio');
+    expect(hit!.trusted).toBe(false);
+  });
+
+  it('surfaces a captured qa pair via the embedding/concept path, keyed studio://qa|<id> + trusted:false (C5 PIN-5)', async () => {
+    const capture = captureFromPage(
+      { type: 'qa', sessionId: 'sess-qa-emb', question: 'session capture seed', answer: CLIP_MD },
+      { db: getDatabase(), enqueue: () => undefined },
+    );
+    const qaKey = `studio://qa|${capture.id}`;
+    mockEmbeddingState.available = true;
+    mockEmbeddingState.subprocessReady = true;
+    mockEmbeddingState.vectors.set(qaKey, 1);
+    mockEmbeddingState.findSimilarImpl = async () => [{ url: qaKey, score: 0.99 }];
+    // unrelated concept → the qa arrives ONLY via the embedding path here (not FTS).
+    const out = await handleFindSimilar(
+      { concept: 'unrelated zzqqx topic', include_cache: true, include_web: false, include_full_markdown: true },
+      [engine],
+      router,
+    );
+    expect(out.ok).toBe(true);
+    const results = out.ok ? out.data.results : [];
+    const hit = results.find((r) => r.url === qaKey);
+    expect(hit, `expected an embedding-path find_similar result for ${qaKey}`).toBeDefined();
+    expect(hit!.trusted).toBe(false);
+  });
 });
