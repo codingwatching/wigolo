@@ -42,6 +42,7 @@ export async function synthesizeReport(
     url: s.url,
     title: s.title,
     snippet: s.markdown_content.slice(0, 200),
+    trusted: s.trusted, // mirror the source's trust (C4)
   }));
 
   if (server) {

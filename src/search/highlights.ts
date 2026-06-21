@@ -124,6 +124,7 @@ export async function extractHighlights(
       url: r.url,
       title: r.title,
       snippet: r.snippet,
+      trusted: false, // web search result — page-derived (C4)
     });
 
     const source = r.markdown_content ?? r.snippet ?? '';

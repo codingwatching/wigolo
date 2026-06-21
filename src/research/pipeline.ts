@@ -301,6 +301,7 @@ export async function runResearchPipeline(
                 url: s.url,
                 title: s.title,
                 snippet: s.markdown.slice(0, 200),
+                trusted: false, // research sources are web/page-derived (C4)
               };
             });
           log.info('local synthesis succeeded', { reportLength: finalReport.length });
@@ -418,6 +419,7 @@ async function fetchSources(
         markdown_content: truncated,
         relevance_score: result.relevance_score,
         fetched: true,
+        trusted: false, // web/page-derived (C4); studio sources arrive with C3
       };
     } catch (err) {
       log.debug('failed to fetch research source', {
@@ -430,6 +432,7 @@ async function fetchSources(
         markdown_content: result.snippet,
         relevance_score: result.relevance_score,
         fetched: false,
+        trusted: false, // web/page-derived (C4)
         fetch_error: err instanceof Error ? err.message : String(err),
       };
     }

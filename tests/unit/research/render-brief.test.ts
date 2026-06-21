@@ -9,6 +9,7 @@ function mkSource(overrides: Partial<ResearchSource> = {}): ResearchSource {
     markdown_content: 'content',
     relevance_score: 0.9,
     fetched: true,
+    trusted: false,
     ...overrides,
   };
 }

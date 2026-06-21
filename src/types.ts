@@ -580,6 +580,10 @@ export interface Citation {
   title: string;
   snippet: string;
   citation_id?: string;
+  /** Whether the cited bytes are safe AS INSTRUCTIONS — mirrors the source's
+   * trust (C4). Web/page-derived citations are false; required so a caller never
+   * sees an untagged citation. */
+  trusted: boolean;
 }
 
 export interface ProgressUpdate {
@@ -612,6 +616,10 @@ export interface ResearchSource {
   relevance_score: number;
   fetched: boolean;
   fetch_error?: string;
+  /** Whether the source bytes are safe AS INSTRUCTIONS (C4). Every research
+   * source is web/page-derived → false. Required so a caller never sees an
+   * untagged source. (Studio sources arrive with C3.) */
+  trusted: boolean;
 }
 
 export interface RejectedSource {
