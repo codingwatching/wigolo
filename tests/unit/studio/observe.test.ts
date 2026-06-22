@@ -213,3 +213,46 @@ describe('createObserver — Slice 5e-0 credential-context perception exclusion 
     expect(wire).not.toContain('hasCredentialField');
   });
 });
+
+describe('createObserver — Slice 5e-a login_handoff signal delivery (the agent learns to wait / that it settled)', () => {
+  let dir3: string;
+  beforeEach(() => { dir3 = mkdtempSync(join(tmpdir(), 'wigolo-observe-5ea-')); });
+  afterEach(() => { rmSync(dir3, { recursive: true, force: true }); });
+
+  const obsWithSignal = (
+    snapshot: () => Promise<PageSnapshot>,
+    handoffSignal: () => { state: 'in_progress' | 'completed' | 'failed'; doNotRetry?: true } | null,
+    currentUrl?: () => string | undefined,
+  ) =>
+    createObserver({ snapshot, eventQueue: new StudioEventQueue(100), inlineBudget: 100000, spillMaxBytes: 10_000_000, dataDir: dir3, handoffSignal, currentUrl });
+
+  it('L-5e0-1: DURING the window (credential context) the signal IS delivered alongside the exclusion — content excluded, login_handoff:in_progress present', async () => {
+    // The window page is a credential context (login URL). 5e-0 excludes the content; 5e-a ALSO
+    // delivers the login_handoff signal so the agent knows to wait, not retry.
+    const r = ok(await obsWithSignal(
+      async () => mkSnap('s1', [el('e1', 'A')]),
+      () => ({ state: 'in_progress', doNotRetry: true }),
+      () => 'https://acme.example/login',
+    )({}));
+    expect(r.credentialContext).toBe(true);
+    expect(r.elements ?? []).toEqual([]); // content still excluded
+    // MUTATION (drop the handoff signal from the credential short-circuit) → this reds.
+    expect(r.login_handoff).toEqual({ state: 'in_progress', doNotRetry: true });
+  });
+
+  it('on a NORMAL page after settle, the login_handoff:completed signal rides the regular payload', async () => {
+    const r = ok(await obsWithSignal(
+      async () => mkSnap('s1', [el('e1', 'A')]),
+      () => ({ state: 'completed' }),
+      () => 'https://example.com/home',
+    )({}));
+    expect(r.credentialContext).toBeUndefined(); // not a credential page
+    expect(r.kind).toBe('full');
+    expect(r.login_handoff).toEqual({ state: 'completed' }); // the agent learns the handoff settled
+  });
+
+  it('no active handoff (signal null) → NO login_handoff field (no over-signaling on a normal observe)', async () => {
+    const r = ok(await obsWithSignal(async () => mkSnap('s1', [el('e1', 'A')]), () => null, () => 'https://example.com/home')({}));
+    expect(r.login_handoff).toBeUndefined();
+  });
+});

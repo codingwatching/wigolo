@@ -56,6 +56,20 @@ describe('ControlToken', () => {
     expect(tok.epoch).toBe(0);
   });
 
+  it('L3-1: the agent cannot seize control mid-handoff — while the human holds the login-handoff window, requestControl(agent) stays denied and never flips the token', () => {
+    // The login-handoff window is exactly "the human holds after a wall-detect reclaim".
+    const tok = new ControlToken();
+    tok.grant('agent'); // the agent was driving
+    tok.reclaim(); // a login wall → the handoff reclaims to the human (the window opens)
+    expect(tok.holder).toBe('human');
+    expect(tok.epoch).toBe(2);
+    // MUTATION (requestControl → grantable, i.e. flipTo(party) + {granted:true}): the agent re-grabs
+    // the wheel mid-window → both asserts RED. Control is only ever GRANTED by the host/human.
+    expect(tok.requestControl('agent')).toEqual({ granted: false });
+    expect(tok.holder).toBe('human'); // never seized
+    expect(tok.epoch).toBe(2); // no spurious flip during the window
+  });
+
   it('canDrive gates on BOTH the current holder and the HOST epoch (a stale client-claimed epoch is rejected)', () => {
     const tok = new ControlToken();
     expect(tok.canDrive('human', 0)).toBe(true); // holder + current host epoch
