@@ -255,22 +255,87 @@ describe('LoginHandoff — L3-3: a timeout or a vanish LOCKS the handoff (token 
     expect(s.token.calls).toEqual(['reclaim']); // NO grant('agent')
   });
 
-  it('in 5e-a NO terminal re-grants the agent — completing, aborting, and vanishing all leave token.calls = [reclaim] (re-grant is 5e-c)', async () => {
-    const done = setup({ storage: ss([]) });
-    await done.handoff.detectWall();
-    done.setCred(false);
-    done.setStorage(ss([cookie('session', 'acme.example')]));
-    await done.handoff.checkCompletion();
-    expect(done.handoff.state).toBe('completed');
-    expect(done.token.calls).toEqual(['reclaim']); // completing invokes onComplete, does NOT grant in 5e-a
-  });
-
   it('a settled terminal disarms the timers (the abort deadline + poll are cleared)', async () => {
     const s = setup();
     await s.handoff.detectWall();
     expect(s.timers.cleared).toEqual([]);
     s.handoff.onClientGone();
     expect(s.timers.cleared.length).toBeGreaterThanOrEqual(1); // timers cleared on settle
+  });
+});
+
+// ── Phase 5e-c: the deferred re-grant — a detected completion hands the wheel back so the agent ──
+// resumes driving the now-authenticated LIVE session. The grant is on the COMPLETING path ONLY;
+// settleFailed (abort/vanish) NEVER grants (the L3-3 pins above stay green — validated by mutation).
+describe('LoginHandoff — 5e-c: completion re-grants the agent (live-session continuity)', () => {
+  it('a detected completion re-grants the agent → it resumes driving the now-authenticated session', async () => {
+    // MUTATION (drop controlToken.grant('agent') from settleCompleted): completing no longer re-grants
+    // → the agent stays locked out of the live authed session → RED. The re-grant is the completing fill.
+    const s = setup({ storage: ss([]) });
+    await s.handoff.detectWall();
+    expect(s.token.holder).toBe('human'); // reclaimed to the human for the login
+
+    s.setCred(false); // left the credential context…
+    s.setStorage(ss([cookie('session', 'acme.example')])); // …with a real new wall-origin cookie
+
+    await s.handoff.checkCompletion();
+
+    expect(s.handoff.state).toBe('completed');
+    expect(s.handoff.signal()).toEqual({ state: 'completed' }); // login_handoff:completed rides the next observe
+    expect(s.token.calls).toEqual(['reclaim', 'grant:agent']); // the only token ops: wall reclaim, then completion re-grant
+    expect(s.token.holder).toBe('agent'); // the agent holds again → resumes driving the live session
+  });
+
+  it('the re-grant fires strictly AFTER onComplete (the 5e-b persist) resolves — never before', async () => {
+    // Ordering: while the persist is still in flight, the wheel must NOT have been handed back yet.
+    // Explicit signals (no microtask guessing): `entered` fires when onComplete is reached; `persisting`
+    // gates its resolution. So the assertion runs with onComplete provably mid-flight.
+    let releasePersist!: () => void;
+    const persisting = new Promise<void>((resolve) => { releasePersist = resolve; });
+    let enteredPersist!: () => void;
+    const entered = new Promise<void>((resolve) => { enteredPersist = resolve; });
+    const onComplete = vi.fn(async () => { enteredPersist(); await persisting; });
+    const s = setup({ onComplete, storage: ss([]) });
+    await s.handoff.detectWall();
+    s.setCred(false);
+    s.setStorage(ss([cookie('session', 'acme.example')]));
+
+    const completing = s.handoff.checkCompletion();
+    await entered; // onComplete is now mid-flight (entered, awaiting the persist gate)
+    expect(s.token.calls).not.toContain('grant:agent'); // persist still in flight → the wheel is NOT handed back yet
+
+    releasePersist();
+    await completing;
+    expect(s.token.calls).toContain('grant:agent'); // …granted only AFTER onComplete resolved (await ordering)
+  });
+
+  it('a persist (onComplete) failure STILL re-grants the live session AND surfaces the failure (never silent)', async () => {
+    // SEED decision: the live context is authenticated regardless of the persist write (persist = FUTURE
+    // reuse). A transient disk/keychain failure must NOT strand the agent — the re-grant fires in `finally`.
+    // The rejection is NOT swallowed (it propagates) so a persist failure can never be invisible.
+    const onComplete = vi.fn(async () => { throw new Error('persist failed'); });
+    const s = setup({ onComplete, storage: ss([]) });
+    await s.handoff.detectWall();
+    s.setCred(false);
+    s.setStorage(ss([cookie('session', 'acme.example')]));
+
+    await expect(s.handoff.checkCompletion()).rejects.toThrow('persist failed'); // surfaced, not swallowed
+    expect(s.token.calls).toContain('grant:agent'); // …and the live session was STILL handed back (continuity)
+    expect(s.token.holder).toBe('agent');
+  });
+
+  it('idempotent: two completion checks re-grant the agent EXACTLY once (no double-grant / re-entry)', async () => {
+    // MUTATION (drop the `state !== human-holding` guard in checkCompletion): the second check re-enters
+    // settleCompleted → a SECOND grant('agent') → RED. The state guard makes completion settle exactly once.
+    const s = setup({ storage: ss([]) });
+    await s.handoff.detectWall();
+    s.setCred(false);
+    s.setStorage(ss([cookie('session', 'acme.example')]));
+
+    await s.handoff.checkCompletion();
+    await s.handoff.checkCompletion(); // second check — already 'completed'
+
+    expect(s.token.calls.filter((c) => c === 'grant:agent').length).toBe(1);
   });
 });
 

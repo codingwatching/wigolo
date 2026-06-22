@@ -916,4 +916,64 @@ describe.skipIf(!RUN)('studio screencast bridge (integration, real browser)', ()
       await new Promise<void>((r) => server.close(() => r()));
     }
   }, 30_000);
+
+  // ───────────────────────────── Phase 5e-c: completion → agent resumes the authed live session ─────────────────────────────
+  it('5e-c (L3-4): after a login-handoff COMPLETES, the re-granted agent drives the SAME live session authenticated — a real GET /protected through the agent act path returns the 200 authed body, not 401', async () => {
+    // A real local login origin. /login is the credential wall (no cookie yet); the human "submits"
+    // (/do-login Set-Cookie auth=ok → 302 /dashboard, leaving the credential context with a NEW cookie).
+    // Completion re-grants the agent (5e-c), which then drives the SAME live context — its GET /protected
+    // carries the just-set cookie → 200 authed. This is LIVE continuity, NOT a profile reload (that is the
+    // 5e-b reuse path); the cookie already lives in this context. The agent's request enters through the
+    // real agent act path (host.act → actWithHandoff), not a synthetic fetch.
+    const server = createServer((req, res) => {
+      const authed = (req.headers.cookie ?? '').includes('auth=ok');
+      if (req.url === '/login') {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end('<input id="p" type="password" autofocus style="position:fixed;inset:0" />'); // credential context
+      } else if (req.url === '/do-login') {
+        res.writeHead(302, { 'set-cookie': 'auth=ok; Path=/', location: '/dashboard' }); // the human's login submit
+        res.end();
+      } else if (req.url === '/dashboard') {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end('<body>DASHBOARD-AREA</body>'); // non-credential landing
+      } else if (req.url === '/protected') {
+        if (authed) { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<body>PROTECTED-AUTHED-OK</body>'); }
+        else { res.writeHead(401, { 'content-type': 'text/html' }); res.end('<body>UNAUTHORIZED-401</body>'); }
+      } else { res.writeHead(404); res.end(); }
+    });
+    const port = await new Promise<number>((resolve) => server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port)));
+    const base = `http://127.0.0.1:${port}`;
+    const page = host.sessionBrowser.page as unknown as import('playwright').Page;
+    try {
+      // 1. On the credential wall → open the human-holding handoff window (baseline: no auth cookie yet).
+      await host.sessionBrowser.navigate(`${base}/login`);
+      await host.handoff.detectWall();
+      expect(host.handoff.state).toBe('human-holding');
+
+      // 2. The human logs in: /do-login Set-Cookie auth=ok → 302 → /dashboard (leaves the credential context).
+      await host.sessionBrowser.navigate(`${base}/do-login`);
+      expect(await page.evaluate(() => document.body.textContent)).toContain('DASHBOARD-AREA');
+
+      // 3. Completion (left credential context AND a new wall-origin cookie) → settleCompleted → 5e-c re-grant.
+      await host.handoff.checkCompletion();
+      expect(host.handoff.state).toBe('completed');
+
+      // 4. The agent resumes: it issues GET /protected through the agent act path. (grant localhost so the
+      //    agent nav is not SSRF-blocked — orthogonal to auth.) At RED (no re-grant) the act is refused
+      //    not_holder, the page stays on /dashboard, and the load-bearing body assertion below reddens.
+      host.grantAgentPrivateNav(true);
+      await host.act({ action: 'navigate', url: `${base}/protected` });
+
+      // 5. LOAD-BEARING: the agent drove the LIVE session AUTHENTICATED — /protected returned its 200 authed
+      //    body, NOT the 401. This is the real authed response, not merely holder === 'agent'.
+      const body = await page.evaluate(() => document.body.textContent);
+      expect(body).toContain('PROTECTED-AUTHED-OK'); // authed 200 — the live cookie was carried by the agent's request
+      expect(body).not.toContain('UNAUTHORIZED-401'); // not the unauthenticated branch
+      expect(host.handoff.signal()).toEqual({ state: 'completed' }); // login_handoff:completed is what the agent observes
+    } finally {
+      host.grantAgentPrivateNav(false);
+      host.controller.handleControl({ op: 'reclaim' });
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  }, 30_000);
 });
