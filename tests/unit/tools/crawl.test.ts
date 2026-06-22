@@ -242,3 +242,27 @@ describe('handleCrawl', () => {
     expect(result.dropped_over_budget).toBe(5 - result.pages.length);
   });
 });
+
+describe('handleCrawl — source-aware SSRF threading (P6-a exfil leg)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('threads the entry source into the raw fetch fn it hands the crawler', async () => {
+    const router = mockRouter();
+    const input: CrawlInput = { url: 'http://localhost:8080/docs', strategy: 'map', max_pages: 1 };
+    await handleCrawl(input, router as any, 'human');
+    // The crawler is constructed with (fetchFn, rawFetchFn); invoke the raw fetch fn and confirm
+    // the human source rides through to router.fetch (so a human-crawled local site is reachable).
+    const rawFetchFn = vi.mocked(Crawler).mock.calls[0][1] as (u: string) => Promise<unknown>;
+    await rawFetchFn('http://localhost:8080/docs');
+    expect(router.fetch).toHaveBeenCalledWith('http://localhost:8080/docs', expect.objectContaining({ source: 'human' }));
+  });
+
+  it('defaults the crawler raw fetch fn to source=agent (fail-closed) when no source given', async () => {
+    const router = mockRouter();
+    const input: CrawlInput = { url: 'https://example.com/docs', strategy: 'map', max_pages: 1 };
+    await handleCrawl(input, router as any);
+    const rawFetchFn = vi.mocked(Crawler).mock.calls[0][1] as (u: string) => Promise<unknown>;
+    await rawFetchFn('https://example.com/docs');
+    expect(router.fetch).toHaveBeenCalledWith('https://example.com/docs', expect.objectContaining({ source: 'agent' }));
+  });
+});
