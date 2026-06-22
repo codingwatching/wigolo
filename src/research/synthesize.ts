@@ -5,6 +5,7 @@ import {
   checkSamplingSupport,
 } from '../search/sampling.js';
 import type { ResearchSource, Citation } from '../types.js';
+import { wrapUntrusted } from '../security/untrusted.js';
 
 const log = createLogger('research');
 
@@ -41,7 +42,9 @@ export async function synthesizeReport(
     index: i + 1,
     url: s.url,
     title: s.title,
-    snippet: s.markdown_content.slice(0, 200),
+    // Page-derived preview returned to the agent — structurally contained (P6-a): the snippet
+    // is fenced as untrusted data regardless of the trust flag (which is mirrored separately).
+    snippet: wrapUntrusted(s.markdown_content.slice(0, 200)),
     trusted: s.trusted, // mirror the source's trust (C4)
   }));
 
@@ -83,7 +86,9 @@ async function synthesizeWithSampling(
 
       const source = sources[i];
       const content = source.markdown_content.slice(0, limits.perSourceChars);
-      const block = `[${i + 1}] ${source.title} (${source.url})\n${content}`;
+      // P6-a: the page body is embedded INSIDE the untrusted-data fence so an injected
+      // directive in the source cannot be read by the synthesis model as an instruction.
+      const block = `[${i + 1}] ${source.title} (${source.url})\n${wrapUntrusted(content)}`;
 
       totalChars += block.length;
       sourceBlocks.push(block);
@@ -152,14 +157,19 @@ export function buildFallbackReport(
     report += sourceHeader;
     remaining -= sourceHeader.length;
 
-    const contentBudget = Math.min(remaining - 10, source.markdown_content.length);
+    // P6-a: reserve room for the untrusted-data fence so the content is truncated BEFORE
+    // wrapping — the fence is then never cut by the final length clamp (a cut END marker
+    // would break containment).
+    const wrapOverhead = wrapUntrusted('').length;
+    const contentBudget = Math.min(remaining - 10 - wrapOverhead, source.markdown_content.length);
     if (contentBudget > 0) {
       let content = source.markdown_content.slice(0, contentBudget);
       if (content.length < source.markdown_content.length) {
         content = content.slice(0, Math.max(contentBudget - 3, 0)) + '...';
       }
-      report += content + '\n\n';
-      remaining -= content.length + 2;
+      const wrapped = wrapUntrusted(content);
+      report += wrapped + '\n\n';
+      remaining -= wrapped.length + 2;
     }
   }
 
