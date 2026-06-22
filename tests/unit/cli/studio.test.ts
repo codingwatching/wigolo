@@ -39,8 +39,27 @@ vi.mock('../../../src/studio/handle.js', async (importOriginal) => {
 import { parseStudioArgs, startStudioHost } from '../../../src/cli/studio.js';
 import { getEmbedProvider } from '../../../src/providers/embed-provider.js';
 import { writeHandle } from '../../../src/studio/handle.js';
-import type { LaunchedSessionBrowser } from '../../../src/studio/session-browser.js';
+import type { LaunchedSessionBrowser, StorageStateOut } from '../../../src/studio/session-browser.js';
 import { MarkStore } from '../../../src/studio/mark/store.js';
+
+// Slice 5e-a — a session-browser launcher whose live page URL + storageState are MUTABLE, so a test
+// can drive the login-handoff window: an agent act lands on a credential URL (wall), then the human
+// "logs in" (url leaves the credential context + a new cookie appears) to complete it. cdp returns {}
+// (the snapshot tolerates it; the credential context is URL-driven here).
+const cookie = (name: string, domain: string): StorageStateOut['cookies'][number] => ({
+  name, value: 'v', domain, path: '/', expires: -1, httpOnly: false, secure: false, sameSite: 'Lax',
+});
+function makeWallLauncher(initial: { url: string; storage?: StorageStateOut }) {
+  const state = { url: initial.url, storage: initial.storage ?? { cookies: [], origins: [] } };
+  const launch = async (): Promise<LaunchedSessionBrowser> =>
+    ({
+      browser: { close: async () => {}, on: () => {} },
+      context: { close: async () => {}, storageState: async () => state.storage },
+      page: { close: async () => {}, goto: async () => null, on: () => {}, url: () => state.url },
+      cdp: { send: async () => ({}), on: () => {}, off: () => {} },
+    }) as unknown as LaunchedSessionBrowser;
+  return { launch, state };
+}
 
 // A fake session-browser launcher: no real Chromium, so the host boots in unit tests.
 const fakeBrowserLauncher = async (): Promise<LaunchedSessionBrowser> =>
@@ -357,6 +376,128 @@ describe('cli/studio startStudioHost', () => {
     await host.navInterceptor.stop();
     await host.bridge.stop();
     await host.daemon.stop();
+  });
+
+  // ── Slice 5e-a: login-wall handoff orchestration (wiring) ──────────────────────────────────
+  it('actWithHandoff: an agent act that lands on a credential context opens the handoff window — reclaims to the human', async () => {
+    const launcher = makeWallLauncher({ url: 'https://acme.example/login' });
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: launcher.launch });
+    try {
+      host.controller.handleControl({ op: 'grant', to: 'agent' }); // the agent is driving
+      expect(host.controller.controlSnapshot().holder).toBe('agent');
+
+      // The agent navigates and lands on a login wall → actWithHandoff's afterAgentAct detects it.
+      const r = await host.act({ action: 'navigate', url: 'https://acme.example/login' });
+      expect(r).toMatchObject({ ok: true, action: 'navigate' }); // the triggering nav itself completes…
+
+      // MUTATION (drop the afterAgentAct call in actWithHandoff) → the window never opens → these RED.
+      expect(host.handoff.state).toBe('human-holding');
+      expect(host.controller.controlSnapshot().holder).toBe('human'); // …then control is reclaimed to the human
+    } finally {
+      host.handoff.onClientGone(); // settle → disarm timers
+      await host.daemon.stop();
+    }
+  });
+
+  it('L3-1(b): during the window the agent\'s studio_act is refused at the fence (not_holder)', async () => {
+    const launcher = makeWallLauncher({ url: 'https://acme.example/login' });
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: launcher.launch });
+    try {
+      host.controller.handleControl({ op: 'grant', to: 'agent' });
+      await host.act({ action: 'navigate', url: 'https://acme.example/login' }); // → window opens, reclaim to human
+      expect(host.handoff.active).toBe(true);
+
+      const refused = await host.act({ action: 'navigate', url: 'https://example.com/' });
+      expect((refused as { error_reason?: string }).error_reason).toBe('not_holder'); // the human holds for the whole window
+    } finally {
+      host.handoff.onClientGone();
+      await host.daemon.stop();
+    }
+  });
+
+  it('L3-1 surface: while the window holds, NONE of the agent\'s four MCP verbs (observe/act/marks/capture) can obtain control', async () => {
+    const launcher = makeWallLauncher({ url: 'https://acme.example/login' });
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: launcher.launch });
+    try {
+      await host.handoff.detectWall(); // open the window directly (human holds)
+      expect(host.controller.controlSnapshot().holder).toBe('human');
+
+      // Exercise the agent's ENTIRE reachable surface; none is a control primitive.
+      await host.observe({});
+      await host.act({ action: 'navigate', url: 'https://example.com/' });
+      await host.marksTool({});
+      await host.observe({ since: 0 });
+      expect(host.controller.controlSnapshot().holder).toBe('human'); // the agent never seized the wheel
+    } finally {
+      host.handoff.onClientGone();
+      await host.daemon.stop();
+    }
+  });
+
+  it('onHumanNav completes the handoff when the human leaves the credential context with a new session cookie', async () => {
+    const launcher = makeWallLauncher({ url: 'https://acme.example/login' });
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: launcher.launch });
+    try {
+      await host.handoff.detectWall(); // window open, baseline = no cookies
+      // The human finishes login: the page leaves the credential context and a session cookie appears.
+      launcher.state.url = 'https://acme.example/dashboard';
+      launcher.state.storage = { cookies: [cookie('session', 'acme.example')], origins: [] };
+      await host.navigate('https://acme.example/dashboard'); // human nav → checkCompletion
+      expect(host.handoff.state).toBe('completed');
+    } finally {
+      await host.daemon.stop();
+    }
+  });
+
+  it('onClientGone during the window → LOCKED: the token stays human (no auto re-grant to the agent)', async () => {
+    const launcher = makeWallLauncher({ url: 'https://acme.example/login' });
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: launcher.launch });
+    try {
+      await host.handoff.detectWall();
+      expect(host.controller.controlSnapshot().holder).toBe('human');
+      host.handoff.onClientGone(); // a disconnect during the login
+      // MUTATION (onClientGone → grant('agent')) → holder flips to agent → this REDs.
+      expect(host.handoff.state).toBe('vanished');
+      expect(host.controller.controlSnapshot().holder).toBe('human'); // LOCKED — never resumed the agent
+    } finally {
+      await host.daemon.stop();
+    }
+  });
+
+  it('login_handoff signal rides studio_observe during the window (in_progress) so the agent waits', async () => {
+    const launcher = makeWallLauncher({ url: 'https://acme.example/login' });
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: launcher.launch });
+    try {
+      await host.handoff.detectWall();
+      const r = await host.observe({});
+      expect(r).toMatchObject({ credentialContext: true, login_handoff: { state: 'in_progress', doNotRetry: true } });
+    } finally {
+      host.handoff.onClientGone();
+      await host.daemon.stop();
+    }
+  });
+
+  it('L-5e0-1 wiring: a human navigation generated DURING the window is dropped at source — it never reaches the agent on a later observe', async () => {
+    const launcher = makeWallLauncher({ url: 'https://acme.example/login' });
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: launcher.launch });
+    try {
+      await host.handoff.detectWall(); // window open
+      await host.navigate('https://acme.example/login/step2'); // a login-step nav DURING the window → dropped at source
+
+      // Complete the handoff so the page leaves the credential context, then observe as the agent.
+      launcher.state.url = 'https://acme.example/dashboard';
+      launcher.state.storage = { cookies: [cookie('session', 'acme.example')], origins: [] };
+      await host.handoff.checkCompletion();
+      expect(host.handoff.state).toBe('completed');
+
+      const r = await host.observe({ since: 0 });
+      // MUTATION (route the navigate enqueue around handoff.enqueueContentEvent — enqueue directly):
+      // the in-window login-step nav lands in the queue → leaks here on the post-window drain → RED.
+      const events = (r as { events?: Array<{ type: string }> }).events ?? [];
+      expect(events.some((e) => e.type === 'navigation')).toBe(false);
+    } finally {
+      await host.daemon.stop();
+    }
   });
 
   it('wires crash recovery: rebinds the screencast to the fresh cdp, and notifies clients on exhaustion', async () => {
