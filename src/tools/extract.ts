@@ -268,7 +268,7 @@ export async function handleExtract(
   // browser tier, bypassing router.fetch) and the standard path. Source-aware: agent blocks
   // localhost/private; human (REPL) may reach a local dev server; cloud-metadata blocked for both.
   if (input.url) {
-    const verdict = guardNavigation(input.url, { source });
+    const verdict = guardNavigation(input.url, { source, allowLoopback: true });
     if (!verdict.ok) {
       return {
         ok: false,

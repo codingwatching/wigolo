@@ -291,7 +291,7 @@ export class SmartRouter {
     // never touches the network. Source-aware: agent blocks loopback/RFC1918 by default; human
     // (CLI/REPL) may reach a local dev server; cloud-metadata / link-local is blocked for both.
     // Redirect HOPS are re-validated in http-client.ts under the same source.
-    const navVerdict = guardNavigation(url, { source });
+    const navVerdict = guardNavigation(url, { source, allowLoopback: true });
     if (!navVerdict.ok) {
       return {
         error: 'navigation_blocked',
