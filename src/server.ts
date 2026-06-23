@@ -17,6 +17,7 @@ import { initDatabase, closeDatabase } from './cache/db.js';
 import { handleFetch } from './tools/fetch.js';
 import { handleSearch } from './tools/search.js';
 import { buildSearchContentBlocks } from './server/search-response.js';
+import { fenceFetchData, fenceCrawlData, fenceExtractData } from './server/content-fence.js';
 import { handleCrawl } from './tools/crawl.js';
 import { handleCache } from './tools/cache.js';
 import { handleExtract } from './tools/extract.js';
@@ -432,8 +433,9 @@ export function createMcpServer(subsystems: Subsystems): Server {
           isError: true,
         };
       }
+      // D7/A: fence the agent-facing markdown body (page-derived untrusted data) at the MCP envelope.
       return {
-        content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }],
+        content: [{ type: 'text', text: JSON.stringify(fenceFetchData(r.data), null, 2) }],
         isError: false,
       };
     }
@@ -458,8 +460,9 @@ export function createMcpServer(subsystems: Subsystems): Server {
     if (name === 'crawl') {
       const input = (args ?? {}) as unknown as CrawlInput;
       const result = await handleCrawl(input, router);
+      // D7/A: fence each agent-facing per-page markdown body at the MCP envelope.
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text: JSON.stringify(fenceCrawlData(result), null, 2) }],
         isError: !!result.error,
       };
     }
@@ -482,8 +485,9 @@ export function createMcpServer(subsystems: Subsystems): Server {
           isError: true,
         };
       }
+      // D7/A: fence the agent-facing flat-string extraction (structured shapes handled in D7/B).
       return {
-        content: [{ type: 'text', text: JSON.stringify(r.data, null, 2) }],
+        content: [{ type: 'text', text: JSON.stringify(fenceExtractData(r.data), null, 2) }],
         isError: false,
       };
     }
