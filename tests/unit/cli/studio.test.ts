@@ -528,10 +528,10 @@ describe('cli/studio startStudioHost', () => {
   });
 
   it('5e-b: a completed login persists the wall-origin-SCOPED storageState to the opted-in named profile (onComplete is wired to the capture)', async () => {
-    const setCalls: Array<{ profileId: string; json: string }> = [];
+    const setCalls: Array<{ profileId: string; boundOrigin: string; json: string }> = [];
     const fakeStore = {
       get: async () => ({ ok: false as const, reason: 'profile_absent' as const }),
-      set: async (profileId: string, json: string) => { setCalls.push({ profileId, json }); },
+      set: async (profileId: string, boundOrigin: string, json: string) => { setCalls.push({ profileId, boundOrigin, json }); },
     } as unknown as ProfileStore;
     const launcher = makeWallLauncher({ url: 'https://acme.example/login' });
     const host = await startStudioHost({
@@ -659,10 +659,10 @@ describe('cli/studio 5e-b-h — credential-persist hardening pins (validity by m
   // if(opts.profileId) gate AND supply a defaulted profileId (the brittle refactor) → this spy reddens
   // (set called once) while the old test 531 — which asserts only state==='completed' — stays green.
   it('PIN-M7: a no-profile session completing the handoff calls ProfileStore.set ZERO times', async () => {
-    const setCalls: Array<{ profileId: string; json: string }> = [];
+    const setCalls: Array<{ profileId: string; boundOrigin: string; json: string }> = [];
     const spyStore = {
       get: async () => ({ ok: false as const, reason: 'profile_absent' as const }),
-      set: async (profileId: string, json: string) => { setCalls.push({ profileId, json }); },
+      set: async (profileId: string, boundOrigin: string, json: string) => { setCalls.push({ profileId, boundOrigin, json }); },
     } as unknown as ProfileStore;
     const launcher = makeWallLauncher({ url: 'https://acme.example/login' });
     // Store injected, but NO profileId → the named-profile gate must leave the capture unwired.
@@ -725,7 +725,7 @@ describe('cli/studio 5e-c closeout — persist-error surface (B1/L-5c-2) + no-le
     // keychain unavailable → set() fail-closes BEFORE any write (no plaintext, no scrypt file).
     const store = new ProfileStore({ dataDir: '/tmp/wigolo-b2-noexist', keychain: { available: () => false, getKek: () => null, setKek: () => {} } });
     let thrown: unknown;
-    try { await store.set('p', storageStateJson); } catch (e) { thrown = e; }
+    try { await store.set('p', 'https://acme.example', storageStateJson); } catch (e) { thrown = e; }
     expect(thrown, 'set() must fail-closed when the keychain is unavailable').toBeInstanceOf(Error);
     // MUTATION (embed storageStateJson in the thrown error): this assertion reddens.
     const errStr = `${(thrown as Error).message}\n${(thrown as Error).stack ?? ''}`;
@@ -799,10 +799,10 @@ describe('cli/studio 5e-c closeout — persist-error surface (B1/L-5c-2) + no-le
 // with no profileOrigin bound, persist behaves as before (the sealed 5e-b/5e-c tests are unchanged).
 describe('cli/studio 5eb1 — named-profile↔origin binding (confused-deputy guard)', () => {
   const profileSpy = () => {
-    const setCalls: Array<{ profileId: string; json: string }> = [];
+    const setCalls: Array<{ profileId: string; boundOrigin: string; json: string }> = [];
     const store = {
       get: async () => ({ ok: false as const, reason: 'profile_absent' as const }),
-      set: async (profileId: string, json: string) => { setCalls.push({ profileId, json }); },
+      set: async (profileId: string, boundOrigin: string, json: string) => { setCalls.push({ profileId, boundOrigin, json }); },
     } as unknown as ProfileStore;
     return { store, setCalls };
   };

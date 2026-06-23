@@ -45,7 +45,7 @@ describe('studio/profile-store — encrypted profile store (keychain KEK + disk 
 
   it('PRIMARY (fail-closed): keychain UNAVAILABLE → set() THROWS and writes NO blob (no plaintext, no scrypt-encrypted file)', async () => {
     const store = new ProfileStore({ dataDir: dir, keychain: memKeychain(false) });
-    await expect(store.set('prof-1', STORAGE_STATE)).rejects.toThrow();
+    await expect(store.set('prof-1', 'https://acme.example', STORAGE_STATE)).rejects.toThrow();
     // Mutation: give the KEK helper a file/scrypt fallthrough (mimic key-store.ts::storeKey) → the
     // keychain-unavailable set() would mint a KEK anyway, succeed, and write a blob → this REDs.
     // Proves the no-fallthrough (hard-fail) is load-bearing: the KEK never lands on disk.
@@ -55,7 +55,7 @@ describe('studio/profile-store — encrypted profile store (keychain KEK + disk 
   it('round-trip: set then get returns the original storageState blob; envelope is keychain-KEK + 0o600 ciphertext', async () => {
     const kc = memKeychain(true);
     const store = new ProfileStore({ dataDir: dir, keychain: kc });
-    await store.set('prof-1', STORAGE_STATE);
+    await store.set('prof-1', 'https://acme.example', STORAGE_STATE);
 
     // get round-trips the exact blob.
     const r = await store.get('prof-1');
@@ -81,9 +81,9 @@ describe('studio/profile-store — encrypted profile store (keychain KEK + disk 
 
   it('per-encryption salt: encrypting the same blob twice yields DIFFERENT ciphertext (the wire-format salt)', async () => {
     const store = new ProfileStore({ dataDir: dir, keychain: memKeychain(true) });
-    await store.set('prof-1', STORAGE_STATE);
+    await store.set('prof-1', 'https://acme.example', STORAGE_STATE);
     const first = readFileSync(blobPath('prof-1'), 'utf8');
-    await store.set('prof-1', STORAGE_STATE); // same KEK (fetched), fresh salt
+    await store.set('prof-1', 'https://acme.example', STORAGE_STATE); // same KEK (fetched), fresh salt
     const second = readFileSync(blobPath('prof-1'), 'utf8');
     expect(second).not.toBe(first);
     // …and it still decrypts back to the original.
@@ -92,7 +92,7 @@ describe('studio/profile-store — encrypted profile store (keychain KEK + disk 
 
   it('corrupt/tampered blob (4th absent-case): KEK present + blob present but decrypt fails → profile_absent (graceful re-login), NOT a host crash', async () => {
     const store = new ProfileStore({ dataDir: dir, keychain: memKeychain(true) });
-    await store.set('prof-1', STORAGE_STATE); // a valid .enc + KEK
+    await store.set('prof-1', 'https://acme.example', STORAGE_STATE); // a valid .enc + KEK
     // Tamper the ciphertext on disk — AES-GCM authentication REJECTS it on decrypt (security intact);
     // the store must convert that decrypt-throw into a graceful profile_absent so the session re-logs
     // in clean rather than crashing the host. No secret/path is logged.
