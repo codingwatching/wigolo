@@ -20,7 +20,7 @@ describe('content-fence — D7/A flat-markdown content-tool returns fenced at th
   it('PIN-A2: crawl per-page markdown is fenced; the page url stays RAW', () => {
     // MUT: drop the wrap → raw → RED.
     const data = { pages: [{ url: 'https://x.example/a', title: 'A', markdown: 'PAGE-A BODY' }], total_found: 1, crawled: 1 } as unknown as CrawlOutput;
-    const out = fenceCrawlData(data);
+    const out = fenceCrawlData(data) as CrawlOutput;
     expect(out.pages[0].markdown).toContain(BEGIN);
     expect(out.pages[0].markdown).toContain('PAGE-A BODY');
     expect(out.pages[0].url).toBe('https://x.example/a'); // operational stays RAW
