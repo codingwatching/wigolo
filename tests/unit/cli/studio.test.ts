@@ -50,7 +50,7 @@ import WebSocket from 'ws';
 import { initDatabase, closeDatabase, getDatabase } from '../../../src/cache/db.js';
 import { _resetMigrationGuard } from '../../../src/cache/migrations/runner.js';
 import { createCaptureHandler, type StudioCaptureInput } from '../../../src/studio/capture/handler.js';
-import { captureHumanNote } from '../../../src/studio/capture/artifacts.js';
+import { captureHumanNote, captureFromPage } from '../../../src/studio/capture/artifacts.js';
 
 /** Attach the host's REAL ws hub to a loopback server and connect a real client — exercises handleUpgrade end-to-end. */
 async function connectToHostHub(host: Awaited<ReturnType<typeof startStudioHost>>) {
@@ -1377,6 +1377,76 @@ describe('cli/studio startStudioHost — 7b-notes S1 comment round-trip', () => 
       expect(comments[0].text).toBe('note 51'); // most-recent 200 = note 51..250 (oldest-200 would start at note 1)
       expect(comments[199].text).toBe('note 250');
     } finally {
+      await conn.close();
+      await host.daemon.stop();
+    }
+  });
+});
+
+/**
+ * Phase 7e S2 — captured-items snapshot (post-hello backfill) + postHello failure-isolation hardening.
+ * Real cache DB so listSessionArtifacts runs the real session-scoped read; real hub upgrade so the snapshot
+ * routes through handleUpgrade → postHello (not a bare call).
+ */
+describe('cli/studio startStudioHost — 7e S2 captured snapshot + postHello isolation', () => {
+  beforeEach(() => {
+    events.length = 0;
+    resetConfig();
+    _resetMigrationGuard();
+    initDatabase(':memory:');
+  });
+  afterEach(() => {
+    try { closeDatabase(); } catch { /* already closed by a fault-injection test */ }
+    resetConfig();
+  });
+
+  const seedClip = (sessionId: string, n: number) =>
+    captureFromPage(
+      { type: 'clip', sessionId, url: `https://x.example/${n}`, title: `clip ${n}`, markdown: `body ${n}` },
+      { db: getDatabase(), enqueue: () => undefined, credentialContext: {} },
+    );
+
+  // PIN-A (backfill exists, through the real handleUpgrade). NAMED mutation that REDs: drop artifact_snapshot
+  // from the host's postHello → a connecting client never receives {t:artifact_snapshot} and waitForType times out.
+  it('S2 PIN-A: a connecting client backfills this session’s captured items via post-hello {t:artifact_snapshot}', async () => {
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
+    seedClip(host.session.id, 1); // stored BEFORE the client connects — the backfill must carry them
+    seedClip(host.session.id, 2);
+    const conn = await connectToHostHub(host);
+    try {
+      const snap = await conn.waitForType('artifact_snapshot');
+      expect(Array.isArray(snap.items)).toBe(true);
+      const items = snap.items as Array<Record<string, unknown>>;
+      expect(items.map((i) => i.url)).toEqual(['https://x.example/1', 'https://x.example/2']); // this session, append-order
+      expect(typeof items[0].id).toBe('number');         // the panel's upsert key
+      expect(items[0].markdown).toBeUndefined();          // light projection — no body
+    } finally {
+      await conn.close();
+      await host.daemon.stop();
+    }
+  });
+
+  // PIN-F (postHello failure-isolation — the robustness pin). A throwing markStore makes the marks snapshot read
+  // REJECT. With each read isolated, the OTHER snapshots (incl artifact) STILL deliver AND the failure is logged.
+  // NAMED mutation that REDs: un-isolate postHello (one read's throw rejects the whole array) → ws-hub's single
+  // catch suppresses ALL snapshots → waitForType('artifact_snapshot') times out.
+  it('S2 PIN-F: one snapshot read throwing does NOT suppress the siblings, and the failure is logged', async () => {
+    const ms = new MarkStore();
+    ms.list = () => { throw new Error('marks read boom'); }; // make ONLY the marks snapshot read reject
+    const writes: string[] = [];
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => { writes.push(String(chunk)); return true; }) as typeof process.stderr.write);
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher, markStore: ms });
+    seedClip(host.session.id, 1);
+    const conn = await connectToHostHub(host);
+    try {
+      const snap = await conn.waitForType('artifact_snapshot'); // a sibling still delivers despite marks throwing
+      expect((snap.items as Array<unknown>).length).toBe(1);
+      await conn.waitForType('comment_snapshot'); // and the other isolated siblings too
+      await conn.waitForType('audit_snapshot');
+      spy.mockRestore();
+      expect(writes.some((w) => /snapshot/i.test(w) && /"level":"warn"/.test(w))).toBe(true); // swallowed failure surfaced
+    } finally {
+      spy.mockRestore();
       await conn.close();
       await host.daemon.stop();
     }
