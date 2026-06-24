@@ -360,6 +360,25 @@ describe('cli/studio startStudioHost', () => {
     }
   });
 
+  // 7d S2 PIN-A (audit live delta exists). NAMED mutation that REDs: remove the hub.broadcast in the audit
+  // onRecord wiring → a recorded agent action produces no {t:'audit'} delta and waitForType times out.
+  it('7d S2 PIN-A: a recorded agent action broadcasts a live {t:audit} delta through the real record+broadcast site', async () => {
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
+    const conn = await connectToHostHub(host);
+    try {
+      await conn.at(0); // hello
+      host.controller.handleControl({ op: 'grant', to: 'agent' }); // the agent holds the token, so the act fires
+      await host.act({ action: 'navigate', url: 'https://example.com/' }); // the REAL record site: act → audit.record → onRecord
+      const delta = await conn.waitForType('audit');
+      expect(delta).toMatchObject({ t: 'audit', action: 'navigate', outcome: { ok: true } });
+      expect(typeof delta.seq).toBe('number'); // the stamped, replay-ordered entry rides the delta
+      expect(typeof delta.ts).toBe('number');
+    } finally {
+      await conn.close();
+      await host.daemon.stop();
+    }
+  });
+
   // PIN-B (agent path intact — DUAL-emit, not replace). NAMED mutation that REDs: replace the enqueue with the
   // broadcast (drop loginHandoff.enqueueContentEvent) → the agent's observe-drain no longer receives the mark.
   it('S3 PIN-B: a human mark STILL enqueues the agent content event (dual-emit, not replace)', async () => {

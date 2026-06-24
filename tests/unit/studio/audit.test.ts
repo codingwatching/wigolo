@@ -1,7 +1,19 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import Database from 'better-sqlite3';
-import { SessionAuditLog, type AuditEntry } from '../../../src/studio/audit.js';
+import { SessionAuditLog, type AuditEntry, type AuditDb } from '../../../src/studio/audit.js';
 import { applyMigrations, _resetMigrationGuard } from '../../../src/cache/migrations/runner.js';
+
+/** An AuditDb that records every SQL string handed to prepare() — for the INSERT-only write-surface check. */
+function recordingDb(): { db: AuditDb; prepared: string[] } {
+  const prepared: string[] = [];
+  const db: AuditDb = {
+    prepare(sql: string) {
+      prepared.push(sql);
+      return { run: () => undefined, all: () => [] };
+    },
+  };
+  return { db, prepared };
+}
 
 function migratedDb(): Database.Database {
   _resetMigrationGuard();
@@ -110,6 +122,17 @@ describe('SessionAuditLog — durable persistence (Phase 6b)', () => {
     db.close();
   });
 
+  it('S2 PIN-B (INSERT-only write surface): every mutating statement the log prepares is an INSERT — never UPDATE/DELETE', () => {
+    const { db, prepared } = recordingDb();
+    const log = new SessionAuditLog({ db, sessionId: 'sess-IO' });
+    log.record({ action: 'navigate', epoch: 0, target: { url: 'https://x/' }, outcome: { ok: true } });
+    log.record({ action: 'click', epoch: 1, target: { ref: 'e1' }, outcome: { ok: false, error_reason: 'not_holder' } });
+    const mutations = prepared.filter((s) => /\b(INSERT|UPDATE|DELETE)\b/i.test(s));
+    expect(mutations.length).toBeGreaterThan(0); // the log really does write
+    // NAMED mutation that REDs: add an UPDATE/DELETE path in persist() → a non-INSERT mutation appears.
+    expect(mutations.every((s) => /^\s*INSERT\b/i.test(s.trim()))).toBe(true);
+  });
+
   it('(c) append-only: exposes NO mutation API, and a fresh-hydrated replay is ordered + frozen', () => {
     const db = migratedDb();
     const log = new SessionAuditLog({ db, sessionId: 'sess-AO' });
@@ -126,5 +149,47 @@ describe('SessionAuditLog — durable persistence (Phase 6b)', () => {
     expect(Object.isFrozen(seq[0])).toBe(true);
     expect(Object.isFrozen(seq[1])).toBe(true);
     db.close();
+  });
+});
+
+/**
+ * Phase 7d S2 — the notify-only onRecord hook (mirrors controlToken.onChange). The host wires it to
+ * hub.broadcast({t:'audit', <entry>}) so the Phase-7 timeline gets a LIVE delta as each action is recorded.
+ * Notify-only: it never mutates the log, and it must hand over the SAME tamper-proof frozen entry the log
+ * stores — so a hook consumer (the broadcast) can never rewrite history.
+ */
+describe('SessionAuditLog — onRecord notify hook (7d S2)', () => {
+  it('fires onRecord once per recorded action, with the stamped entry (the live delta)', () => {
+    const log = new SessionAuditLog({ now: () => 7000 });
+    const seen: AuditEntry[] = [];
+    log.onRecord((e) => seen.push(e));
+    log.record({ action: 'navigate', epoch: 0, target: { url: 'https://x/' }, outcome: { ok: true } });
+    log.record({ action: 'click', epoch: 1, target: { ref: 'e1' }, outcome: { ok: false, error_reason: 'not_holder' } });
+    expect(seen.map((e) => e.action)).toEqual(['navigate', 'click']);
+    expect(seen.map((e) => e.seq)).toEqual([1, 2]);
+    expect(seen[0].ts).toBe(7000);
+  });
+
+  it('S2 PIN-B (frozen delivery): the entry handed to onRecord is the SAME deeply-frozen entry the log stores', () => {
+    const log = new SessionAuditLog({ now: () => 0 });
+    let delivered: AuditEntry | undefined;
+    log.onRecord((e) => { delivered = e; });
+    const returned = log.record({ action: 'navigate', epoch: 0, target: { url: 'https://x/' }, outcome: { ok: false, error_reason: 'navigation_blocked' } });
+    expect(delivered).toBe(returned); // same object identity — not a mutable copy
+    // NAMED mutation that REDs: deliver a mutable copy (e.g. cb({...entry})) → these freeze checks fail.
+    expect(Object.isFrozen(delivered)).toBe(true);
+    expect(Object.isFrozen(delivered!.outcome)).toBe(true);
+    expect(Object.isFrozen(delivered!.target)).toBe(true);
+  });
+
+  it('supports multiple subscribers — every registered hook receives each entry (notify-only fan-out)', () => {
+    const log = new SessionAuditLog({ now: () => 0 });
+    const a = vi.fn();
+    const b = vi.fn();
+    log.onRecord(a);
+    log.onRecord(b);
+    log.record({ action: 'scroll', epoch: 0, outcome: { ok: true } });
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(1);
   });
 });
