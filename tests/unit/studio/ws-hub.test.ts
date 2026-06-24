@@ -372,4 +372,18 @@ describe('StudioWsHub — frame fan-out + ack routing (1b.3)', () => {
     expect(approvals[0]).toMatchObject({ id: 'ap1', msg: { id: 7, decision: 'approve' } });
     ws.close();
   });
+
+  // 7b-notes S1 — the human's comment/annotation is a NEW up-message the hub must route to onComment.
+  // NAMED mutation that REDs: delete the `case 'comment'` arm in onMessage → the comment is silently
+  // dropped (no handler dispatch) → comments.length stays 0 → RED.
+  it('routes inbound {t:comment} to onComment with the session id and the raw message', async () => {
+    const comments: Array<{ id: string; msg: Record<string, unknown> }> = [];
+    const h = await startHub({ onComment: (id, msg) => comments.push({ id, msg }) });
+    const ws = new WebSocket(h.url('/studio/cm1/stream'));
+    await nextMessage(ws);
+    ws.send(JSON.stringify({ t: 'comment', text: 'remember to renew the cert' }));
+    await waitFor(() => comments.length === 1);
+    expect(comments[0]).toMatchObject({ id: 'cm1', msg: { text: 'remember to renew the cert' } });
+    ws.close();
+  });
 });

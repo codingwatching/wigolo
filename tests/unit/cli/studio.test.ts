@@ -47,6 +47,9 @@ import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
+import { initDatabase, closeDatabase, getDatabase } from '../../../src/cache/db.js';
+import { _resetMigrationGuard } from '../../../src/cache/migrations/runner.js';
+import { createCaptureHandler, type StudioCaptureInput } from '../../../src/studio/capture/handler.js';
 
 /** Attach the host's REAL ws hub to a loopback server and connect a real client — exercises handleUpgrade end-to-end. */
 async function connectToHostHub(host: Awaited<ReturnType<typeof startStudioHost>>) {
@@ -1221,5 +1224,99 @@ describe('cli/studio D2/B — durable profile↔origin binding (M2 + anti-rebind
         profileId: 'gh', profileStore: boundStore, profileOrigin: 'https://b.example', // declares a DIFFERENT origin
       }),
     ).rejects.toThrow(/rebind|bound to/);
+  });
+});
+
+/**
+ * Phase 7b-notes S1 — the human comment round-trip on the REAL host path. A {t:'comment',text} the human
+ * pushes over the WS persists via captureHumanNote (the SOLE content_trusted=1 writer) and, only on a
+ * successful capture, echoes a server-authoritative {t:'comment'} back. The agent's studio_capture path
+ * stays trusted=0-forced — the trusted=1 writer is unreachable from the agent. Real cache DB so the persist
+ * + trust land via the real path (captureHumanNote → real insert), real hub upgrade so the comment routes
+ * through onMessage → onComment (not a bare call).
+ */
+describe('cli/studio startStudioHost — 7b-notes S1 comment round-trip', () => {
+  beforeEach(() => {
+    events.length = 0;
+    resetConfig();
+    _resetMigrationGuard();
+    initDatabase(':memory:');
+  });
+  afterEach(() => {
+    try { closeDatabase(); } catch { /* already closed by a fault-injection test */ }
+    resetConfig();
+  });
+
+  const noteRows = (sessionId: string) =>
+    getDatabase()
+      .prepare("SELECT id, markdown, content_trusted, curated_by_human FROM studio_artifacts WHERE session_id = ? AND artifact_type = 'note' ORDER BY id")
+      .all(sessionId) as Array<{ id: number; markdown: string; content_trusted: number; curated_by_human: number }>;
+
+  // PIN-A(i) — the load-bearing trust pin, HUMAN half, through real dispatch (WS onMessage → onComment →
+  // capture dispatch, not a bare call). A human comment persists via captureHumanNote → content_trusted=1,
+  // and echoes back. NAMED mutation that REDs: route the comment through captureFromPage (trusted=0) instead
+  // of captureHumanNote → the persisted note lands content_trusted=0 → this REDs.
+  it('S1 PIN-A(i): a human comment persists trusted=1 and echoes {t:comment} — through the real WS dispatch', async () => {
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
+    const conn = await connectToHostHub(host);
+    try {
+      await conn.at(0); // hello
+      conn.ws.send(JSON.stringify({ t: 'comment', text: 'renew the cert' }));
+      const echo = await conn.waitForType('comment');
+      expect(echo).toMatchObject({ t: 'comment', text: 'renew the cert', trusted: true }); // server-authoritative echo
+      expect(typeof echo.id).toBe('number');
+      const rows = noteRows(host.session.id);
+      expect(rows.length).toBe(1); // persisted exactly once
+      expect(rows[0].markdown).toBe('renew the cert');
+      expect(rows[0].content_trusted).toBe(1); // the SOLE trusted writer — mutation→captureFromPage flips this to 0 (RED)
+      expect(rows[0].curated_by_human).toBe(1);
+      expect(echo.id).toBe(rows[0].id); // the echo carries the persisted artifact id
+    } finally {
+      await conn.close();
+      await host.daemon.stop();
+    }
+  });
+
+  // PIN-A(ii) — the agent half: the studio_capture handler the host wires into the daemon dispatch CANNOT
+  // write trusted=1. A clip lands content_trusted=0 via captureFromPage. NAMED mutation that REDs: make this
+  // handler accept a trusted param OR route to captureHumanNote → the agent capture lands content_trusted=1.
+  // (Complements handler.test.ts C1-1a/C1-1c — re-pinned here against the same factory the host wires, so S1's
+  // BOTH-halves trust asymmetry is self-contained.)
+  it('S1 PIN-A(ii): the agent capture path lands trusted=0 — the trusted=1 writer is unreachable from the agent', async () => {
+    // The exact factory cli/studio.ts wires into daemon.setStudioHost({capture}); the credential provider is
+    // the benign {} the host resolves for a non-credential page (no snapshotter dependency in this unit).
+    const handler = createCaptureHandler({
+      sessionId: 'agent-sess',
+      db: getDatabase(),
+      enqueue: () => undefined,
+      credentialContext: async () => ({}),
+      currentNavEpoch: () => 0,
+      lastObserveEpoch: () => 0,
+    });
+    const r = await handler({ type: 'clip', content: 'agent grabbed this', url: 'https://x.example/p' } as StudioCaptureInput);
+    const id = (r as { artifact_id: number }).artifact_id;
+    const row = getDatabase().prepare('SELECT content_trusted FROM studio_artifacts WHERE id = ?').get(id) as { content_trusted: number };
+    expect(row.content_trusted).toBe(0); // mutation→captureHumanNote / trusted param flips this to 1 (RED)
+  });
+
+  // PIN-B (delta exists + post-capture ordering, no-silent-failure). Two halves:
+  //  (1) "remove the broadcast" → PIN-A(i)'s echo never arrives → that test REDs (proven there).
+  //  (2) HERE: the echo broadcasts ONLY AFTER a successful capture. With the cache DB unavailable the capture
+  //      write throws, so NO echo must arrive — a shown comment is ALWAYS a captured comment. NAMED mutation
+  //      that REDs: broadcast before/regardless of the capture result → the echo fires despite the failed write.
+  it('S1 PIN-B: on a capture-write failure (cache unavailable) NO {t:comment} echo is broadcast', async () => {
+    closeDatabase(); // the cache write now fails — getDatabase() throws inside the comment capture
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
+    const conn = await connectToHostHub(host);
+    try {
+      await conn.at(0); // hello
+      conn.ws.send(JSON.stringify({ t: 'comment', text: 'never captured' }));
+      await new Promise((r) => setTimeout(r, 250)); // give the server room to (wrongly) echo
+      expect(conn.msgs.find((m) => m.t === 'comment')).toBeUndefined(); // mutation→echo-regardless makes this defined (RED)
+    } finally {
+      await conn.close();
+      await host.daemon.stop();
+      initDatabase(':memory:'); // restore for afterEach's closeDatabase()
+    }
   });
 });
