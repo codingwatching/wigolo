@@ -379,6 +379,46 @@ describe('cli/studio startStudioHost', () => {
     }
   });
 
+  // 7d S3 PIN-A (audit backfill exists, through the real handleUpgrade). NAMED mutation that REDs: drop the
+  // auditSnapshot from the host's postHello → a connecting client never backfills the timeline and
+  // waitForType('audit_snapshot') times out.
+  it('7d S3 PIN-A: a connecting client backfills the audit timeline via post-hello {t:audit_snapshot}', async () => {
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
+    // Seed the session's audit log BEFORE the client connects — the backfill must carry prior actions.
+    host.audit.record({ action: 'navigate', epoch: 0, target: { url: 'https://a/' }, outcome: { ok: true } });
+    host.audit.record({ action: 'click', epoch: 1, target: { ref: 'e1' }, outcome: { ok: false, error_reason: 'not_holder' } });
+    const conn = await connectToHostHub(host);
+    try {
+      const snap = await conn.waitForType('audit_snapshot');
+      expect(Array.isArray(snap.entries)).toBe(true);
+      const entries = snap.entries as Array<Record<string, unknown>>;
+      expect(entries.map((e) => e.action)).toEqual(['navigate', 'click']); // the prior session sequence, in order
+      expect(entries.map((e) => e.seq)).toEqual([1, 2]);
+    } finally {
+      await conn.close();
+      await host.daemon.stop();
+    }
+  });
+
+  // 7d S3 PIN-B (the cap is real — decision #8: most-recent N=200). NAMED mutation that REDs: cap to
+  // unbounded / a wrong N / the OLDEST 200 → the snapshot's count or selection diverges from the most-recent
+  // 200, so either the length or the boundary seq below fails.
+  it('7d S3 PIN-B: with >200 entries the audit snapshot is EXACTLY the most-recent 200', async () => {
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
+    for (let i = 0; i < 250; i++) host.audit.record({ action: 'scroll', epoch: 0, outcome: { ok: true } });
+    const conn = await connectToHostHub(host);
+    try {
+      const snap = await conn.waitForType('audit_snapshot');
+      const entries = snap.entries as Array<Record<string, unknown>>;
+      expect(entries.length).toBe(200); // capped — not the full 250, not a wrong N
+      expect(entries[0].seq).toBe(51); // the most-recent 200 = seq 51..250 (NOT the oldest, which would start at 1)
+      expect(entries[199].seq).toBe(250);
+    } finally {
+      await conn.close();
+      await host.daemon.stop();
+    }
+  });
+
   // PIN-B (agent path intact — DUAL-emit, not replace). NAMED mutation that REDs: replace the enqueue with the
   // broadcast (drop loginHandoff.enqueueContentEvent) → the agent's observe-drain no longer receives the mark.
   it('S3 PIN-B: a human mark STILL enqueues the agent content event (dual-emit, not replace)', async () => {
