@@ -149,6 +149,8 @@ export interface StudioHost {
   navigate: (url: string) => Promise<void>;
   /** Arm inspect mode for the human to mark an element (holder-gated; mirrors {t:'mark'}). Exposed for the headed tests + Phase-7 UI. */
   mark: () => Promise<void>;
+  /** The mark sink the inspector invokes when a human pick resolves (7c S3): dual-emit — enqueue the agent content event AND broadcast the live {t:'mark'} human delta. Exposed for tests to drive the real action site without live CDP. */
+  onMarkResolved: (target: StructuredTarget) => void;
   /** The human's marked structured targets (in-memory; Phase-4 persists). Exposed for the host-boundary/headed tests + the Phase-3c studio_marks tool. */
   marks: () => StudioMark[];
   /** Re-resolve a stored mark against the CURRENT page via the heal cascade (mark→live ref). Exposed for the headed tests + the Phase-3c studio_marks tool. */
@@ -528,16 +530,39 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
     const doc = (await sessionBrowser.cdp.send('DOM.getDocument', { depth: -1, pierce: true })) as { root?: DomNode };
     return buildTarget(ax.nodes ?? [], doc.root, backendNodeId);
   };
+  // The HUMAN live-delta half of the mark sink (7c S3): broadcast a {t:'mark', StudioMarkView} to the
+  // connected read surface. Reuses healMark (the SAME heal cascade as marksView) so the delta confidence is
+  // the value the agent reads via studio_marks — no parallel heal. healMark is declared below; the closure
+  // resolves it at call time (a mark only lands well after startup).
+  const emitMarkDelta = async (markId: string): Promise<void> => {
+    const stored = markStore.get(markId);
+    if (!stored) return;
+    const h = await healMark(markId);
+    const view: StudioMarkView = {
+      markId,
+      role: stored.target.role,
+      name: stored.target.name,
+      trusted: false,
+      confidence: 'confidence' in h ? h.confidence : 'none',
+    };
+    if ('ref' in h && h.ref) view.ref = h.ref;
+    hub.broadcast(session.id, { t: 'mark', ...view });
+  };
+  // The mark sink: the function the inspector invokes when a human pick resolves to a target. DUAL-emit —
+  // (1) the AGENT path: enqueue a content event, dropped at source during a login-handoff window (a
+  // credential-screen mark name can be a displayed secret, L-5e0-1); (2) the HUMAN path (7c S3): a live delta
+  // that BYPASSES the handoff suppression (the human must always see their own mark) — an unconditional
+  // broadcast, NOT routed through loginHandoff.
+  const onMarkResolved = (target: StructuredTarget): void => {
+    const m = markStore.add(target);
+    // trusted:false rides the event: role/name are page-derived (untrusted), like 2G vision.
+    loginHandoff.enqueueContentEvent({ type: 'mark', markId: m.markId, role: target.role, name: target.name, trusted: false });
+    void emitMarkDelta(m.markId);
+  };
   const inspector = createInspector({
     cdp: () => sessionBrowser.cdp,
     resolveMark,
-    onMark: (target) => {
-      const m = markStore.add(target);
-      // trusted:false rides the event: role/name are page-derived (untrusted), like 2G vision.
-      // During a login-handoff window the mark is dropped at source — a mark made on the credential
-      // screen carries a displayed secret in its name and must never reach the agent (L-5e0-1).
-      loginHandoff.enqueueContentEvent({ type: 'mark', markId: m.markId, role: target.role, name: target.name, trusted: false });
-    },
+    onMark: onMarkResolved,
   });
   const mark = async (): Promise<void> => {
     if (controlToken.holder !== 'human') {
@@ -803,7 +828,7 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   const handle: SessionHandle = { id: session.id, endpoint, token, pid: process.pid, instanceId };
   writeHandle(handle, opts.dataDir);
 
-  return { daemon, registry, session, sessionBrowser, bridge, controller, navInterceptor, navigate, mark, marks: () => markStore.list(), healMark, marksView, marksSnapshot, generalizeMark, marksTool, observe, act: actWithHandoff, audit: auditLog, approvals, grantAgentPrivateNav, handoff: loginHandoff, hub, handle, endpoint, webappUrl, nonceStore };
+  return { daemon, registry, session, sessionBrowser, bridge, controller, navInterceptor, navigate, mark, onMarkResolved, marks: () => markStore.list(), healMark, marksView, marksSnapshot, generalizeMark, marksTool, observe, act: actWithHandoff, audit: auditLog, approvals, grantAgentPrivateNav, handoff: loginHandoff, hub, handle, endpoint, webappUrl, nonceStore };
 }
 
 /** Open the web-app tab in the platform browser; the logged URL is the fallback if no opener is present. */
