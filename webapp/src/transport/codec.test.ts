@@ -69,6 +69,26 @@ describe('Studio stream codec (S3) — down parsing', () => {
     expect(parseDownMessage({ t: 'audit', seq: 1, ts: 2, action: 'click', epoch: 0 })).toBeNull(); // no outcome
     expect(parseDownMessage({ t: 'audit_snapshot' })).toBeNull(); // no entries array
   });
+
+  // ── 7b-notes S3: comment delta + comment_snapshot backfill ──
+  it('parses the live comment delta (the host echo of a captured human comment)', () => {
+    expect(parseDownMessage({ t: 'comment', id: 7, text: 'renew the cert', trusted: true }))
+      .toEqual({ t: 'comment', id: 7, text: 'renew the cert' }); // trusted is implicit for comments — dropped at the seam
+  });
+
+  it('parses the comment_snapshot backfill, dropping only malformed entries', () => {
+    const snap = parseDownMessage({ t: 'comment_snapshot', comments: [
+      { id: 1, text: 'first' },
+      { id: 'nope' }, // malformed — dropped, not thrown
+    ] });
+    expect(snap).toEqual({ t: 'comment_snapshot', comments: [{ id: 1, text: 'first' }] });
+  });
+
+  it('drops a malformed comment message as null (missing id/text)', () => {
+    expect(parseDownMessage({ t: 'comment', text: 'no id' })).toBeNull(); // no id
+    expect(parseDownMessage({ t: 'comment', id: 1 })).toBeNull(); // no text
+    expect(parseDownMessage({ t: 'comment_snapshot' })).toBeNull(); // no comments array
+  });
 });
 
 describe('Studio stream codec (S3) — up encoding', () => {
@@ -80,6 +100,13 @@ describe('Studio stream codec (S3) — up encoding', () => {
     expect(JSON.parse(encodeUp(up.nav('https://example.com')))).toEqual({ t: 'nav', url: 'https://example.com' });
     expect(JSON.parse(encodeUp(up.mark()))).toEqual({ t: 'mark' });
     expect(JSON.parse(encodeUp(up.approval(7, 'approve')))).toEqual({ t: 'approval', id: 7, decision: 'approve' });
+    expect(JSON.parse(encodeUp(up.comment('renew the cert')))).toEqual({ t: 'comment', text: 'renew the cert' });
+  });
+
+  // PIN (up emit type): the comment up-message MUST carry t:'comment' (the host routes on it). NAMED mutation
+  // that REDs: change up.comment to emit a different discriminant → the host never routes it and this fails.
+  it('PIN: up.comment emits the t:"comment" discriminant the host routes on', () => {
+    expect(JSON.parse(encodeUp(up.comment('x'))).t).toBe('comment');
   });
 
   // PIN-S3 (up emit type): the nav up-message MUST carry t:'nav' (the host routes on it). NAMED mutation
