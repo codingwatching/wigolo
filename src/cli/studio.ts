@@ -155,6 +155,8 @@ export interface StudioHost {
   healMark: (markId: string) => Promise<HealResult | { error: 'no_such_mark' }>;
   /** The studio_marks list view: each mark's descriptor + current heal verdict + a live ref for the actionable ones. Exposed for the headed tests. */
   marksView: () => Promise<StudioMarksOutput>;
+  /** The post-hello marks backfill payload (7c S2): {t:'marks_snapshot', marks} reusing marksView so confidence is the SAME heal-computed value as studio_marks. Wired into the hub's per-connecting-client postHello. Exposed for tests. */
+  marksSnapshot: () => Promise<{ t: 'marks_snapshot'; marks: StudioMarkView[] }>;
   /** Preview the repeating sibling set a mark belongs to (Phase 3d generalize op — preview-only READ, never acts). Exposed for the headed tests + the studio_marks generalize op. */
   generalizeMark: (markId?: string) => Promise<StudioGeneralizeOutput | StudioToolError>;
   /** The studio_marks tool entry: lists marks, or (op='generalize') previews a mark's repeating set. Exposed for the host-boundary/headed tests. */
@@ -276,6 +278,9 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
     // Tell a connecting client the current {holder, epoch} so it stamps valid input
     // even if it joins after a flip (defaults before the controller exists).
     helloExtras: () => controller?.controlSnapshot() ?? { holder: 'human', epoch: 0 },
+    // 7c S2: backfill a connecting human client with the marks already stored this session (own message,
+    // after hello). `marksSnapshot` is defined below; the closure defers the call until a client connects.
+    postHello: async () => [await marksSnapshot()],
   });
   // S2: the nonce store backs the one-time bearer handshake. A nonce is minted per launch and passed in the
   // tab URL; the page redeems it (POST /studio/token) for the bearer, which then rides the WS subprotocol —
@@ -594,6 +599,15 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
       untrusted_notice: UNTRUSTED_STUDIO_NOTICE,
     };
   };
+  // The post-hello marks backfill (7c S2): a CONNECTING human client hydrates its read surface from the
+  // marks already stored this session. REUSES marksView so the snapshot confidence is the SAME heal-computed
+  // value the agent reads via studio_marks (no parallel heal). Carries only the marks array — the
+  // untrusted-data instruction-channel notice is an agent-channel concern; the human read surface (S4)
+  // renders every page-derived string inert via SafeText. Credential-context exclusion rides marksView too.
+  const marksSnapshot = async (): Promise<{ t: 'marks_snapshot'; marks: StudioMarkView[] }> => {
+    const view = await marksView();
+    return { t: 'marks_snapshot', marks: view.marks };
+  };
   // The viewport-relative bounding box of a live node (CSS px) for the generalize geometric
   // tiebreaker; null when the node has no box (display:none / detached) — applyGeometry keeps such
   // a structural match (not-rendered ≠ off-pattern; the human confirms).
@@ -789,7 +803,7 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   const handle: SessionHandle = { id: session.id, endpoint, token, pid: process.pid, instanceId };
   writeHandle(handle, opts.dataDir);
 
-  return { daemon, registry, session, sessionBrowser, bridge, controller, navInterceptor, navigate, mark, marks: () => markStore.list(), healMark, marksView, generalizeMark, marksTool, observe, act: actWithHandoff, audit: auditLog, approvals, grantAgentPrivateNav, handoff: loginHandoff, hub, handle, endpoint, webappUrl, nonceStore };
+  return { daemon, registry, session, sessionBrowser, bridge, controller, navInterceptor, navigate, mark, marks: () => markStore.list(), healMark, marksView, marksSnapshot, generalizeMark, marksTool, observe, act: actWithHandoff, audit: auditLog, approvals, grantAgentPrivateNav, handoff: loginHandoff, hub, handle, endpoint, webappUrl, nonceStore };
 }
 
 /** Open the web-app tab in the platform browser; the logged URL is the fallback if no opener is present. */
