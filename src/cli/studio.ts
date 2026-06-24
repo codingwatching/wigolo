@@ -25,7 +25,7 @@ import { NavEpoch } from '../studio/nav-epoch.js';
 import { createActHandler } from '../studio/act.js';
 import { createCaptureHandler } from '../studio/capture/handler.js';
 import { getDatabase } from '../cache/db.js';
-import { captureHumanNote } from '../studio/capture/artifacts.js';
+import { captureHumanNote, listSessionComments, type SessionCommentRow } from '../studio/capture/artifacts.js';
 import { SessionAuditLog, type AuditDb, type AuditEntry } from '../studio/audit.js';
 import { SessionApprovals } from '../studio/approvals.js';
 import { createInspector } from '../studio/mark/inspect.js';
@@ -72,6 +72,8 @@ const STUDIO_SPILL_MAX_BYTES = 64 * 1024 * 1024;
  * Live deltas (the S2 {t:'audit'} feed) remain unbounded.
  */
 const AUDIT_SNAPSHOT_CAP = 200;
+/** 7b-notes: the post-hello comment backfill carries the most-recent N comments of the session. */
+const COMMENT_SNAPSHOT_CAP = 200;
 
 const logger = createLogger('cli');
 
@@ -294,7 +296,7 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
     // 7c S2 + 7d S3: backfill a connecting human client with this session's read state (own messages, after
     // hello): the marks already stored, then the audit timeline (most-recent N). Both `marksSnapshot` and
     // `auditSnapshot` are defined below; the closure defers the calls until a client connects.
-    postHello: async () => [await marksSnapshot(), auditSnapshot()],
+    postHello: async () => [await marksSnapshot(), auditSnapshot(), commentSnapshot()],
   });
   // S2: the nonce store backs the one-time bearer handshake. A nonce is minted per launch and passed in the
   // tab URL; the page redeems it (POST /studio/token) for the bearer, which then rides the WS subprotocol —
@@ -800,6 +802,19 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
     t: 'audit_snapshot',
     entries: auditLog.replay().slice(-AUDIT_SNAPSHOT_CAP),
   });
+  // 7b-notes S2: the post-hello comment backfill — a connecting human client hydrates its comments panel from
+  // this session's stored comments (most-recent N), session-scoped (listSessionComments' WHERE session_id is
+  // the isolation boundary). Wrapped so an uninit cache (getDatabase throws) backfills EMPTY rather than
+  // rejecting the whole postHello promise — which would also suppress the marks + audit snapshots.
+  const commentSnapshot = (): { t: 'comment_snapshot'; comments: SessionCommentRow[] } => {
+    let comments: SessionCommentRow[] = [];
+    try {
+      comments = listSessionComments(getDatabase(), session.id, COMMENT_SNAPSHOT_CAP);
+    } catch (e) {
+      logger.debug('comment snapshot skipped — cache unavailable', { error: e instanceof Error ? e.message : String(e) });
+    }
+    return { t: 'comment_snapshot', comments };
+  };
   // Phase 6c: the act handler classifies each click/type (deterministic) and HOLDS a risky one for
   // human approval before firing. currentUrl is the live page URL — the HARD signal the classifier
   // weights over the page-controlled element role/name; a read failure degrades to undefined (the

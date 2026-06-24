@@ -291,6 +291,28 @@ export function captureHumanNote(input: NoteCapture, deps: CaptureDeps): Capture
   );
 }
 
+/** A human comment/annotation resolved for a session read surface (the comments-panel backfill). */
+export interface SessionCommentRow {
+  id: number;
+  text: string;
+}
+
+/**
+ * Session-scoped read of a session's human comments (artifact_type='note'), append-ordered (by id), capped to
+ * the most-recent `limit`. The `WHERE session_id = ?` filter is the ISOLATION boundary: one session's comments
+ * never leak into another session's read surface. This is the first session-scoped studio-artifact read (a
+ * later slice generalizes it across artifact types). Reads THIS session's notes ascending, then `slice(-limit)`
+ * keeps the most-recent tail — mirroring the audit snapshot's `slice(-N)`.
+ */
+export function listSessionComments(db: Database.Database, sessionId: string, limit: number): SessionCommentRow[] {
+  const rows = db
+    .prepare(
+      "SELECT id, markdown FROM studio_artifacts WHERE session_id = ? AND artifact_type = 'note' ORDER BY id ASC",
+    )
+    .all(sessionId) as Array<{ id: number; markdown: string | null }>;
+  return rows.slice(-limit).map((r) => ({ id: r.id, text: r.markdown ?? '' }));
+}
+
 /**
  * Mark an existing artifact as human-curated. Keyed by row id; sets ONLY
  * curated_by_human and never names content_trusted — page-derived content stays
