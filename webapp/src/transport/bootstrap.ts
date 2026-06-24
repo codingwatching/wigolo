@@ -5,6 +5,7 @@ import { parseDownMessage, encodeUp, up } from './codec.js';
 import { toNormalized, mouseInput, keyInput, domButton, modifiersOf, type MouseEventType } from './input.js';
 import { ControlsModel } from './controls.js';
 import { MarksModel } from './marks.js';
+import { ApprovalsModel } from './approvals.js';
 
 /**
  * Wire the full live Studio session (S7 stream + S4 controls) onto ONE connection: redeem the one-time nonce
@@ -21,6 +22,8 @@ export interface StudioWiring {
   model: ControlsModel;
   /** The server-authoritative marks list, fed by marks_snapshot (backfill) + mark (live delta) down-messages. */
   marks: MarksModel;
+  /** The server-authoritative pending-approval set, fed by approval_request down-messages (7d S1). */
+  approvals: ApprovalsModel;
   /** Send an encoded up-message to the host (no-op until the socket is up). */
   emit: (wire: string) => void;
   /** Paint frames + forward input onto a canvas; returns a teardown that detaches just that canvas. */
@@ -35,6 +38,7 @@ export function bootstrapStudio(): StudioWiring | null {
 
   const model = new ControlsModel();
   const marks = new MarksModel();
+  const approvals = new ApprovalsModel();
   let conn: StreamConnection | null = null;
   let epoch = 0;
   const sinks = new Set<FrameSink>();
@@ -64,6 +68,10 @@ export function bootstrapStudio(): StudioWiring | null {
           } else if (msg.t === 'mark') {
             // 7c: a live human-mark delta (upsert by id). SERVER-authoritative — no optimistic local add.
             marks.applyDelta({ markId: msg.markId, role: msg.role, name: msg.name, confidence: msg.confidence, ...(msg.ref ? { ref: msg.ref } : {}) });
+          } else if (msg.t === 'approval_request') {
+            // 7d S1: the host holds a risky agent action and asks the human. SERVER-authoritative — the card
+            // appears only on this message; the human's verdict rides back out via the codec emit.
+            approvals.add({ id: msg.id, action: msg.action, risk: msg.risk, ...(msg.target ? { target: msg.target } : {}) });
           }
         },
       });
@@ -117,5 +125,5 @@ export function bootstrapStudio(): StudioWiring | null {
     };
   };
 
-  return { model, marks, emit, connectCanvas };
+  return { model, marks, approvals, emit, connectCanvas };
 }

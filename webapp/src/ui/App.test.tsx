@@ -4,6 +4,7 @@ import { act } from 'preact/test-utils';
 import { App, deriveRailProps } from './App.js';
 import { ControlsModel } from '../transport/controls.js';
 import { MarksModel } from '../transport/marks.js';
+import { ApprovalsModel } from '../transport/approvals.js';
 
 /**
  * Split-view shell tests (S7). A no-op `connect` is injected so the pane renders without attempting a live
@@ -32,11 +33,13 @@ describe('Studio web-app split-view shell', () => {
   it('deriveRailProps maps the live wiring to the rail (controls + marks both reach it)', () => {
     const model = new ControlsModel();
     const marks = new MarksModel();
-    const wiring = { model, marks, emit: vi.fn(), connectCanvas: vi.fn(() => () => {}) };
+    const approvals = new ApprovalsModel();
+    const wiring = { model, marks, approvals, emit: vi.fn(), connectCanvas: vi.fn((_c: HTMLCanvasElement) => () => {}) };
     const props = deriveRailProps(wiring);
     expect(props.controls?.model).toBe(model); // the SAME live control model, not undefined
     expect(props.controls?.emit).toBe(wiring.emit);
     expect(props.marks).toBe(marks); // and the live marks model
+    expect(props.approvals).toBe(approvals); // and the live approvals model (7d S1)
   });
 
   it('deriveRailProps returns nothing when there is no wiring (jsdom/no-WebSocket)', () => {

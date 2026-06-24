@@ -3,6 +3,7 @@ import { BrowserPane } from './BrowserPane.js';
 import { Rail, type RailControls } from './Rail.js';
 import { bootstrapStudio, type StudioWiring } from '../transport/bootstrap.js';
 import type { MarksModel } from '../transport/marks.js';
+import type { ApprovalsModel } from '../transport/approvals.js';
 
 /**
  * The Studio web-app root (S7 split view + S4 controls + 7c marks). It owns the single shared connection: one
@@ -18,6 +19,8 @@ export interface AppProps {
   controls?: RailControls;
   /** Override the marks model (tests). Defaults to the shared bootstrap. */
   marks?: MarksModel;
+  /** Override the approvals model (tests). Defaults to the shared bootstrap. */
+  approvals?: ApprovalsModel;
 }
 
 /**
@@ -25,17 +28,18 @@ export interface AppProps {
  * reach the rail — the prior `boot?.controls` read a field the wiring never carried, leaving the rail inert
  * in production. Returns {} when there is no wiring (jsdom / no WebSocket).
  */
-export function deriveRailProps(boot: StudioWiring | null): { controls?: RailControls; marks?: MarksModel } {
+export function deriveRailProps(boot: StudioWiring | null): { controls?: RailControls; marks?: MarksModel; approvals?: ApprovalsModel } {
   if (!boot) return {};
-  return { controls: { model: boot.model, emit: boot.emit }, marks: boot.marks };
+  return { controls: { model: boot.model, emit: boot.emit }, marks: boot.marks, approvals: boot.approvals };
 }
 
-export function App({ connect, controls, marks }: AppProps = {}) {
+export function App({ connect, controls, marks, approvals }: AppProps = {}) {
   const boot = useMemo(() => bootstrapStudio(), []);
   const connectFn = connect ?? boot?.connectCanvas;
   const rail = deriveRailProps(boot);
   const controlsObj = controls ?? rail.controls;
   const marksModel = marks ?? rail.marks;
+  const approvalsModel = approvals ?? rail.approvals;
   return (
     <div id="studio-root" class="studio-split">
       <header class="studio-header">
@@ -43,7 +47,7 @@ export function App({ connect, controls, marks }: AppProps = {}) {
       </header>
       <div class="studio-body">
         <BrowserPane connect={connectFn} />
-        <Rail controls={controlsObj} marks={marksModel} />
+        <Rail controls={controlsObj} marks={marksModel} approvals={approvalsModel} />
       </div>
     </div>
   );
