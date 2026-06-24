@@ -186,11 +186,21 @@ export class StudioWsHub {
     return { sent, dropped };
   }
 
-  /** Disconnect every client and stop the heartbeat (host shutdown). */
-  closeAll(): void {
+  /**
+   * Disconnect every client and stop the heartbeat (host shutdown). A clean
+   * close is ANNOUNCED: each client gets a terminal `{t:'closed'}` message
+   * before its socket is closed, so it can enter a terminal state instead of
+   * treating the drop as transient and reconnecting forever (the client cannot
+   * read the WS close code — see webapp connection SM). Crash keeps its own
+   * `{t:'error', reason:'session_failed'}` signal.
+   */
+  closeAll(reason = 'host_shutdown'): void {
     clearInterval(this.heartbeat);
     for (const set of this.clients.values()) {
-      for (const ws of set) ws.close();
+      for (const ws of set) {
+        this.send(ws, { t: 'closed', reason });
+        ws.close();
+      }
     }
     this.clients.clear();
     this.wss.close();
