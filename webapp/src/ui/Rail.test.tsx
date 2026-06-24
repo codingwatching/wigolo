@@ -3,6 +3,7 @@ import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { ControlsModel } from '../transport/controls.js';
 import { MarksModel } from '../transport/marks.js';
+import { CommentsModel } from '../transport/comments.js';
 import { Rail } from './Rail.js';
 
 /**
@@ -50,5 +51,17 @@ describe('Rail — controls mounted as the first panel', () => {
   it('renders the marks panel inertly when no marks model is injected', () => {
     const host = mount(<Rail />);
     expect(host.querySelector('.studio-marks')).not.toBeNull();
+  });
+
+  // 7b-notes S3: the comments/annotations panel mounts in the rail, wired to the live model + the ONE codec emit.
+  it('mounts the comments panel in the rail', () => {
+    const host = mount(<Rail controls={{ model: new ControlsModel(), emit: vi.fn() }} comments={new CommentsModel()} />);
+    expect(host.querySelector('.studio-comments')).not.toBeNull();
+    expect(host.querySelector('.studio-comment-form')).not.toBeNull(); // the annotate input is present
+  });
+
+  it('renders the comments panel inertly when no comments model is injected', () => {
+    const host = mount(<Rail />);
+    expect(host.querySelector('.studio-comments')).not.toBeNull();
   });
 });
