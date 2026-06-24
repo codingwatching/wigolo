@@ -44,6 +44,31 @@ import { MarkStore } from '../../../src/studio/mark/store.js';
 import { ProfileStore } from '../../../src/studio/profile-store.js';
 import { scopeStorageStateToOrigin } from '../../../src/studio/login-capture.js';
 import { readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import WebSocket from 'ws';
+
+/** Attach the host's REAL ws hub to a loopback server and connect a real client — exercises handleUpgrade end-to-end. */
+async function connectToHostHub(host: Awaited<ReturnType<typeof startStudioHost>>) {
+  const server = createServer();
+  server.on('upgrade', (req, socket, head) => host.hub.handleUpgrade(req, socket, head));
+  const port = await new Promise<number>((res) => server.listen(0, '127.0.0.1', () => res((server.address() as AddressInfo).port)));
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/studio/${host.session.id}/stream`);
+  // Collect ALL frames — hello and the unprompted post-hello snapshot arrive back-to-back, so a one-shot
+  // listener would race past the second. `at(i)` waits until that index exists.
+  const msgs: Array<Record<string, unknown>> = [];
+  ws.on('message', (d: WebSocket.RawData) => msgs.push(JSON.parse(d.toString())));
+  const at = (i: number): Promise<Record<string, unknown>> =>
+    new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        if (msgs.length > i) { clearInterval(iv); resolve(msgs[i]); }
+        else if (Date.now() - t0 > 1500) { clearInterval(iv); reject(new Error(`no message at index ${i} within 1500ms`)); }
+      }, 5);
+    });
+  const close = async () => { ws.close(); await new Promise<void>((r) => server.close(() => r())); };
+  return { ws, at, close };
+}
 
 // Slice 5e-a — a session-browser launcher whose live page URL + storageState are MUTABLE, so a test
 // can drive the login-handoff window: an agent act lands on a credential URL (wall), then the human
@@ -263,6 +288,43 @@ describe('cli/studio startStudioHost', () => {
       expect(r).toMatchObject({ credentialContext: true });
       // P6-a: the notice is present even on the credential-exclusion path (never gated on a flag).
       if ('marks' in r) expect(typeof r.untrusted_notice).toBe('string');
+    } finally {
+      await host.daemon.stop();
+    }
+  });
+
+  it('S2 PIN-A: a connecting client backfills the marks snapshot after hello — through the real host hub upgrade', async () => {
+    const ms = new MarkStore();
+    ms.add({ backendNodeId: 1, role: 'button', name: 'Add to cart', trusted: false, fingerprint: 'fp', ancestorPath: 'html/body/button', attrs: {} });
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher, markStore: ms });
+    const conn = await connectToHostHub(host);
+    try {
+      const hello = await conn.at(0);
+      expect(hello).toMatchObject({ t: 'hello' });
+      expect(hello.marks).toBeUndefined(); // LOCKED: hello stays control-only — marks ride a separate snapshot
+      const snap = await conn.at(1);
+      expect(snap.t).toBe('marks_snapshot'); // the backfill the human read-surface (S4) hydrates from
+      expect(Array.isArray(snap.marks)).toBe(true);
+      expect((snap.marks as Array<Record<string, unknown>>)[0]).toMatchObject({ markId: 'm1', role: 'button', name: 'Add to cart', trusted: false });
+    } finally {
+      await conn.close();
+      await host.daemon.stop();
+    }
+  });
+
+  // PIN-B (confidence is REAL, not stubbed). The snapshot reuses the studio_marks builder (marksView → heal),
+  // so the backfill confidence for a mark state is byte-identical to what the agent reads via studio_marks.
+  // NAMED mutation that REDs: build marksSnapshot's marks with a hardcoded confidence (e.g. 'high') instead of
+  // reusing marksView → the snapshot diverges from the studio_marks confidence for the SAME mark state.
+  it('S2 PIN-B: the marks snapshot confidence is the heal-computed builder value, identical to studio_marks', async () => {
+    const ms = new MarkStore();
+    ms.add({ backendNodeId: 1, role: 'button', name: 'Add to cart', trusted: false, fingerprint: 'fp', ancestorPath: 'html/body/button', attrs: {} });
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher, markStore: ms });
+    try {
+      const viaTool = await host.marksView(); // the studio_marks surface (heal-computed confidence)
+      const snap = await host.marksSnapshot(); // the post-hello backfill payload
+      expect(snap.t).toBe('marks_snapshot');
+      expect(snap.marks).toEqual(viaTool.marks); // SAME builder, SAME heal confidence — no parallel/stubbed value
     } finally {
       await host.daemon.stop();
     }

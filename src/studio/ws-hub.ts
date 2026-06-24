@@ -61,6 +61,14 @@ export interface StudioWsHubOptions {
   frameBackpressureBytes?: number;
   /** Extra fields merged into the `hello` sent on connect — the host supplies the initial control state {holder, epoch} so a client knows the epoch to stamp on input. */
   helloExtras?: (sessionId: string) => Record<string, unknown>;
+  /**
+   * Per-CONNECTING-client backfill: messages sent to THAT ws right after its hello (NOT broadcast), so a
+   * client that joins mid-session catches up on per-connection state. Distinct from `helloExtras` (which is
+   * merged INTO the control-only hello): these ride their own messages. May be async (the host builds the
+   * payload from live state). 7c populates it with `{t:'marks_snapshot', marks}`. Sent in order, each only
+   * while the ws is still OPEN; a rejected/throwing producer is logged and skipped, never crashing the upgrade.
+   */
+  postHello?: (sessionId: string) => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>;
 }
 
 export class StudioWsHub {
@@ -84,6 +92,7 @@ export class StudioWsHub {
   private readonly onMark?: (sessionId: string, msg: Record<string, unknown>) => void;
   private readonly onApproval?: (sessionId: string, msg: Record<string, unknown>) => void;
   private readonly helloExtras?: (sessionId: string) => Record<string, unknown>;
+  private readonly postHello?: (sessionId: string) => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>;
   private readonly frameBackpressureBytes: number;
   private readonly heartbeat: ReturnType<typeof setInterval>;
 
@@ -97,6 +106,7 @@ export class StudioWsHub {
     this.onMark = opts.onMark;
     this.onApproval = opts.onApproval;
     this.helloExtras = opts.helloExtras;
+    this.postHello = opts.postHello;
     this.frameBackpressureBytes = opts.frameBackpressureBytes ?? DEFAULT_FRAME_BACKPRESSURE_BYTES;
     this.heartbeat = setInterval(() => this.heartbeatTick(), opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_MS);
     // Don't let the heartbeat keep the process alive on its own.
@@ -120,6 +130,18 @@ export class StudioWsHub {
       ws.on('message', (data) => this.onMessage(sessionId, data));
       // Register BEFORE hello so a client that acts on hello sees a live registration.
       this.send(ws, { t: 'hello', sessionId, ...(this.helloExtras?.(sessionId) ?? {}) });
+      // Per-connection backfill AFTER hello: own messages (not merged into the control-only hello), sent only
+      // to THIS ws. Resolved async so the producer can read live state; ordered after hello on the socket.
+      const post = this.postHello?.(sessionId);
+      if (post) {
+        void Promise.resolve(post)
+          .then((msgs) => {
+            for (const m of msgs) {
+              if (ws.readyState === WebSocket.OPEN) this.send(ws, m);
+            }
+          })
+          .catch((err) => log.debug('postHello backfill failed', { sessionId, error: err instanceof Error ? err.message : String(err) }));
+      }
     });
   }
 

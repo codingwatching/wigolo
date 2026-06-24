@@ -64,6 +64,13 @@ function nextMessage(ws: WebSocket): Promise<Record<string, unknown>> {
   return new Promise((resolve) => ws.once('message', (d: WebSocket.RawData) => resolve(JSON.parse(d.toString()))));
 }
 
+/** Persistently collect every frame — for unprompted server pushes (hello + a postHello backfill) that arrive back-to-back. */
+function collect(ws: WebSocket): Array<Record<string, unknown>> {
+  const msgs: Array<Record<string, unknown>> = [];
+  ws.on('message', (d: WebSocket.RawData) => msgs.push(JSON.parse(d.toString())));
+  return msgs;
+}
+
 function waitFor(pred: () => boolean, ms = 1500): Promise<void> {
   return new Promise((resolve, reject) => {
     const t0 = Date.now();
@@ -94,6 +101,44 @@ describe('StudioWsHub', () => {
     const hello = await nextMessage(ws);
     expect(hello).toEqual({ t: 'hello', sessionId: 'he', holder: 'agent', epoch: 3 });
     ws.close();
+  });
+
+  it('sends postHello messages to the connecting client AFTER hello (per-connection backfill, not a broadcast)', async () => {
+    const h = await startHub({ postHello: () => [{ t: 'marks_snapshot', marks: [{ markId: 'm1' }] }] });
+    const ws = new WebSocket(h.url('/studio/ph/stream'));
+    const msgs = collect(ws); // collect ALL frames — hello + the unprompted snapshot arrive back-to-back
+    await waitFor(() => msgs.length >= 2);
+    expect(msgs[0]).toEqual({ t: 'hello', sessionId: 'ph' }); // hello stays control-only — no marks merged in
+    expect(msgs[1]).toEqual({ t: 'marks_snapshot', marks: [{ markId: 'm1' }] }); // the backfill rides a SEPARATE message
+    ws.close();
+  });
+
+  // PIN-A (backfill exists, through real handleUpgrade dispatch). NAMED mutation that REDs: delete the
+  // post-hello send block in handleUpgrade → the connecting client still gets hello but the snapshot
+  // never arrives, so the `marks_snapshot` frame never appears and `waitFor` times out.
+  it('PIN-A: a connecting client receives the postHello backfill (remove the send → it never arrives)', async () => {
+    let built = 0;
+    const h = await startHub({ postHello: () => { built++; return [{ t: 'marks_snapshot', marks: [] }]; } });
+    const ws = new WebSocket(h.url('/studio/pin-a/stream'));
+    const msgs = collect(ws);
+    await waitFor(() => msgs.some((m) => m.t === 'marks_snapshot'));
+    expect(built).toBe(1); // the hook ran for THIS connecting client
+    ws.close();
+  });
+
+  it('does NOT replay one client’s postHello backfill to the other clients of the session (per-connecting-client only)', async () => {
+    const h = await startHub({ postHello: () => [{ t: 'marks_snapshot', marks: [] }] });
+    const a = new WebSocket(h.url('/studio/per/stream'));
+    const aMsgs = collect(a);
+    await waitFor(() => aMsgs.length >= 2); // hello + snapshot for A
+    const aSnapshotsBefore = aMsgs.filter((m) => m.t === 'marks_snapshot').length;
+    const b = new WebSocket(h.url('/studio/per/stream')); // a second client connects
+    const bMsgs = collect(b);
+    await waitFor(() => bMsgs.length >= 2); // hello + snapshot for B (goes only to B)
+    await new Promise((r) => setTimeout(r, 50));
+    expect(aMsgs.filter((m) => m.t === 'marks_snapshot').length).toBe(aSnapshotsBefore); // A got no extra backfill → per-connection, not a broadcast
+    a.close();
+    b.close();
   });
 
   it('drops the client from the session on close', async () => {
