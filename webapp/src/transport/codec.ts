@@ -27,6 +27,19 @@ export interface MarkView {
   ref?: string;
 }
 
+/**
+ * One pending risky-action approval as the card shows it (7d S1): the host-sent {t:'approval_request'} payload
+ * minus the discriminant. `target` carries only the URL / opaque host ref — never page content — but is still
+ * routed through SafeText on render (defence in depth). `action`/`risk` are host-authoritative; the card shows
+ * them verbatim and never re-derives risk on the client.
+ */
+export interface ApprovalRequestView {
+  id: number;
+  action: string;
+  risk: string;
+  target?: { url?: string; ref?: string };
+}
+
 export type DownMessage =
   | { t: 'hello'; sessionId: string; holder?: ControlParty; epoch?: number }
   | { t: 'frame'; data: string; meta?: unknown }
