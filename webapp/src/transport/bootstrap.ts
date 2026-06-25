@@ -1,5 +1,6 @@
 import { readNonce, readSessionId, exchangeNonceForToken, openStreamSocket } from './handshake.js';
-import { StreamConnection, type SocketLike } from './connection.js';
+import { type SocketLike } from './connection.js';
+import { SessionConnector } from './session-connector.js';
 import { FrameSink, createCanvasDraw } from './frame-sink.js';
 import { parseDownMessage, encodeUp, up } from './codec.js';
 import { toNormalized, mouseInput, keyInput, domButton, modifiersOf, type MouseEventType } from './input.js';
@@ -9,6 +10,7 @@ import { ApprovalsModel } from './approvals.js';
 import { TimelineModel } from './timeline.js';
 import { CommentsModel } from './comments.js';
 import { ArtifactsModel } from './artifacts.js';
+import { SessionsModel } from './sessions.js';
 
 /**
  * Wire the full live Studio session (S7 stream + S4 controls) onto ONE connection: redeem the one-time nonce
@@ -33,6 +35,12 @@ export interface StudioWiring {
   comments: CommentsModel;
   /** The server-authoritative captured-items list, fed by artifact_snapshot (backfill) + artifact (live delta) down-messages (7e S3). */
   artifacts: ArtifactsModel;
+  /** The server-authoritative live-session list, fed by sessions_snapshot (backfill) + sessions (delta) down-messages (7f B3). */
+  sessions: SessionsModel;
+  /** The session the stream is currently bound to on boot (the switcher highlights it; switching rebinds). */
+  sessionId: string;
+  /** Switch the live stream to another session — reuses the daemon-scoped bearer, tears down the old socket first (7f B3). */
+  switchSession: (sessionId: string) => void;
   /** Send an encoded up-message to the host (no-op until the socket is up). */
   emit: (wire: string) => void;
   /** Paint frames + forward input onto a canvas; returns a teardown that detaches just that canvas. */
@@ -51,17 +59,21 @@ export function bootstrapStudio(): StudioWiring | null {
   const timeline = new TimelineModel();
   const comments = new CommentsModel();
   const artifacts = new ArtifactsModel();
-  let conn: StreamConnection | null = null;
+  const sessions = new SessionsModel();
+  let connector: SessionConnector | null = null;
   let epoch = 0;
   const sinks = new Set<FrameSink>();
 
-  const emit = (wire: string): void => conn?.send(wire);
+  const emit = (wire: string): void => connector?.send(wire);
+  // Switch the stream to another session (no-op until the bearer handshake completed). The connector reuses
+  // the daemon-scoped bearer and stops the old socket before opening the new (never two live streams).
+  const switchSession = (id: string): void => connector?.connect(id);
 
   void exchangeNonceForToken(nonce)
     .then((bearer) => {
-      conn = new StreamConnection({
-        openSocket: (b) => openStreamSocket(sessionId, b) as unknown as SocketLike,
+      connector = new SessionConnector({
         bearer,
+        openSocket: (id, b) => openStreamSocket(id, b) as unknown as SocketLike,
         onMessage: (data) => {
           const msg = parseDownMessage(data);
           if (!msg) return;
@@ -105,10 +117,14 @@ export function bootstrapStudio(): StudioWiring | null {
             // 7e S3: a live captured-item delta (upsert by id). SERVER-authoritative — no optimistic local add.
             const { t: _t, ...item } = msg;
             artifacts.applyDelta(item);
+          } else if (msg.t === 'sessions_snapshot' || msg.t === 'sessions') {
+            // 7f B3: the post-hello backfill AND the live create/close delta both carry the host's COMPLETE
+            // session set → REPLACE. SERVER-authoritative — the switcher never adds/removes a session locally.
+            sessions.applySnapshot(msg.sessions);
           }
         },
       });
-      conn.start();
+      connector.connect(sessionId);
     })
     .catch(() => {
       /* handshake failed — the human re-launches; nothing persists in the tab */
@@ -119,20 +135,20 @@ export function bootstrapStudio(): StudioWiring | null {
     if (!ctx) return () => {};
     const sink = new FrameSink({
       draw: createCanvasDraw(ctx, canvas.width, canvas.height),
-      sendAck: () => conn?.send(encodeUp(up.ack())),
+      sendAck: () => connector?.send(encodeUp(up.ack())),
     });
     sinks.add(sink);
 
     const sendMouse = (type: MouseEventType) => (ev: MouseEvent) => {
       const { nx, ny } = toNormalized(ev.clientX, ev.clientY, canvas.getBoundingClientRect());
-      conn?.send(encodeUp(mouseInput({ type, nx, ny, epoch, button: domButton(ev.button), buttons: ev.buttons, modifiers: modifiersOf(ev) })));
+      connector?.send(encodeUp(mouseInput({ type, nx, ny, epoch, button: domButton(ev.button), buttons: ev.buttons, modifiers: modifiersOf(ev) })));
     };
     const sendWheel = (ev: WheelEvent) => {
       const { nx, ny } = toNormalized(ev.clientX, ev.clientY, canvas.getBoundingClientRect());
-      conn?.send(encodeUp(mouseInput({ type: 'mouseWheel', nx, ny, epoch, deltaX: ev.deltaX, deltaY: ev.deltaY })));
+      connector?.send(encodeUp(mouseInput({ type: 'mouseWheel', nx, ny, epoch, deltaX: ev.deltaX, deltaY: ev.deltaY })));
     };
     const sendKey = (type: 'keyDown' | 'keyUp') => (ev: KeyboardEvent) => {
-      conn?.send(encodeUp(keyInput({ type, key: ev.key, code: ev.code, epoch, modifiers: modifiersOf(ev) })));
+      connector?.send(encodeUp(keyInput({ type, key: ev.key, code: ev.code, epoch, modifiers: modifiersOf(ev) })));
     };
     const onDown = sendMouse('mousePressed');
     const onUp = sendMouse('mouseReleased');
@@ -158,5 +174,5 @@ export function bootstrapStudio(): StudioWiring | null {
     };
   };
 
-  return { model, marks, approvals, timeline, comments, artifacts, emit, connectCanvas };
+  return { model, marks, approvals, timeline, comments, artifacts, sessions, sessionId, switchSession, emit, connectCanvas };
 }
