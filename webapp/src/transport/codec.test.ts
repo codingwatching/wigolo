@@ -116,6 +116,40 @@ describe('Studio stream codec (S3) — down parsing', () => {
     expect(parseDownMessage({ t: 'artifact', id: 1, type: 'clip', trusted: false })).toBeNull(); // no created_at
     expect(parseDownMessage({ t: 'artifact_snapshot' })).toBeNull(); // no items array
   });
+
+  // ── 7f B3: sessions_snapshot backfill + sessions delta (the switcher trust boundary) ──
+  it('parses the sessions_snapshot backfill, dropping only malformed entries', () => {
+    const snap = parseDownMessage({ t: 'sessions_snapshot', sessions: [
+      { id: 'sess-1', status: 'active', clients: 1, createdAt: 1000, lastActiveAt: 2000 },
+      { id: 'no-status' }, // malformed — dropped, not thrown
+    ] });
+    expect(snap).toEqual({ t: 'sessions_snapshot', sessions: [
+      { id: 'sess-1', status: 'active', clients: 1, createdAt: 1000, lastActiveAt: 2000 },
+    ] });
+  });
+
+  it('parses the live sessions delta', () => {
+    expect(parseDownMessage({ t: 'sessions', sessions: [{ id: 's2', status: 'idle', clients: 0, createdAt: 5, lastActiveAt: 9 }] }))
+      .toEqual({ t: 'sessions', sessions: [{ id: 's2', status: 'idle', clients: 0, createdAt: 5, lastActiveAt: 9 }] });
+  });
+
+  // TRUST at the codec boundary: a token/url a buggy or hostile host slips into the payload is DROPPED — the
+  // parsed entry carries only the five metadata fields, never a credential or url.
+  it('strips any token/url field from a session entry (metadata-only, defense in depth)', () => {
+    const snap = parseDownMessage({ t: 'sessions', sessions: [
+      { id: 's1', status: 'active', clients: 1, createdAt: 1, lastActiveAt: 2, token: 'LEAK', endpoint: 'http://x', url: 'http://y' },
+    ] });
+    expect(snap?.t).toBe('sessions');
+    if (!snap || snap.t !== 'sessions') throw new Error('expected a sessions message');
+    expect(Object.keys(snap.sessions[0]).sort()).toEqual(['clients', 'createdAt', 'id', 'lastActiveAt', 'status']);
+    expect('token' in snap.sessions[0]).toBe(false);
+  });
+
+  it('drops a malformed session message as null (missing id/status/numbers; no sessions array)', () => {
+    expect(parseDownMessage({ t: 'sessions', sessions: [{ status: 'active', clients: 1, createdAt: 1, lastActiveAt: 2 }] }))
+      .toEqual({ t: 'sessions', sessions: [] }); // entry missing id → dropped
+    expect(parseDownMessage({ t: 'sessions_snapshot' })).toBeNull(); // no sessions array
+  });
 });
 
 describe('Studio stream codec (S3) — up encoding', () => {

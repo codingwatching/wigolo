@@ -82,6 +82,21 @@ export interface ArtifactView {
   created_at: string;
 }
 
+/**
+ * One live session as the switcher shows it (7f B3): the host's metadata-only projection. id is the list key +
+ * the stream path the switcher connects to on select. status/clients/createdAt/lastActiveAt are host-authoritative.
+ * There is DELIBERATELY no token and no url here — the daemon-scoped bearer reaches every session by path, so the
+ * switcher never needs a credential or a per-session URL. id/status are rendered via SafeText (inert) like every
+ * other relayed string.
+ */
+export interface SessionMetaView {
+  id: string;
+  status: string;
+  clients: number;
+  createdAt: number;
+  lastActiveAt: number;
+}
+
 export type DownMessage =
   | { t: 'hello'; sessionId: string; holder?: ControlParty; epoch?: number }
   | { t: 'frame'; data: string; meta?: unknown }
@@ -95,7 +110,9 @@ export type DownMessage =
   | { t: 'comment_snapshot'; comments: CommentView[] }
   | { t: 'comment'; id: number; text: string }
   | { t: 'artifact_snapshot'; items: ArtifactView[] }
-  | ({ t: 'artifact' } & ArtifactView);
+  | ({ t: 'artifact' } & ArtifactView)
+  | { t: 'sessions_snapshot'; sessions: SessionMetaView[] }
+  | { t: 'sessions'; sessions: SessionMetaView[] };
 
 export type UpMessage =
   | { t: 'ack' }
@@ -138,6 +155,16 @@ function parseArtifactView(o: unknown): ArtifactView | null {
     trusted: o.trusted,
     created_at: o.created_at,
   };
+}
+
+/** Parse one host-projected session metadata entry (shared by the snapshot + delta paths); null if any required
+ * field is malformed. Defensively DROPS any token/url-shaped field a buggy/hostile host might add — the switcher
+ * only ever holds id/status/clients/createdAt/lastActiveAt, never a credential. */
+function parseSessionMeta(o: unknown): SessionMetaView | null {
+  if (!isObj(o)) return null;
+  if (typeof o.id !== 'string' || typeof o.status !== 'string') return null;
+  if (typeof o.clients !== 'number' || typeof o.createdAt !== 'number' || typeof o.lastActiveAt !== 'number') return null;
+  return { id: o.id, status: o.status, clients: o.clients, createdAt: o.createdAt, lastActiveAt: o.lastActiveAt };
 }
 
 /** Parse one host-broadcast audit entry (shared by the delta + snapshot paths); null if any required field is malformed. */
@@ -239,6 +266,17 @@ export function parseDownMessage(raw: unknown): DownMessage | null {
       // Drop only the malformed entries — a single bad item never voids the whole backfill.
       const items = m.items.map(parseArtifactView).filter((x): x is ArtifactView => x !== null);
       return { t: 'artifact_snapshot', items };
+    }
+    case 'sessions_snapshot': {
+      if (!Array.isArray(m.sessions)) return null;
+      // Drop only the malformed entries — a single bad session never voids the whole switcher backfill.
+      const sessions = m.sessions.map(parseSessionMeta).filter((x): x is SessionMetaView => x !== null);
+      return { t: 'sessions_snapshot', sessions };
+    }
+    case 'sessions': {
+      if (!Array.isArray(m.sessions)) return null;
+      const sessions = m.sessions.map(parseSessionMeta).filter((x): x is SessionMetaView => x !== null);
+      return { t: 'sessions', sessions };
     }
     default:
       return null;

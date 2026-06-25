@@ -1,4 +1,4 @@
-import { useMemo } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import { BrowserPane } from './BrowserPane.js';
 import { Rail, type RailControls } from './Rail.js';
 import { bootstrapStudio, type StudioWiring } from '../transport/bootstrap.js';
@@ -7,6 +7,7 @@ import type { ApprovalsModel } from '../transport/approvals.js';
 import type { TimelineModel } from '../transport/timeline.js';
 import type { CommentsModel } from '../transport/comments.js';
 import type { ArtifactsModel } from '../transport/artifacts.js';
+import type { SessionsModel } from '../transport/sessions.js';
 
 /**
  * The Studio web-app root (S7 split view + S4 controls + 7c marks). It owns the single shared connection: one
@@ -30,6 +31,8 @@ export interface AppProps {
   comments?: CommentsModel;
   /** Override the captured-items model (tests). Defaults to the shared bootstrap. */
   artifacts?: ArtifactsModel;
+  /** Override the sessions model (tests). Defaults to the shared bootstrap. */
+  sessions?: SessionsModel;
 }
 
 /**
@@ -37,12 +40,12 @@ export interface AppProps {
  * reach the rail — the prior `boot?.controls` read a field the wiring never carried, leaving the rail inert
  * in production. Returns {} when there is no wiring (jsdom / no WebSocket).
  */
-export function deriveRailProps(boot: StudioWiring | null): { controls?: RailControls; marks?: MarksModel; approvals?: ApprovalsModel; timeline?: TimelineModel; comments?: CommentsModel; artifacts?: ArtifactsModel } {
+export function deriveRailProps(boot: StudioWiring | null): { controls?: RailControls; marks?: MarksModel; approvals?: ApprovalsModel; timeline?: TimelineModel; comments?: CommentsModel; artifacts?: ArtifactsModel; sessions?: SessionsModel } {
   if (!boot) return {};
-  return { controls: { model: boot.model, emit: boot.emit }, marks: boot.marks, approvals: boot.approvals, timeline: boot.timeline, comments: boot.comments, artifacts: boot.artifacts };
+  return { controls: { model: boot.model, emit: boot.emit }, marks: boot.marks, approvals: boot.approvals, timeline: boot.timeline, comments: boot.comments, artifacts: boot.artifacts, sessions: boot.sessions };
 }
 
-export function App({ connect, controls, marks, approvals, timeline, comments, artifacts }: AppProps = {}) {
+export function App({ connect, controls, marks, approvals, timeline, comments, artifacts, sessions }: AppProps = {}) {
   const boot = useMemo(() => bootstrapStudio(), []);
   const connectFn = connect ?? boot?.connectCanvas;
   const rail = deriveRailProps(boot);
@@ -52,6 +55,14 @@ export function App({ connect, controls, marks, approvals, timeline, comments, a
   const timelineModel = timeline ?? rail.timeline;
   const commentsModel = comments ?? rail.comments;
   const artifactsModel = artifacts ?? rail.artifacts;
+  const sessionsModel = sessions ?? rail.sessions;
+  // The session the stream is bound to (switcher highlight). Switching rebinds the connection AND updates the
+  // highlight; the session LIST itself stays server-authoritative (only snapshot/delta mutate it).
+  const [current, setCurrent] = useState<string | null>(boot?.sessionId ?? null);
+  const onSelectSession = (id: string): void => {
+    boot?.switchSession(id);
+    setCurrent(id);
+  };
   return (
     <div id="studio-root" class="studio-split">
       <header class="studio-header">
@@ -59,7 +70,7 @@ export function App({ connect, controls, marks, approvals, timeline, comments, a
       </header>
       <div class="studio-body">
         <BrowserPane connect={connectFn} />
-        <Rail controls={controlsObj} marks={marksModel} approvals={approvalsModel} timeline={timelineModel} comments={commentsModel} artifacts={artifactsModel} />
+        <Rail controls={controlsObj} marks={marksModel} approvals={approvalsModel} timeline={timelineModel} comments={commentsModel} artifacts={artifactsModel} sessions={sessionsModel} currentSessionId={current} onSelectSession={onSelectSession} />
       </div>
     </div>
   );

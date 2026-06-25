@@ -5,12 +5,14 @@ import { ApprovalsModel } from '../transport/approvals.js';
 import { TimelineModel } from '../transport/timeline.js';
 import { CommentsModel } from '../transport/comments.js';
 import { ArtifactsModel } from '../transport/artifacts.js';
+import { SessionsModel } from '../transport/sessions.js';
 import { ControlsPanel } from './ControlsPanel.js';
 import { MarksPanel } from './MarksPanel.js';
 import { ApprovalsPanel } from './ApprovalsPanel.js';
 import { TimelinePanel } from './TimelinePanel.js';
 import { CommentsPanel } from './CommentsPanel.js';
 import { CapturedPanel } from './CapturedPanel.js';
+import { SessionSwitcher } from './SessionSwitcher.js';
 
 /**
  * The side rail (S4). Its TOP panel is the approval cards (7d S1) — a risky-action interrupt the human answers
@@ -31,19 +33,26 @@ export interface RailProps {
   timeline?: TimelineModel;
   comments?: CommentsModel;
   artifacts?: ArtifactsModel;
+  sessions?: SessionsModel;
+  /** The session the stream is bound to (switcher highlight). */
+  currentSessionId?: string | null;
+  /** Switch the live stream to another session. */
+  onSelectSession?: (sessionId: string) => void;
 }
 
-export function Rail({ controls, marks, approvals, timeline, comments, artifacts }: RailProps = {}) {
+export function Rail({ controls, marks, approvals, timeline, comments, artifacts, sessions, currentSessionId, onSelectSession }: RailProps = {}) {
   const c = useMemo<RailControls>(() => controls ?? { model: new ControlsModel(), emit: () => {} }, [controls]);
   const m = useMemo<MarksModel>(() => marks ?? new MarksModel(), [marks]);
   const a = useMemo<ApprovalsModel>(() => approvals ?? new ApprovalsModel(), [approvals]);
   const tl = useMemo<TimelineModel>(() => timeline ?? new TimelineModel(), [timeline]);
   const cm = useMemo<CommentsModel>(() => comments ?? new CommentsModel(), [comments]);
   const am = useMemo<ArtifactsModel>(() => artifacts ?? new ArtifactsModel(), [artifacts]);
+  const sm = useMemo<SessionsModel>(() => sessions ?? new SessionsModel(), [sessions]);
   return (
     <aside class="studio-rail" aria-label="Session panel">
       <ApprovalsPanel model={a} emit={c.emit} />
       <ControlsPanel model={c.model} emit={c.emit} />
+      <SessionSwitcher model={sm} currentSessionId={currentSessionId} onSelect={onSelectSession} />
       <MarksPanel model={m} />
       <CommentsPanel model={cm} emit={c.emit} />
       <CapturedPanel model={am} />

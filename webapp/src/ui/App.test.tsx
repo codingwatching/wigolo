@@ -8,6 +8,7 @@ import { ApprovalsModel } from '../transport/approvals.js';
 import { TimelineModel } from '../transport/timeline.js';
 import { CommentsModel } from '../transport/comments.js';
 import { ArtifactsModel } from '../transport/artifacts.js';
+import { SessionsModel } from '../transport/sessions.js';
 
 /**
  * Split-view shell tests (S7). A no-op `connect` is injected so the pane renders without attempting a live
@@ -40,7 +41,8 @@ describe('Studio web-app split-view shell', () => {
     const timeline = new TimelineModel();
     const comments = new CommentsModel();
     const artifacts = new ArtifactsModel();
-    const wiring = { model, marks, approvals, timeline, comments, artifacts, emit: vi.fn(), connectCanvas: vi.fn((_c: HTMLCanvasElement) => () => {}) };
+    const sessions = new SessionsModel();
+    const wiring = { model, marks, approvals, timeline, comments, artifacts, sessions, sessionId: 'sess-boot', switchSession: vi.fn(), emit: vi.fn(), connectCanvas: vi.fn((_c: HTMLCanvasElement) => () => {}) };
     const props = deriveRailProps(wiring);
     expect(props.controls?.model).toBe(model); // the SAME live control model, not undefined
     expect(props.controls?.emit).toBe(wiring.emit);
@@ -49,6 +51,7 @@ describe('Studio web-app split-view shell', () => {
     expect(props.timeline).toBe(timeline); // and the live timeline model (7d S4)
     expect(props.comments).toBe(comments); // and the live comments model (7b-notes S3)
     expect(props.artifacts).toBe(artifacts); // and the live captured-items model (7e S3)
+    expect(props.sessions).toBe(sessions); // and the live sessions model (7f B3)
   });
 
   it('deriveRailProps returns nothing when there is no wiring (jsdom/no-WebSocket)', () => {
