@@ -480,6 +480,55 @@ describe('cli/studio startStudioHost', () => {
     }
   });
 
+  // 7f B2 PIN-create (delta through the real registry.create site → hub broadcast). NAMED mutation that REDs
+  // against present+correct code: remove the `this.onChange?.()` call from registry.create (or unwire
+  // registry.onChange in the host) → creating a session no longer pushes a {t:'sessions'} delta to a
+  // connected client and waitForType('sessions') times out (diverging value: a sessions delta present →
+  // absent; a client on another session never learns the new session exists).
+  it('7f B2 PIN-create: creating a session broadcasts a {t:sessions} delta to a connected client (metadata-only)', async () => {
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
+    const conn = await connectToHostHub(host);
+    try {
+      await conn.waitForType('sessions_snapshot'); // initial post-hello backfill (B1) — distinct from the live delta
+      const second = host.registry.create({ endpoint: host.endpoint, token: 'second-token' });
+      const delta = await conn.waitForType('sessions'); // the live delta only fires on create/close, never at hello
+      const sessions = delta.sessions as Array<Record<string, unknown>>;
+      const ids = sessions.map((s) => s.id);
+      expect(ids).toContain(host.session.id);
+      expect(ids).toContain(second.id);
+      for (const s of sessions) expect('token' in s).toBe(false); // metadata-only — no bearer leak in the delta
+    } finally {
+      await conn.close();
+      await host.daemon.stop();
+    }
+  });
+
+  // 7f B2 PIN-close (delta through the real registry.close site). NAMED mutation that REDs against
+  // present+correct code: remove the `this.onChange?.()` call from registry.close → closing a session no
+  // longer updates a connected client's switcher (diverging value: a post-close delta that drops the closed
+  // id never arrives — the stale session lingers in the switcher forever).
+  it('7f B2 PIN-close: closing a session broadcasts a {t:sessions} delta that drops the closed session', async () => {
+    const host = await startStudioHost({ port: 0, host: '127.0.0.1', allowRemote: false, browserLauncher: fakeBrowserLauncher });
+    const conn = await connectToHostHub(host);
+    try {
+      await conn.waitForType('sessions_snapshot'); // ensure the client is fully connected before mutating the set
+      const second = host.registry.create({ endpoint: host.endpoint, token: 'second-token' });
+      await conn.waitForType('sessions'); // the create delta
+      host.registry.close(second.id);
+      const t0 = Date.now();
+      let dropped = false;
+      while (Date.now() - t0 < 1500) {
+        const m = [...conn.msgs].reverse().find((x) => x.t === 'sessions');
+        if (m && Array.isArray(m.sessions) && !(m.sessions as Array<Record<string, unknown>>).some((s) => s.id === second.id)) { dropped = true; break; }
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      expect(dropped).toBe(true); // the switcher learned the session closed
+    } finally {
+      await conn.close();
+      await host.daemon.stop();
+    }
+  });
+
   // PIN-B (agent path intact — DUAL-emit, not replace). NAMED mutation that REDs: replace the enqueue with the
   // broadcast (drop loginHandoff.enqueueContentEvent) → the agent's observe-drain no longer receives the mark.
   it('S3 PIN-B: a human mark STILL enqueues the agent content event (dual-emit, not replace)', async () => {
