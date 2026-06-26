@@ -98,6 +98,11 @@ export class SessionRegistry {
         evicted.push(session.id);
       }
     }
+    // The live set changed → refresh the switcher (mirror create/close). Fire once for the
+    // batch, never on a no-op sweep, so an evicted session can't linger as a switcher ghost.
+    // NOT done in closeAll: its only caller is shutdown teardown, where the hub is already
+    // closed (hub.closeAll precedes registry.closeAll) — a broadcast there would race a no-op.
+    if (evicted.length > 0) this.onChange?.();
     return evicted;
   }
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { SessionRegistry, startIdleSweeper } from '../../../src/studio/registry.js';
+import { sessionMeta, type SessionMeta } from '../../../src/studio/session.js';
 
 describe('studio/SessionRegistry', () => {
   it('create/get/list round-trips a session', () => {
@@ -118,6 +119,32 @@ describe('studio/SessionRegistry', () => {
     tick?.(); // wired lifecycle tick fires
     expect(reg.get(attached.id)).toBe(attached); // SURVIVES — never evicted while a client is attached
     expect(attached.status).not.toBe('closed');
+    sweeper.stop();
+  });
+
+  it('the WIRED sweep tick fires the sessions delta WITHOUT the evicted clientless session (no switcher ghost)', () => {
+    let t = 0;
+    const reg = new SessionRegistry({ idleMs: 1000, now: () => t, maxSessions: 10 });
+    // Mirror the production onChange closure (studio.ts: hub.broadcastAll({t:'sessions', sessions: list().map(sessionMeta)})).
+    const deltas: SessionMeta[][] = [];
+    reg.onChange = () => deltas.push(reg.list().map(sessionMeta));
+    const ghost = reg.create({ endpoint: 'ghost' }); // clientless
+    const live = reg.create({ endpoint: 'live' });
+    live.attach(); // a connected client elsewhere
+    let tick: (() => void) | undefined;
+    const sweeper = startIdleSweeper(reg, 500, {
+      schedule: (cb) => {
+        tick = cb;
+        return () => { tick = undefined; };
+      },
+    });
+    t = 2000; // ghost is now idle past idleMs
+    deltas.length = 0; // ignore create-time deltas; focus on the sweep
+    tick?.(); // wired tick → sweepIdle evicts ghost → MUST fire onChange so the switcher list refreshes
+    expect(deltas.length).toBeGreaterThan(0); // the sweep fired a switcher delta (no ghost lingering)
+    const lastIds = deltas.at(-1)!.map((m) => m.id);
+    expect(lastIds).not.toContain(ghost.id); // evicted session is gone from the broadcast list
+    expect(lastIds).toContain(live.id); // the live session is retained
     sweeper.stop();
   });
 });
