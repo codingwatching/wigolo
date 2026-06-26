@@ -965,6 +965,56 @@ function openStudioTab(url: string): void {
   }
 }
 
+/** The teardown-relevant slice of a StudioHost (structural — StudioHost satisfies it). */
+export interface StudioTeardownTarget {
+  idleSweeper: { stop(): void };
+  hub: { closeAll(): void };
+  bridge: { stop(): Promise<void> };
+  navInterceptor: { stop(): Promise<void> };
+  sessionBrowser: { close(): Promise<void> };
+  registry: { closeAll(): void };
+  daemon: { stop(): Promise<void> };
+}
+
+/**
+ * Ordered, fault-isolated teardown of a studio host. ORDER is load-bearing where a stage
+ * needs a LIVE CDP: the screencast bridge and nav interceptor issue CDP calls against the
+ * session browser, so BOTH must stop while it is still open → both precede sessionBrowser.close.
+ * ISOLATION (like postHello's safeSnapshot): each fallible async stage is .catch/try-wrapped so
+ * one failure cannot abort the rest — an unwrapped throw would leak the still-open sockets/browsers
+ * of every later stage. `removeHandle`/`closeDaemonBrowser` are injectable so tests never touch the
+ * real ~/.wigolo handle or the shared browser.
+ */
+export async function teardownStudioHost(
+  host: StudioTeardownTarget,
+  deps: { removeHandle?: () => void; closeDaemonBrowser?: () => Promise<void>; log?: (m: string) => void } = {},
+): Promise<void> {
+  const removeH = deps.removeHandle ?? removeHandle;
+  const closeDB = deps.closeDaemonBrowser ?? closeDaemonBrowser;
+  const log = deps.log ?? (() => {});
+  host.idleSweeper.stop();
+  removeH();
+  host.hub.closeAll();
+  await host.bridge.stop().catch((e) =>
+    logger.debug('screencast stop failed', { error: e instanceof Error ? e.message : String(e) }),
+  );
+  await host.navInterceptor.stop().catch((e) =>
+    logger.debug('nav interceptor stop failed', { error: e instanceof Error ? e.message : String(e) }),
+  );
+  await host.sessionBrowser.close().catch((e) =>
+    logger.debug('session browser close failed', { error: e instanceof Error ? e.message : String(e) }),
+  );
+  host.registry.closeAll();
+  try {
+    await host.daemon.stop();
+  } catch (err) {
+    log(`Shutdown error: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  await closeDB().catch((e) =>
+    logger.debug('closeDaemonBrowser failed', { error: e instanceof Error ? e.message : String(e) }),
+  );
+}
+
 export function runStudio(args: string[]): void {
   const parsed = parseStudioArgs(args);
   log(`Starting studio host on ${parsed.host}:${parsed.port}…`);
@@ -977,27 +1027,7 @@ export function runStudio(args: string[]): void {
 
       const shutdown = async () => {
         log('Shutting down studio host…');
-        host.idleSweeper.stop();
-        removeHandle();
-        host.hub.closeAll();
-        await host.bridge.stop().catch((e) =>
-          logger.debug('screencast stop failed', { error: e instanceof Error ? e.message : String(e) }),
-        );
-        await host.navInterceptor.stop().catch((e) =>
-          logger.debug('nav interceptor stop failed', { error: e instanceof Error ? e.message : String(e) }),
-        );
-        await host.sessionBrowser.close().catch((e) =>
-          logger.debug('session browser close failed', { error: e instanceof Error ? e.message : String(e) }),
-        );
-        host.registry.closeAll();
-        try {
-          await host.daemon.stop();
-        } catch (err) {
-          log(`Shutdown error: ${err instanceof Error ? err.message : String(err)}`);
-        }
-        await closeDaemonBrowser().catch((e) =>
-          logger.debug('closeDaemonBrowser failed', { error: e instanceof Error ? e.message : String(e) }),
-        );
+        await teardownStudioHost(host, { log });
         process.exit(0);
       };
 
