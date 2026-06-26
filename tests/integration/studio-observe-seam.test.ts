@@ -1,8 +1,47 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { createMcpServer, type Subsystems } from '../../src/server.js';
+import { resetConfig } from '../../src/config.js';
+import { resetPersistedConfig } from '../../src/persisted-config.js';
 import type { StudioHostHandlers } from '../../src/daemon/studio-dispatch.js';
+
+/**
+ * Isolate HOME so the no-session arm reads an EMPTY data dir regardless of the
+ * developer's real ~/.wigolo (which may carry a live or stale `studio/current.json`
+ * from a running daemon). Without this, the real handle leaks through the production
+ * `readHandle(undefined)` path and the dispatch reports `studio_host_unreachable`
+ * instead of the asserted `no_studio_session`. We do NOT add a prod dataDir override:
+ * production reading real ~/.wigolo is correct; the isolation is test-only.
+ */
+// Restore individual vars, NOT `process.env = {...}` — a whole-object reassign does
+// not re-`setenv`, so os.homedir() (read at the C layer by getConfig's dataDir) would
+// keep returning the real home and the isolation would silently no-op.
+let homeDir: string;
+let saved: Record<string, string | undefined>;
+const ISOLATED_VARS = ['HOME', 'USERPROFILE', 'WIGOLO_DATA_DIR'] as const;
+beforeEach(() => {
+  homeDir = mkdtempSync(join(tmpdir(), 'wigolo-studio-seam-'));
+  saved = {};
+  for (const k of ISOLATED_VARS) saved[k] = process.env[k];
+  process.env.HOME = homeDir;
+  process.env.USERPROFILE = homeDir;
+  delete process.env.WIGOLO_DATA_DIR;
+  resetConfig();
+  resetPersistedConfig();
+});
+afterEach(() => {
+  for (const k of ISOLATED_VARS) {
+    if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+  }
+  resetConfig();
+  resetPersistedConfig();
+  rmSync(homeDir, { recursive: true, force: true });
+});
 
 /**
  * Proves the WIRING activates the tested seam (not dead code): a real studio_observe
