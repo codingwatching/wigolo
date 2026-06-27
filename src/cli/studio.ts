@@ -9,7 +9,6 @@ import { sessionMeta, type Session, type SessionMeta } from '../studio/session.j
 import { SessionBrowser, type SessionBrowserLauncher, type StorageStateInput } from '../studio/session-browser.js';
 import { ProfileStore } from '../studio/profile-store.js';
 import { ScreencastBridge } from '../studio/screencast.js';
-import { ControlToken } from '../studio/control-token.js';
 import { InputForwarder } from '../studio/input.js';
 import { SessionController } from '../studio/session-control.js';
 import { NavInterceptor, navigateSession } from '../studio/nav.js';
@@ -436,7 +435,9 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
   // Control token + input forwarder + their coordinator. The forwarder maps
   // normalized client coords to true page CSS px from the latest frame metadata
   // (so the configured viewport is only the pre-first-frame fallback).
-  const controlToken = new ControlToken();
+  // S5: the token is OWNED by the session (created at registry.create → Session → ControlToken init), so an
+  // agent-spawned session starts holder='agent'. The host's primary session is human-spawned → holder='human'.
+  const controlToken = session.controlToken;
   const forwarder = new InputForwarder({
     cdp: sessionBrowser.cdp,
     viewport: { width: cfg.studioScreencastMaxWidth, height: cfg.studioScreencastMaxHeight },
