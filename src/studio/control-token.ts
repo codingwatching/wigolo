@@ -28,17 +28,27 @@ export type DriveCheck = { ok: true } | { ok: false; reason: string; currentEpoc
 export interface ControlTokenOptions {
   /** Injectable clock (tests); defaults to Date.now. */
   now?: () => number;
+  /**
+   * S5: the holder at construction (epoch stays 0). Defaults 'human'. Set to 'agent' ONLY for an
+   * agent-spawned session (registry.create({spawnedBy:'agent'}) → Session → here) so the agent can drive a
+   * clientless background session with no human attached (assertCanDrive('agent') succeeds). A human-spawned/
+   * attended session keeps 'human' — the agent stays blocked until the human grants control. The agent NEVER
+   * reaches this: it is set only on the host-side create path, never any agent-callable verb (requestControl
+   * still returns {granted:false}).
+   */
+  initialHolder?: ControlParty;
 }
 
 export class ControlToken {
   private readonly nowFn: () => number;
-  private _holder: ControlParty = 'human';
+  private _holder: ControlParty;
   private _epoch = 0;
   private _since: number;
   private readonly changeHandlers: Array<(s: { holder: ControlParty; epoch: number }) => void> = [];
 
   constructor(opts: ControlTokenOptions = {}) {
     this.nowFn = opts.now ?? Date.now;
+    this._holder = opts.initialHolder ?? 'human';
     this._since = this.nowFn();
   }
 

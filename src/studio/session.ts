@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mintHostToken } from './auth.js';
+import { ControlToken, type ControlParty } from './control-token.js';
 
 /**
  * A Studio session: a long-lived, addressable unit the host owns and the human
@@ -43,6 +44,12 @@ export interface SessionOptions {
   id?: string;
   token?: string;
   now?: () => number;
+  /**
+   * S5: who spawned this session. 'agent' (an agent studio_spawn in S6) makes the session's control token
+   * start with holder='agent' so the agent can drive a clientless background session with no human attached.
+   * Defaults 'human' (a person ran `wigolo studio`) → token starts holder='human', agent blocked until granted.
+   */
+  spawnedBy?: ControlParty;
 }
 
 export class Session {
@@ -50,6 +57,14 @@ export class Session {
   readonly token: string;
   readonly endpoint: string;
   readonly createdAt: number;
+  /** S5: who spawned this session ('agent' | 'human'); drives the control token's initial holder. */
+  readonly spawnedBy: ControlParty;
+  /**
+   * S5: this session's single-driver control token. Created HERE (registry.create → Session → ControlToken
+   * init) so an agent-spawned session starts holder='agent' purely from creation, with no per-spawn host
+   * wiring. The host reads `session.controlToken` rather than constructing its own.
+   */
+  private readonly _controlToken: ControlToken;
 
   private readonly nowFn: () => number;
   private _status: SessionStatus = 'active';
@@ -71,6 +86,13 @@ export class Session {
     this.endpoint = opts.endpoint;
     this.createdAt = this.nowFn();
     this._lastActiveAt = this.createdAt;
+    this.spawnedBy = opts.spawnedBy ?? 'human';
+    this._controlToken = new ControlToken({ now: this.nowFn, initialHolder: this.spawnedBy });
+  }
+
+  /** S5: the session's single-driver control token (holder starts 'agent' iff spawnedBy==='agent'). */
+  get controlToken(): ControlToken {
+    return this._controlToken;
   }
 
   get status(): SessionStatus {
