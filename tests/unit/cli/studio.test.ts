@@ -40,6 +40,7 @@ vi.mock('../../../src/studio/handle.js', async (importOriginal) => {
 import { parseStudioArgs, startStudioHost } from '../../../src/cli/studio.js';
 import { getEmbedProvider } from '../../../src/providers/embed-provider.js';
 import { writeHandle } from '../../../src/studio/handle.js';
+import { DaemonHttpServer } from '../../../src/daemon/http-server.js';
 import type { LaunchedSessionBrowser, StorageStateOut } from '../../../src/studio/session-browser.js';
 import { MarkStore } from '../../../src/studio/mark/store.js';
 import { ProfileStore } from '../../../src/studio/profile-store.js';
@@ -595,6 +596,20 @@ describe('cli/studio startStudioHost', () => {
     expect(events).toContain('setStudioSessions');
     expect(events.indexOf('setStudioSessions')).toBeLessThan(events.indexOf('handle'));
     await host.daemon.stop();
+  });
+
+  it('PARITY PIN: the DaemonHttpServer mock mirrors the real host-injection surface (a missing setStudio* method cascade-fails host boot)', async () => {
+    // Read the REAL class's host-facing surface, bypassing the vi.mock — the setStudio* injectors the host wires.
+    const actual = await vi.importActual<typeof import('../../../src/daemon/http-server.js')>('../../../src/daemon/http-server.js');
+    const injectors = Object.getOwnPropertyNames(actual.DaemonHttpServer.prototype).filter((n) => n.startsWith('setStudio'));
+    expect(injectors.length, 'the real DaemonHttpServer exposes a host-injection surface').toBeGreaterThan(0);
+    // The mock MUST implement each, or startStudioHost throws at boot (the confusing ~72-test cascade). This pins
+    // mock<->real parity DIRECTLY: drop a method from the mock and it REDs HERE (typeof undefined), distinct from
+    // the boot cascade — this test never boots the host, it checks the surface structurally.
+    const mock = new DaemonHttpServer({ port: 0, host: '127.0.0.1', auth: { token: 't', host: '127.0.0.1' } }) as unknown as Record<string, unknown>;
+    for (const m of injectors) {
+      expect(typeof mock[m], `the DaemonHttpServer mock must implement ${m} (the real class exposes it)`).toBe('function');
+    }
   });
 
   it('writes a handle carrying the session id, endpoint, and token', async () => {
