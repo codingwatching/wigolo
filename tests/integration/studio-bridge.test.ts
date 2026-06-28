@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -45,6 +45,16 @@ describe.skipIf(!RUN)('studio screencast bridge (integration, real browser)', ()
     rmSync(tmp, { recursive: true, force: true });
     delete process.env.WIGOLO_STUDIO_HEADLESS;
     resetConfig();
+  });
+
+  // D21 — test hygiene. This describe shares ONE beforeAll host (per-suite, not per-test), so the
+  // closure-local pre-grant scope store survives across tests. Reset it before EACH test so an S7 proof
+  // that adds a grant cannot bleed into a later test's store/size assertion — specifically a risky-action
+  // proof that needs an EMPTY baseline to PARK, or a forge-delta assertion measured from zero. With this in
+  // place every S7 proof sets/clears from a known-empty store, so the suite is order-independent (no proof
+  // relies on a grant left by a prior one). Host-only mutation, no behavioral surface change.
+  beforeEach(() => {
+    host?.preGrant.clear();
   });
 
   it('streams screencast frames over the websocket to an authenticated client', async () => {
