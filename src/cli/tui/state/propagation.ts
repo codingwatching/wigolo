@@ -487,13 +487,13 @@ async function applyPropagationToAgent(
 }
 
 // ---------------------------------------------------------------------------
-// installAgent — primitive used by the Agents category screen (slice 9).
+// installAgent — primitive used by the Agents category screen.
 // Writes/refreshes the wigolo server entry in one agent's config, preserves
 // any other entries, seeds the env block (merging with any pre-existing
 // keys), writes a backup first, and refuses to follow symlinks.
 //
 // The command/args shape is the canonical install recipe used by the SP7
-// agent handlers: `npx -y @staticn0va/wigolo` so the agent boots wigolo via
+// agent handlers: `npx -y wigolo` so the agent boots wigolo via
 // npx regardless of global install state.
 // ---------------------------------------------------------------------------
 
@@ -542,7 +542,7 @@ export async function installAgent(opts: InstallAgentOpts): Promise<InstallAgent
   // Ensure the server entry exists at target.serverPath.
   const serverEntry = ensureNested(root, opts.target.serverPath);
   serverEntry.command = 'npx';
-  serverEntry.args = ['-y', '@staticn0va/wigolo'];
+  serverEntry.args = ['-y', 'wigolo'];
 
   // Merge env: ensure the env block exists, preserve unrelated keys, overwrite
   // anything the caller passed in. Empty `env` is a valid no-op merge.
@@ -563,7 +563,7 @@ export async function installAgent(opts: InstallAgentOpts): Promise<InstallAgent
 }
 
 // ---------------------------------------------------------------------------
-// uninstallAgent — primitive used by the Agents category screen (slice 9).
+// uninstallAgent — primitive used by the Agents category screen.
 // Removes the wigolo server entry from one agent's config, preserves other
 // servers, writes a backup, and prunes old backups.
 // ---------------------------------------------------------------------------

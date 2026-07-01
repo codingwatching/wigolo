@@ -43,7 +43,7 @@ export class MarginaliaEngine implements SearchEngine {
     const response = await fetch(url, {
       signal: AbortSignal.timeout(timeoutMs),
       headers: {
-        'User-Agent': 'wigolo/0.1 (https://github.com/staticn0va/wigolo)',
+        'User-Agent': 'wigolo/0.1 (https://github.com/KnockOutEZ/wigolo)',
         Accept: 'application/json',
         'API-Key': 'public',
       },

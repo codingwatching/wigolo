@@ -24,7 +24,7 @@ class TestWigoloMcpClientInit:
     def test_default_command(self):
         client = WigoloMcpClient()
         assert client.command == "npx"
-        assert client.args == ["@staticn0va/wigolo"]
+        assert client.args == ["wigolo"]
 
     def test_custom_command(self):
         client = WigoloMcpClient(command="node", args=["./dist/index.js"])

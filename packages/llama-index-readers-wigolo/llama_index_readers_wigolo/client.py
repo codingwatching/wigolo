@@ -17,7 +17,7 @@ class WigoloClientError(Exception):
 class WigoloMcpClient:
     """Async MCP client that communicates with wigolo via subprocess stdio.
 
-    Spawns `npx @staticn0va/wigolo` as a child process, sends JSON-RPC 2.0
+    Spawns `npx wigolo` as a child process, sends JSON-RPC 2.0
     requests over stdin, and reads responses from stdout.
     """
 
@@ -29,7 +29,7 @@ class WigoloMcpClient:
         env: Optional[dict[str, str]] = None,
     ) -> None:
         self.command = command
-        self.args = args or ["@staticn0va/wigolo"]
+        self.args = args or ["wigolo"]
         self.timeout = timeout
         self.env = env
         self._process: Optional[asyncio.subprocess.Process] = None

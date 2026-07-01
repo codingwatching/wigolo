@@ -6,9 +6,9 @@ export type VerifyCheckId =
   | 'embeddings';
 
 const TABLE: Record<VerifyCheckId, string> = {
-  'searxng': 'Search engine failed to start. Try: npx @staticn0va/wigolo warmup --force',
-  'reranker': 'ML reranker is not installed. Run: npx @staticn0va/wigolo warmup',
-  'embeddings': 'Embeddings model is not installed. Run: npx @staticn0va/wigolo warmup',
+  'searxng': 'Search engine failed to start. Try: npx wigolo warmup --force',
+  'reranker': 'ML reranker is not installed. Run: npx wigolo warmup',
+  'embeddings': 'Embeddings model is not installed. Run: npx wigolo warmup',
 };
 
 export function suggestionFor(id: VerifyCheckId): string {

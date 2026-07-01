@@ -120,10 +120,10 @@ describe('SKILL.md — v3 structure and content', () => {
     expect(typeof frontmatter!.description).toBe('string');
     expect((frontmatter!.description as string).length).toBeGreaterThan(20);
     expect(frontmatter!.author).toBe('KnockOutEZ');
-    expect(frontmatter!.license).toBe('PolyForm-Noncommercial-1.0.0');
+    expect(frontmatter!.license).toBe('AGPL-3.0-only');
     expect(frontmatter!.repository).toContain('github.com/KnockOutEZ/wigolo');
     expect(frontmatter!.transport).toBe('stdio');
-    expect(frontmatter!.install).toContain('npx @staticn0va/wigolo');
+    expect(frontmatter!.install).toContain('npx wigolo');
     expect(frontmatter!.runtime).toBe('node');
   });
 
@@ -169,7 +169,7 @@ describe('SKILL.md — v3 structure and content', () => {
 
   it('body contains installation instructions for Claude Code and generic MCP', () => {
     content = readFileSync(SKILL_PATH, 'utf-8');
-    expect(content).toContain('npx @staticn0va/wigolo');
+    expect(content).toContain('npx wigolo');
     expect(content).toContain('claude mcp add');
     expect(content).toContain('mcpServers');
   });
@@ -284,7 +284,7 @@ describe('SKILL.md — CRLF tolerance (Windows checkout)', () => {
     expect(frontmatter).not.toBeNull();
     expect(frontmatter!.name).toBe('wigolo');
     expect(frontmatter!.author).toBe('KnockOutEZ');
-    expect(frontmatter!.license).toBe('PolyForm-Noncommercial-1.0.0');
+    expect(frontmatter!.license).toBe('AGPL-3.0-only');
     expect(frontmatter!.transport).toBe('stdio');
     expect(frontmatter!.runtime).toBe('node');
   });

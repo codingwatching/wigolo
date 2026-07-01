@@ -1,5 +1,5 @@
 {
-  "name": "@staticn0va/wigolo",
+  "name": "wigolo",
   "version": "0.1.38",
   "description": "Local-first web intelligence MCP server for AI coding agents",
   "type": "module",
@@ -51,7 +51,6 @@
     "test:perf": "vitest run --config vitest.perf.config.ts",
     "lint": "tsc --noEmit",
     "bench:extraction": "tsx benchmarks/extraction/runner.ts",
-    "bench:compare": "tsx --env-file-if-exists=.env benchmarks/extraction/compare.ts",
     "bench:search": "tsx benchmarks/search/runner.ts",
     "bench:agent": "tsx benchmarks/agent/runner.ts",
     "bench:embedding": "tsx benchmarks/embedding/runner.ts",
@@ -61,16 +60,21 @@
     "access": "public",
     "provenance": true
   },
-  "license": "PolyForm-Noncommercial-1.0.0",
+  "license": "AGPL-3.0-only",
+  "author": "Towhid Khan",
+  "homepage": "https://github.com/KnockOutEZ/wigolo#readme",
   "repository": {
     "type": "git",
     "url": "https://github.com/KnockOutEZ/wigolo"
+  },
+  "bugs": {
+    "url": "https://github.com/KnockOutEZ/wigolo/issues"
   },
   "mcp": {
     "transport": "stdio",
     "command": "npx",
     "args": [
-      "@staticn0va/wigolo"
+      "wigolo"
     ],
     "tools": [
       "search",

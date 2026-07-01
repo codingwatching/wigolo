@@ -3,7 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'v*.*.*'        # stable, e.g. v1.2.3
+      - 'v*.*.*-*'      # pre-release, e.g. v0.1.39-beta.0
 
 permissions:
   contents: write
@@ -41,11 +42,16 @@ jobs:
           fi
           echo "Tag and package.json agree on version $PKG_VERSION"
 
+      # Beta versions (x.y.z-beta.N) publish to the default `latest` dist-tag so
+      # `npm install wigolo` works during the public beta. (For a separate opt-in
+      # beta channel instead, add `--tag beta`.)
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      # Public beta: flag every GitHub Release as a pre-release.
+      # Remove --prerelease when cutting the first stable release.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes --prerelease

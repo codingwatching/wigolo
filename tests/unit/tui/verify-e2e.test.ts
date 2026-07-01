@@ -293,7 +293,7 @@ describe('checkMcpWiringForAgent', () => {
   it('returns pass when wigolo entry is present at keyPath', async () => {
     const { checkMcpWiringForAgent } = await import('../../../src/cli/tui/actions/verify-e2e.js');
     const configPath = join(dir, 'mcp.json');
-    writeFileSync(configPath, JSON.stringify({ mcpServers: { wigolo: { command: 'npx', args: ['-y', '@staticn0va/wigolo'] } } }));
+    writeFileSync(configPath, JSON.stringify({ mcpServers: { wigolo: { command: 'npx', args: ['-y', 'wigolo'] } } }));
     const result = await checkMcpWiringForAgent({
       agentId: 'cursor',
       agentName: 'Cursor',
@@ -353,7 +353,7 @@ describe('checkMcpWiringForAgent', () => {
   it('returns pass when TOML config contains wigolo entry at table path', async () => {
     const { checkMcpWiringForAgent } = await import('../../../src/cli/tui/actions/verify-e2e.js');
     const configPath = join(dir, 'config.toml');
-    writeFileSync(configPath, '[mcp_servers.wigolo]\ncommand = "npx"\nargs = ["-y", "@staticn0va/wigolo"]\n');
+    writeFileSync(configPath, '[mcp_servers.wigolo]\ncommand = "npx"\nargs = ["-y", "wigolo"]\n');
     const result = await checkMcpWiringForAgent({
       agentId: 'codex',
       agentName: 'Codex',

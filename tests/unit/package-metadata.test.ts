@@ -15,7 +15,7 @@ describe('package.json — MCP registry metadata', () => {
 
   it('has required top-level fields for registry publishing', () => {
     pkg = JSON.parse(readFileSync(PKG_PATH, 'utf-8'));
-    expect(pkg.name).toBe('@staticn0va/wigolo');
+    expect(pkg.name).toBe('wigolo');
     expect(typeof pkg.version).toBe('string');
     expect(typeof pkg.description).toBe('string');
     expect((pkg.description as string).length).toBeGreaterThan(10);

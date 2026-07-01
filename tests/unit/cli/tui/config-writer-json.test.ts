@@ -21,11 +21,11 @@ describe('writeJsonConfig', () => {
     const r = await writeJsonConfig({
       path,
       keyPath: ['mcpServers', 'wigolo'],
-      entry: { command: 'npx', args: ['-y', '@staticn0va/wigolo'] },
+      entry: { command: 'npx', args: ['-y', 'wigolo'] },
     });
     expect(r.ok).toBe(true);
     const content = JSON.parse(readFileSync(path, 'utf-8'));
-    expect(content).toEqual({ mcpServers: { wigolo: { command: 'npx', args: ['-y', '@staticn0va/wigolo'] } } });
+    expect(content).toEqual({ mcpServers: { wigolo: { command: 'npx', args: ['-y', 'wigolo'] } } });
   });
 
   it('creates intermediate directories when missing', async () => {
@@ -50,12 +50,12 @@ describe('writeJsonConfig', () => {
     const r = await writeJsonConfig({
       path,
       keyPath: ['mcpServers', 'wigolo'],
-      entry: { command: 'npx', args: ['-y', '@staticn0va/wigolo'] },
+      entry: { command: 'npx', args: ['-y', 'wigolo'] },
     });
     expect(r.ok).toBe(true);
     const content = JSON.parse(readFileSync(path, 'utf-8'));
     expect(content.mcpServers.other).toEqual({ command: 'node', args: ['other.js'] });
-    expect(content.mcpServers.wigolo).toEqual({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    expect(content.mcpServers.wigolo).toEqual({ command: 'npx', args: ['-y', 'wigolo'] });
     expect(content.extraKey).toBe('preserve me');
   });
 
@@ -67,7 +67,7 @@ describe('writeJsonConfig', () => {
     const r = await writeJsonConfig({
       path,
       keyPath: ['mcpServers', 'wigolo'],
-      entry: { command: 'npx', args: ['-y', '@staticn0va/wigolo'] },
+      entry: { command: 'npx', args: ['-y', 'wigolo'] },
     });
     expect(r.ok).toBe(true);
     const content = JSON.parse(readFileSync(path, 'utf-8'));

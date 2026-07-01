@@ -25,12 +25,12 @@ afterEach(() => {
 describe('installViaClaudeCli', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('runs `claude mcp add wigolo -- npx -y @staticn0va/wigolo` on success', async () => {
+  it('runs `claude mcp add wigolo -- npx -y wigolo` on success', async () => {
     vi.mocked(runCommand).mockResolvedValue({ code: 0, stdout: 'added', stderr: '', timedOut: false });
     const r = await installViaClaudeCli();
     expect(runCommand).toHaveBeenCalledWith(
       'claude',
-      ['mcp', 'add', 'wigolo', '--', 'npx', '-y', '@staticn0va/wigolo'],
+      ['mcp', 'add', 'wigolo', '--', 'npx', '-y', 'wigolo'],
       expect.any(Object),
     );
     expect(r.ok).toBe(true);
@@ -70,7 +70,7 @@ describe('installViaClaudeCli', () => {
     expect(existsSync(join(tmpHome, '.claude.json'))).toBe(true);
     const parsed = JSON.parse(readFileSync(join(tmpHome, '.claude.json'), 'utf-8'));
     expect(parsed.mcpServers.wigolo.command).toBe('npx');
-    expect(parsed.mcpServers.wigolo.args).toEqual(['-y', '@staticn0va/wigolo']);
+    expect(parsed.mcpServers.wigolo.args).toEqual(['-y', 'wigolo']);
   });
 
   it('respects dryRun (does not call runCommand)', async () => {
