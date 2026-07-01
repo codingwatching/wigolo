@@ -1,6 +1,6 @@
 <div align="center">
 
-<img alt="wigolo — the go-to web for your agent" src="https://raw.githubusercontent.com/KnockOutEZ/wigolo/main/assets/brand/wigolo-banner.png" width="640">
+<img alt="wigolo — the go-to web for your agent" src="assets/brand/wigolo-banner.png" width="640">
 
 Local-first web intelligence over MCP — **no keys, no cloud, no metered bill.**
 
@@ -19,7 +19,7 @@ wigolo runs on your machine as an MCP server and gives an AI coding agent one du
 
 <div align="center">
 
-<img alt="wigolo demo — Claude Code answering a live web question through wigolo, no API keys" src="https://raw.githubusercontent.com/KnockOutEZ/wigolo/main/assets/wigolo-demo.gif" width="800">
+<img alt="wigolo demo — Claude Code answering a live web question through wigolo, no API keys" src="assets/wigolo-demo.gif" width="800">
 
 </div>
 
@@ -30,18 +30,27 @@ Requires **Node ≥ 20** and ~1.5 GB of free disk. macOS, Linux, and Windows.
 One command installs the local engine (search, browser, on-device models), wires it into your agent, and sets up the MCP connection:
 
 ```bash
-GEMINI_API_KEY=<your-key> npx wigolo init --non-interactive \
-  --agents=<your-agent> --provider=gemini --search=core
+npx wigolo init --non-interactive --agents=<your-agent>
 ```
 
 - **`<your-agent>`** — one or more of `claude-code` · `cursor` · `codex` · `gemini-cli` · `vscode` · `windsurf` · `zed` · `antigravity` (comma-separated).
-- **`<your-key>`** — a free key from [Google AI Studio](https://aistudio.google.com/apikey); the free tier is plenty for wigolo. It's only used to *synthesize* answers for `research` / `agent` / `search format=answer` — every other tool runs fully keyless.
 
-Then check everything's healthy:
+That's the whole setup — **search, fetch, crawl, extract, cache, and find-similar work with no API key.** Check it's healthy:
 
 ```bash
 npx wigolo doctor
 ```
+
+### Optional — enable answer synthesis
+
+`research`, `agent`, and `search format=answer` use an LLM to *write* the final answer. Turn them on by setting a **provider and its key together** (in your shell, or in your agent's MCP `env` block) — `WIGOLO_LLM_PROVIDER` must be set, or the key is ignored:
+
+```bash
+export WIGOLO_LLM_PROVIDER=gemini
+export GOOGLE_API_KEY=<your-key>      # free from https://aistudio.google.com/apikey — the free tier is plenty
+```
+
+Any provider works — use `anthropic` + `ANTHROPIC_API_KEY`, `openai` + `OPENAI_API_KEY`, or `groq` + `GROQ_API_KEY`. To stay fully local and keyless, set `WIGOLO_LLM_PROVIDER=ollama` (or a local server URL) instead. Gemini is suggested because its free tier is more than enough for wigolo.
 
 ## The tools
 
@@ -105,10 +114,11 @@ flowchart TD
 A clean install works out of the box. A few settings meaningfully raise output quality — set them as environment variables or in your agent's MCP `env` block.
 
 ```bash
-# 1. Synthesis — the biggest lever. Most MCP hosts don't expose sampling, so
-#    research / agent / answer need an LLM to write the final text.
-export WIGOLO_LLM_PROVIDER=http://localhost:11434   # local (Ollama/vLLM/LM Studio) — free, on-device
-export WIGOLO_LLM_PROVIDER=gemini                   # or cloud; the free tier is plenty. key → OS keychain
+# 1. Synthesis — the biggest lever. research / agent / search-answer need an LLM
+#    to write the final text. Set the provider AND its key (a key alone is ignored).
+export WIGOLO_LLM_PROVIDER=gemini                   # names the LLM; free tier is plenty (or anthropic/openai/groq)
+export GOOGLE_API_KEY=<your-key>                    # that provider's key (ANTHROPIC_API_KEY / OPENAI_API_KEY / …)
+#   ...or fully local & keyless:  export WIGOLO_LLM_PROVIDER=ollama   (or a local http URL)
 
 # 2. Wider retrieval funnel
 export WIGOLO_SEARCH=hybrid                         # core engines + aggregator fallback
@@ -244,7 +254,7 @@ For repeated interactive use, run `wigolo serve` so the browser pool, embeddings
 | `WIGOLO_LLM_MAX_CALLS_PER_REQUEST` | `1` | Hard ceiling on LLM calls per tool invocation. |
 | `WIGOLO_LLM_CACHE_TTL_DAYS` | `7` | LLM response cache TTL. |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | — | Read on every call; never persisted. |
-| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | — | Either name accepted. |
+| `GOOGLE_API_KEY` | — | Gemini provider key (read on every call; never persisted). |
 | `GROQ_API_KEY` | — | Same. |
 | `WIGOLO_LLM_API_KEY` | — | Generic key for whichever provider `WIGOLO_LLM_PROVIDER` names. The provider-specific var wins; ignored during auto-detect. |
 
