@@ -493,7 +493,7 @@ async function applyPropagationToAgent(
 // keys), writes a backup first, and refuses to follow symlinks.
 //
 // The command/args shape is the canonical install recipe used by the SP7
-// agent handlers: `npx -y @staticn0va/wigolo` so the agent boots wigolo via
+// agent handlers: `npx -y @knockoutez/wigolo` so the agent boots wigolo via
 // npx regardless of global install state.
 // ---------------------------------------------------------------------------
 
@@ -542,7 +542,7 @@ export async function installAgent(opts: InstallAgentOpts): Promise<InstallAgent
   // Ensure the server entry exists at target.serverPath.
   const serverEntry = ensureNested(root, opts.target.serverPath);
   serverEntry.command = 'npx';
-  serverEntry.args = ['-y', '@staticn0va/wigolo'];
+  serverEntry.args = ['-y', '@knockoutez/wigolo'];
 
   // Merge env: ensure the env block exists, preserve unrelated keys, overwrite
   // anything the caller passed in. Empty `env` is a valid no-op merge.

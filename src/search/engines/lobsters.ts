@@ -55,7 +55,7 @@ export class LobstersEngine implements SearchEngine {
       signal: AbortSignal.timeout(timeoutMs),
       headers: {
         Accept: 'application/json',
-        'User-Agent': 'wigolo/0.1 (https://github.com/staticn0va/wigolo)',
+        'User-Agent': 'wigolo/0.1 (https://github.com/KnockOutEZ/wigolo)',
       },
     });
     if (!response.ok) throw new Error(`Lobsters returned ${response.status}`);

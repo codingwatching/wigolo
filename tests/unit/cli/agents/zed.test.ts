@@ -52,12 +52,12 @@ describe('zedHandler.installMcp', () => {
   it('writes context_servers.wigolo into ~/.config/zed/settings.json', async () => {
     vi.mocked(execSync).mockReturnValue(Buffer.from(''));
     const { zedHandler } = await import('../../../../src/cli/agents/zed.js');
-    await zedHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await zedHandler.installMcp({ command: 'npx', args: ['-y', '@knockoutez/wigolo'] });
     const cfgPath = join(tmpHome, '.config', 'zed', 'settings.json');
     expect(existsSync(cfgPath)).toBe(true);
     const parsed = JSON.parse(readFileSync(cfgPath, 'utf-8'));
     expect(parsed.context_servers.wigolo.command).toBe('npx');
-    expect(parsed.context_servers.wigolo.args).toEqual(['-y', '@staticn0va/wigolo']);
+    expect(parsed.context_servers.wigolo.args).toEqual(['-y', '@knockoutez/wigolo']);
   });
 
   it('preserves existing settings.json keys', async () => {
@@ -67,7 +67,7 @@ describe('zedHandler.installMcp', () => {
     const cfgPath = join(zedDir, 'settings.json');
     writeFileSync(cfgPath, JSON.stringify({ theme: 'one-dark' }));
     const { zedHandler } = await import('../../../../src/cli/agents/zed.js');
-    await zedHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await zedHandler.installMcp({ command: 'npx', args: ['-y', '@knockoutez/wigolo'] });
     const parsed = JSON.parse(readFileSync(cfgPath, 'utf-8'));
     expect(parsed.theme).toBe('one-dark');
     expect(parsed.context_servers.wigolo).toBeDefined();
@@ -92,7 +92,7 @@ describe('zedHandler.uninstall', () => {
   it('removes wigolo from settings.json', async () => {
     vi.mocked(execSync).mockReturnValue(Buffer.from(''));
     const { zedHandler } = await import('../../../../src/cli/agents/zed.js');
-    await zedHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await zedHandler.installMcp({ command: 'npx', args: ['-y', '@knockoutez/wigolo'] });
     const result = await zedHandler.uninstall();
     const cfgPath = join(tmpHome, '.config', 'zed', 'settings.json');
     const parsed = JSON.parse(readFileSync(cfgPath, 'utf-8'));

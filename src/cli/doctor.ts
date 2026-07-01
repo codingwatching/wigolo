@@ -559,7 +559,7 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
   const state = getBootstrapState(dataDir) as BootstrapState | null;
   out('[wigolo doctor] Search engine:');
   if (!state) {
-    out('  status:        not bootstrapped — run `npx @staticn0va/wigolo warmup`');
+    out('  status:        not bootstrapped — run `npx @knockoutez/wigolo warmup`');
     degraded = true;
   } else if (state.status === 'ready') {
     out(`  status:        ready`);
@@ -600,7 +600,7 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
     out('');
     out('[wigolo doctor] Recovery:');
     if (state.nextRetryAt) out(`  - Wait until next auto-retry (${humanRetry(state.nextRetryAt)}), or`);
-    out(`  - Force retry now: npx @staticn0va/wigolo warmup --force`);
+    out(`  - Force retry now: npx @knockoutez/wigolo warmup --force`);
   }
 
   await checkCoreEmbeddings();

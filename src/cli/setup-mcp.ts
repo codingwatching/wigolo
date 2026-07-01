@@ -12,8 +12,8 @@ const USAGE = [
   '  mcp    Configure wigolo in your AI tools (Claude Code, Cursor, ...)',
   '',
   'Examples:',
-  '  npx @staticn0va/wigolo setup mcp',
-  '  npx @staticn0va/wigolo setup mcp --non-interactive --agents=claude-code,cursor',
+  '  npx @knockoutez/wigolo setup mcp',
+  '  npx @knockoutez/wigolo setup mcp --non-interactive --agents=claude-code,cursor',
 ].join('\n');
 
 function writeErr(line: string): void {
@@ -63,7 +63,7 @@ export async function runSetupMcp(args: string[]): Promise<number> {
   if (detected.length === 0) {
     writeErr('No supported AI tools detected on this machine.');
     writeErr('Supported: Claude Code, Cursor, VS Code, Zed, Gemini CLI, Windsurf, Codex, OpenCode.');
-    writeErr('Install one of them, then re-run: npx @staticn0va/wigolo setup mcp');
+    writeErr('Install one of them, then re-run: npx @knockoutez/wigolo setup mcp');
     return 0;
   }
 

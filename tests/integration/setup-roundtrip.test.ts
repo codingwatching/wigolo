@@ -78,7 +78,7 @@ describe('fresh-machine setup round-trip', () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(agentFile, JSON.stringify({
       mcpServers: {
-        wigolo: { command: 'npx', args: ['-y', '@staticn0va/wigolo'] },
+        wigolo: { command: 'npx', args: ['-y', '@knockoutez/wigolo'] },
       },
     }, null, 2));
 

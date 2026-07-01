@@ -6,7 +6,7 @@
 
 **Local-first web intelligence over MCP — no keys, no cloud, no metered bill.**
 
-[![npm](https://img.shields.io/npm/v/@staticn0va/wigolo?color=cb3837&logo=npm)](https://www.npmjs.com/package/@staticn0va/wigolo)
+[![npm](https://img.shields.io/npm/v/@knockoutez/wigolo?color=cb3837&logo=npm)](https://www.npmjs.com/package/@knockoutez/wigolo)
 [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![MCP](https://img.shields.io/badge/MCP-server-7c3aed)](https://modelcontextprotocol.io)
 [![license](https://img.shields.io/badge/license-PolyForm--NC--1.0.0-2563eb)](#-license)
@@ -24,7 +24,7 @@ wigolo runs on your machine as an MCP server and hands an AI coding agent one du
 The goal of the project is plain: web search and research for agents should be as good as the paid services — and stay open, local, and free — instead of being a meter you feed every time your agent gets curious. That's the bar it's held to.
 
 ```bash
-npx @staticn0va/wigolo init --agents=claude-code   # set up everything in one step
+npx @knockoutez/wigolo init --agents=claude-code   # set up everything in one step
 ```
 
 ---
@@ -35,15 +35,15 @@ You need **Node ≥ 20** and ~**1.5 GB** of free disk (headless browser, the rer
 
 ```bash
 # 1. set up everything: install components, wire into your agent (idempotent — safe to re-run)
-npx @staticn0va/wigolo init --agents=claude-code
+npx @knockoutez/wigolo init --agents=claude-code
 
 # 2. confirm everything's healthy (no network fetches)
-npx @staticn0va/wigolo doctor
+npx @knockoutez/wigolo doctor
 ```
 
 **Headless / CI setup** (one command, no prompts):
 ```bash
-WIGOLO_LLM_API_KEY=sk-... npx @staticn0va/wigolo init --non-interactive --agents=claude-code,cursor --provider=anthropic --search=core
+WIGOLO_LLM_API_KEY=sk-... npx @knockoutez/wigolo init --non-interactive --agents=claude-code,cursor --provider=anthropic --search=core
 ```
 
 > The LLM provider key is **optional** — wigolo's core tools (search, fetch, crawl, extract, cache) work without one. Only the `research` and `agent` tools use an LLM to synthesize results. The key is read from the `WIGOLO_LLM_API_KEY` env var; it is never passed as a CLI flag.
@@ -51,7 +51,7 @@ WIGOLO_LLM_API_KEY=sk-... npx @staticn0va/wigolo init --non-interactive --agents
 Or add it to any MCP client by hand:
 
 ```bash
-claude mcp add wigolo -- npx @staticn0va/wigolo
+claude mcp add wigolo -- npx @knockoutez/wigolo
 ```
 
 Prefer to kick the tyres without an agent? There's a REPL:

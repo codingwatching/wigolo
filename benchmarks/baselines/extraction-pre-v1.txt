@@ -1,5 +1,5 @@
 
-> @staticn0va/wigolo@1.2.0 bench:extraction
+> @knockoutez/wigolo@1.2.0 bench:extraction
 > tsx benchmarks/extraction/runner.ts
 
 node:net:1915

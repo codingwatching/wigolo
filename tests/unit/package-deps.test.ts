@@ -53,7 +53,7 @@ describe('package.json: forbidden deps after Python-rerank migration', () => {
 // The #101 attempt used an npm `overrides` block forcing a single 1.24.3 across
 // the tree. THAT WAS WRONG for shipped consumers: npm only honors `overrides`
 // from the install ROOT. When wigolo is installed as a *dependency* (exactly
-// what `npx @staticn0va/wigolo` does), npm IGNORES wigolo's own `overrides`, so
+// what `npx @knockoutez/wigolo` does), npm IGNORES wigolo's own `overrides`, so
 // the two consumers split again and end users hit the clash anyway (#114).
 //
 // The correct fix is NATURAL CONVERGENCE: pin @huggingface/transformers to a

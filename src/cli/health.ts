@@ -38,7 +38,7 @@ export async function runHealthCheck(): Promise<number> {
 
     if (message.includes('ECONNREFUSED') || message.includes('fetch failed') || message.includes('timed out')) {
       log(`Daemon is not running at ${host}:${port}`);
-      log(`Start it with: npx @staticn0va/wigolo serve`);
+      log(`Start it with: npx @knockoutez/wigolo serve`);
     } else {
       log(`Health check failed: ${message}`);
     }

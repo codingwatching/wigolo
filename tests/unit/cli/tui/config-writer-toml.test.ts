@@ -21,12 +21,12 @@ describe('writeTomlConfig', () => {
     const r = await writeTomlConfig({
       path,
       tablePath: ['mcp_servers', 'wigolo'],
-      entry: { command: 'npx', args: ['-y', '@staticn0va/wigolo'] },
+      entry: { command: 'npx', args: ['-y', '@knockoutez/wigolo'] },
     });
     expect(r.ok).toBe(true);
     const parsed = parseToml(readFileSync(path, 'utf-8')) as any;
     expect(parsed.mcp_servers.wigolo.command).toBe('npx');
-    expect(parsed.mcp_servers.wigolo.args).toEqual(['-y', '@staticn0va/wigolo']);
+    expect(parsed.mcp_servers.wigolo.args).toEqual(['-y', '@knockoutez/wigolo']);
   });
 
   it('merges into an existing config preserving other tables', async () => {
@@ -43,7 +43,7 @@ describe('writeTomlConfig', () => {
     const r = await writeTomlConfig({
       path,
       tablePath: ['mcp_servers', 'wigolo'],
-      entry: { command: 'npx', args: ['-y', '@staticn0va/wigolo'] },
+      entry: { command: 'npx', args: ['-y', '@knockoutez/wigolo'] },
     });
     expect(r.ok).toBe(true);
     const parsed = parseToml(readFileSync(path, 'utf-8')) as any;
@@ -58,7 +58,7 @@ describe('writeTomlConfig', () => {
     await writeTomlConfig({
       path,
       tablePath: ['mcp_servers', 'wigolo'],
-      entry: { command: 'npx', args: ['-y', '@staticn0va/wigolo'] },
+      entry: { command: 'npx', args: ['-y', '@knockoutez/wigolo'] },
     });
     const parsed = parseToml(readFileSync(path, 'utf-8')) as any;
     expect(parsed.mcp_servers.wigolo.command).toBe('npx');

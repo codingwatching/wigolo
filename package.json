@@ -1,5 +1,5 @@
 {
-  "name": "@staticn0va/wigolo",
+  "name": "@knockoutez/wigolo",
   "version": "0.1.38",
   "description": "Local-first web intelligence MCP server for AI coding agents",
   "type": "module",
@@ -74,7 +74,7 @@
     "transport": "stdio",
     "command": "npx",
     "args": [
-      "@staticn0va/wigolo"
+      "@knockoutez/wigolo"
     ],
     "tools": [
       "search",

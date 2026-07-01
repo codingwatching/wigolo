@@ -10,7 +10,7 @@ pip install llama-index-readers-wigolo
 
 Requires wigolo to be available via npx:
 ```bash
-npm install -g @staticn0va/wigolo
+npm install -g @knockoutez/wigolo
 # or use npx (default, no install needed)
 ```
 
@@ -79,7 +79,7 @@ docs = await reader.aload_data(urls=["https://docs.example.com/api"])
 Async MCP client that communicates with wigolo via subprocess.
 
 - `command` — executable (default: `"npx"`)
-- `args` — arguments (default: `["@staticn0va/wigolo"]`)
+- `args` — arguments (default: `["@knockoutez/wigolo"]`)
 - `timeout` — seconds (default: `30.0`)
 - Supports `async with` context manager
 

@@ -249,5 +249,5 @@ export function getMcpCommand(): { command: string; args: string[] } {
   } catch {
     // not found globally
   }
-  return { command: 'npx', args: ['-y', '@staticn0va/wigolo'] };
+  return { command: 'npx', args: ['-y', '@knockoutez/wigolo'] };
 }

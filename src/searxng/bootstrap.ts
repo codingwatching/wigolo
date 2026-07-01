@@ -67,7 +67,7 @@ export function acquireBootstrapLock(dataDir: string): () => void {
       if (data.pid && isProcessAlive(data.pid)) {
         throw new Error(
           `SearXNG bootstrap already in progress (pid ${data.pid}). ` +
-          `Wait for it to finish, or force-recover: kill ${data.pid} && npx @staticn0va/wigolo warmup --force`,
+          `Wait for it to finish, or force-recover: kill ${data.pid} && npx @knockoutez/wigolo warmup --force`,
         );
       }
       stale = true;

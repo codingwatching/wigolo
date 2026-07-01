@@ -62,7 +62,7 @@ describe('codexHandler.installMcp', () => {
   it('writes mcp_servers.wigolo into ~/.codex/config.toml', async () => {
     vi.mocked(execSync).mockReturnValue(Buffer.from(''));
     const { codexHandler } = await import('../../../../src/cli/agents/codex.js');
-    await codexHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await codexHandler.installMcp({ command: 'npx', args: ['-y', '@knockoutez/wigolo'] });
     const cfgPath = join(tmpHome, '.codex', 'config.toml');
     expect(existsSync(cfgPath)).toBe(true);
     const content = readFileSync(cfgPath, 'utf-8');
@@ -77,7 +77,7 @@ describe('codexHandler.installMcp', () => {
     const cfgPath = join(codexDir, 'config.toml');
     writeFileSync(cfgPath, '[mcp_servers.other]\ncommand = "other-cmd"\n');
     const { codexHandler } = await import('../../../../src/cli/agents/codex.js');
-    await codexHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await codexHandler.installMcp({ command: 'npx', args: ['-y', '@knockoutez/wigolo'] });
     const content = readFileSync(cfgPath, 'utf-8');
     expect(content).toContain('[mcp_servers.other]');
     expect(content).toContain('other-cmd');
@@ -90,7 +90,7 @@ describe('codexHandler.installMcp', () => {
     const cfgPath = join(tmpHome, '.codex', 'config.toml');
 
     // First install: npx form.
-    await codexHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await codexHandler.installMcp({ command: 'npx', args: ['-y', '@knockoutez/wigolo'] });
     // Second install over the existing file with a different command (e.g. global bin).
     await codexHandler.installMcp({ command: 'wigolo', args: [] });
 
@@ -125,7 +125,7 @@ describe('codexHandler.uninstall', () => {
     mkdirSync(join(tmpHome, '.codex'), { recursive: true });
     writeFileSync(
       join(tmpHome, '.codex', 'config.toml'),
-      '[mcp_servers.wigolo]\ncommand = "npx"\nargs = ["-y", "@staticn0va/wigolo"]\n',
+      '[mcp_servers.wigolo]\ncommand = "npx"\nargs = ["-y", "@knockoutez/wigolo"]\n',
     );
     const result = await codexHandler.uninstall();
     const content = readFileSync(join(tmpHome, '.codex', 'config.toml'), 'utf-8');

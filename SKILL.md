@@ -5,7 +5,7 @@ author: KnockOutEZ
 license: AGPL-3.0-only
 repository: https://github.com/KnockOutEZ/wigolo
 transport: stdio
-install: npx @staticn0va/wigolo
+install: npx @knockoutez/wigolo
 runtime: node
 min_runtime_version: "20"
 tools:
@@ -45,7 +45,7 @@ Wigolo has no internal LLM. It returns *structured evidence* so the calling mode
 
 **Claude Code:**
 ```bash
-claude mcp add wigolo -- npx @staticn0va/wigolo
+claude mcp add wigolo -- npx @knockoutez/wigolo
 ```
 
 **Cursor / VS Code / any MCP client:**
@@ -54,7 +54,7 @@ claude mcp add wigolo -- npx @staticn0va/wigolo
   "mcpServers": {
     "wigolo": {
       "command": "npx",
-      "args": ["@staticn0va/wigolo"]
+      "args": ["@knockoutez/wigolo"]
     }
   }
 }
@@ -62,9 +62,9 @@ claude mcp add wigolo -- npx @staticn0va/wigolo
 
 **Warmup (recommended, one-time):**
 ```bash
-npx @staticn0va/wigolo warmup          # installs browser engine + bootstraps search engine
-npx @staticn0va/wigolo warmup --all    # also installs Firefox, WebKit, ML reranker, embeddings, content extractor
-npx @staticn0va/wigolo warmup --force  # wipe search engine state and rebuild
+npx @knockoutez/wigolo warmup          # installs browser engine + bootstraps search engine
+npx @knockoutez/wigolo warmup --all    # also installs Firefox, WebKit, ML reranker, embeddings, content extractor
+npx @knockoutez/wigolo warmup --force  # wipe search engine state and rebuild
 ```
 
 Warmup flags: `--force`, `--all`, `--trafilatura`, `--reranker`, `--firefox`, `--webkit`, `--embeddings`, `--lightpanda`.
@@ -378,5 +378,5 @@ Full list: see `src/config.ts`.
 ## Links
 
 - Repository: https://github.com/KnockOutEZ/wigolo
-- npm: https://www.npmjs.com/package/@staticn0va/wigolo
+- npm: https://www.npmjs.com/package/@knockoutez/wigolo
 - License: PolyForm Noncommercial 1.0.0 — free for noncommercial use; commercial use requires a separate license (contact ktowhid20@gmail.com)

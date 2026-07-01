@@ -55,7 +55,7 @@ describe('readConnectedAgents', () => {
     mkdirSync(codexDir, { recursive: true });
     writeFileSync(
       join(codexDir, 'config.toml'),
-      '[mcp_servers.wigolo]\ncommand = "npx"\nargs = ["-y", "@staticn0va/wigolo"]\n',
+      '[mcp_servers.wigolo]\ncommand = "npx"\nargs = ["-y", "@knockoutez/wigolo"]\n',
     );
 
     const result = readConnectedAgents({ home: tmpHome });

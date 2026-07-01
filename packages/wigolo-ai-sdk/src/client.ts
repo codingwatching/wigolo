@@ -1,6 +1,6 @@
 /**
  * MCP subprocess client for communicating with wigolo.
- * Spawns npx @staticn0va/wigolo, sends JSON-RPC 2.0 over stdin/stdout.
+ * Spawns npx @knockoutez/wigolo, sends JSON-RPC 2.0 over stdin/stdout.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -30,7 +30,7 @@ export class WigoloMcpClient {
 
   constructor(options?: WigoloClientOptions) {
     this.command = options?.command ?? 'npx';
-    this.args = options?.args ?? ['@staticn0va/wigolo'];
+    this.args = options?.args ?? ['@knockoutez/wigolo'];
     this.timeoutMs = options?.timeoutMs ?? 30000;
     this.env = options?.env;
   }

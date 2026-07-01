@@ -58,12 +58,12 @@ describe('windsurfHandler.installMcp', () => {
   it('writes mcpServers.wigolo into ~/.codeium/windsurf/mcp_config.json', async () => {
     vi.mocked(execSync).mockReturnValue(Buffer.from(''));
     const { windsurfHandler } = await import('../../../../src/cli/agents/windsurf.js');
-    await windsurfHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await windsurfHandler.installMcp({ command: 'npx', args: ['-y', '@knockoutez/wigolo'] });
     const cfgPath = join(tmpHome, '.codeium', 'windsurf', 'mcp_config.json');
     expect(existsSync(cfgPath)).toBe(true);
     const parsed = JSON.parse(readFileSync(cfgPath, 'utf-8'));
     expect(parsed.mcpServers.wigolo.command).toBe('npx');
-    expect(parsed.mcpServers.wigolo.args).toEqual(['-y', '@staticn0va/wigolo']);
+    expect(parsed.mcpServers.wigolo.args).toEqual(['-y', '@knockoutez/wigolo']);
   });
 
   it('preserves existing mcp_config.json keys', async () => {
@@ -75,7 +75,7 @@ describe('windsurfHandler.installMcp', () => {
       JSON.stringify({ mcpServers: { other: { command: 'other' } } }),
     );
     const { windsurfHandler } = await import('../../../../src/cli/agents/windsurf.js');
-    await windsurfHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await windsurfHandler.installMcp({ command: 'npx', args: ['-y', '@knockoutez/wigolo'] });
     const parsed = JSON.parse(readFileSync(join(windsurfDir, 'mcp_config.json'), 'utf-8'));
     expect(parsed.mcpServers.other).toBeDefined();
     expect(parsed.mcpServers.wigolo).toBeDefined();
@@ -100,7 +100,7 @@ describe('windsurfHandler.uninstall', () => {
   it('removes wigolo from mcp_config.json', async () => {
     vi.mocked(execSync).mockReturnValue(Buffer.from(''));
     const { windsurfHandler } = await import('../../../../src/cli/agents/windsurf.js');
-    await windsurfHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await windsurfHandler.installMcp({ command: 'npx', args: ['-y', '@knockoutez/wigolo'] });
     const result = await windsurfHandler.uninstall();
     const cfgPath = join(tmpHome, '.codeium', 'windsurf', 'mcp_config.json');
     const parsed = JSON.parse(readFileSync(cfgPath, 'utf-8'));

@@ -72,14 +72,14 @@ describe('claudeCodeHandler.installMcp', () => {
     });
     const { claudeCodeHandler } = await import('../../../../src/cli/agents/claude-code.js');
     await expect(
-      claudeCodeHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] }),
+      claudeCodeHandler.installMcp({ command: 'npx', args: ['-y', '@knockoutez/wigolo'] }),
     ).resolves.not.toThrow();
 
     const claudeJson = join(tmpHome, '.claude.json');
     expect(existsSync(claudeJson)).toBe(true);
     const parsed = JSON.parse(readFileSync(claudeJson, 'utf-8'));
     expect(parsed.mcpServers.wigolo.command).toBe('npx');
-    expect(parsed.mcpServers.wigolo.args).toEqual(['-y', '@staticn0va/wigolo']);
+    expect(parsed.mcpServers.wigolo.args).toEqual(['-y', '@knockoutez/wigolo']);
   });
 
   it('falls back when execSync reports "command not found" (shell stderr) instead of ENOENT', async () => {

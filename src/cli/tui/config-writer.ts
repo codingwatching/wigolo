@@ -4,7 +4,7 @@ import { writeTomlConfig, type WriteTomlConfigResult } from './config-writer-tom
 import { installViaClaudeCli, type InstallViaClaudeCliResult } from './config-writer-cli.js';
 
 const SERVER_COMMAND = 'npx';
-const SERVER_ARGS = ['-y', '@staticn0va/wigolo'];
+const SERVER_ARGS = ['-y', '@knockoutez/wigolo'];
 
 interface JsonAgentSpec {
   keyPath: string[];
