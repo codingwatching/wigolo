@@ -1,11 +1,6 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/KnockOutEZ/wigolo/main/assets/brand/wigolo-wordmark-dark.png">
-  <img alt="wigolo" src="https://raw.githubusercontent.com/KnockOutEZ/wigolo/main/assets/brand/wigolo-wordmark-light.png" width="300">
-</picture>
-
-### The go-to web for your agent
+<img alt="wigolo — the go-to web for your agent" src="https://raw.githubusercontent.com/KnockOutEZ/wigolo/main/assets/brand/wigolo-banner.png" width="640">
 
 Local-first web intelligence over MCP — **no keys, no cloud, no metered bill.**
 
@@ -22,59 +17,27 @@ Local-first web intelligence over MCP — **no keys, no cloud, no metered bill.*
 
 wigolo runs on your machine as an MCP server and gives an AI coding agent one durable surface for everything web-related — **search, fetch, crawl, extract, cache, find-similar, research,** and autonomous gather loops. The core tools need no API keys, nothing it touches leaves `~/.wigolo/`, and there's no bill that grows with how much your agent thinks.
 
-```bash
-npx wigolo init --agents=claude-code   # install components, wire into your agent
-```
-
-## See it
-
-```console
-$ wigolo shell
-wigolo> search "postgres lateral join vs subquery" --category=docs
-
-◆ 5 results · 18 engines → rank-fusion → rerank · 312 ms
-
-[1] LATERAL — PostgreSQL Documentation                              0.94
-    postgresql.org/docs/current/queries-table-expressions.html
-    "A LATERAL item can reference columns of preceding FROM items; a
-     plain subquery in the FROM list cannot — ideal for top-N-per-group."
-
-[2] When a LATERAL join beats a correlated subquery                 0.88
-    …/blog/lateral-joins
-    "LATERAL runs the right side once per outer row, so the planner can
-     push down LIMIT — a correlated subquery re-scans every time."
-
-evidence for [1][2][4] · cached — the next call for this is 0 ms and free
-```
-
-Every result carries an explainable score and a citation id; the whole response lands in the local cache, so re-querying costs nothing. Ask for `format: "answer"` (with an optional LLM) and wigolo synthesizes a cited answer instead.
+<!-- demo gif goes here -->
 
 ## Quickstart
 
-You need **Node ≥ 20** and ~**1.5 GB** of free disk (headless browser, reranker, embedding model, and a cache that grows with use). macOS, Linux, and Windows all work.
+Requires **Node ≥ 20** and ~1.5 GB of free disk. macOS, Linux, and Windows.
+
+One command installs the local engine (search, browser, on-device models), wires it into your agent, and sets up the MCP connection:
 
 ```bash
-npx wigolo init --agents=claude-code   # set up everything (idempotent — safe to re-run)
-npx wigolo doctor                      # confirm it's healthy (no network)
+GEMINI_API_KEY=<your-key> npx wigolo init --non-interactive \
+  --agents=<your-agent> --provider=gemini --search=core
 ```
 
-Add it to any MCP client by hand:
+- **`<your-agent>`** — one or more of `claude-code` · `cursor` · `codex` · `gemini-cli` · `vscode` · `windsurf` · `zed` · `antigravity` (comma-separated).
+- **`<your-key>`** — a free key from [Google AI Studio](https://aistudio.google.com/apikey); the free tier is plenty for wigolo. It's only used to *synthesize* answers for `research` / `agent` / `search format=answer` — every other tool runs fully keyless.
+
+Then check everything's healthy:
 
 ```bash
-claude mcp add wigolo -- npx wigolo
+npx wigolo doctor
 ```
-
-> **The LLM key is optional.** The core tools (search, fetch, crawl, extract, cache) work without one. Only `research`, `agent`, and `search format=answer` use an LLM to *synthesize* — point wigolo at a local model (Ollama) or a cloud provider and it's still fully functional either way.
-
-<details>
-<summary>Headless / CI setup (one command, no prompts)</summary>
-
-```bash
-WIGOLO_LLM_API_KEY=sk-... npx wigolo init --non-interactive \
-  --agents=claude-code,cursor --provider=anthropic --search=core
-```
-The key is read from the env var, never passed as a CLI flag.
-</details>
 
 ## The tools
 
@@ -104,7 +67,7 @@ A single Node process speaking MCP (JSON-RPC over stdio). Everything heavy is lo
 
 ```mermaid
 flowchart TD
-    A["🤖 AI agent<br/>Claude Code · Cursor · Zed · VS Code · …"]
+    A["🤖 AI coding agent<br/>any MCP client"]
     A -->|MCP over stdio| B["<b>wigolo</b><br/>8 tools · dynamic instructions<br/>in-process browser pool + cache + models"]
 
     B --> C{"Tool layer"}
@@ -138,10 +101,10 @@ flowchart TD
 A clean install works out of the box. A few settings meaningfully raise output quality — set them as environment variables or in your agent's MCP `env` block.
 
 ```bash
-# 1. Synthesis — the biggest lever. Hosts like Claude Code don't expose MCP
-#    sampling, so research/agent/answer need an LLM to write the final text.
+# 1. Synthesis — the biggest lever. Most MCP hosts don't expose sampling, so
+#    research / agent / answer need an LLM to write the final text.
 export WIGOLO_LLM_PROVIDER=http://localhost:11434   # local (Ollama/vLLM/LM Studio) — free, on-device
-export WIGOLO_LLM_PROVIDER=anthropic                # or cloud; key → OS keychain, never config.json
+export WIGOLO_LLM_PROVIDER=gemini                   # or cloud; the free tier is plenty. key → OS keychain
 
 # 2. Wider retrieval funnel
 export WIGOLO_SEARCH=hybrid                         # core engines + aggregator fallback
