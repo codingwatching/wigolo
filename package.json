@@ -20,7 +20,8 @@
   },
   "files": [
     "dist",
-    "assets",
+    "assets/blocks",
+    "assets/skills",
     "README.md",
     "LICENSE",
     "SKILL.md"

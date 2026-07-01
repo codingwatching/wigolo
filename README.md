@@ -9,7 +9,7 @@ Local-first web intelligence over MCP — **no keys, no cloud, no metered bill.*
 [![MCP](https://img.shields.io/badge/MCP-server-7c3aed)](https://modelcontextprotocol.io)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-2563eb)](#license)
 
-[Quickstart](#quickstart) · [Tools](#the-tools) · [Why wigolo](#why-its-different) · [Architecture](#architecture) · [Configuration](#configuration) · [Contribute](#contributing)
+[Quickstart](#quickstart) · [Tools](#the-tools) · [Why wigolo](#why-its-different) · [Benchmark](#benchmark) · [Architecture](#architecture) · [Configuration](#configuration) · [Contribute](#contributing)
 
 </div>
 
@@ -73,6 +73,19 @@ Any provider works — use `anthropic` + `ANTHROPIC_API_KEY`, `openai` + `OPENAI
 - **Honest output.** Stale cache, failed fetches, degraded backends, and truncation are surfaced in the result, never disguised as empty-but-successful data.
 
 It's **not** a hosted SaaS, a vector database other apps query, or a general web-automation framework. And it's honest about the trade: a hosted service will still beat it on **massive semantic discovery** over a global neural index, **crawling hostile sites at scale**, and **one-call finished answers** with zero local compute. wigolo is built for the local, private, low-cost lane — and to be as good as the paid services within it.
+
+## Benchmark
+
+A real head-to-head from one AI-agent session: the same query — `postgres 18 async IO real-world benchmark` — sent once to four web tools (built-in **WebSearch**, **wigolo**, **Tavily**, and **Firecrawl**). wigolo matched the paid tools on the #1 result (`postgresqlhtx.com`), returned the most scored evidence — with real benchmark excerpts — and served the **re-query from cache in 3 ms, at $0**.
+
+It's one honest query, not a leaderboard: wigolo's only miss was the long tail — a touch more docs/homepage noise than the hosted neural indexes. See it and judge for yourself:
+
+<details>
+<summary><b>See the run →</b></summary>
+
+<img alt="wigolo vs built-in WebSearch, Tavily, and Firecrawl on one real query" src="assets/wigolo-vs.gif" width="900">
+
+</details>
 
 ## Architecture
 
