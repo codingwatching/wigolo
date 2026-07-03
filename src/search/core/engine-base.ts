@@ -67,6 +67,21 @@ export interface BreakerConfig {
   failureThreshold?: number;
   /** Cooldown after tripping, ms. Default 60_000. */
   cooldownMs?: number;
+  /** In-call retry attempts before the breaker records a failure. Default 2
+   * (one retry). The inter-attempt backoff grows exponentially from the base
+   * so a rate-limited engine is not hammered. */
+  retryAttempts?: number;
+}
+
+/**
+ * An engine that opts into the retry loop's rotation hook. The base
+ * `SearchEngine` contract is unchanged — this optional method lets an
+ * HTML-scraping adapter react to a retryable error (e.g. rotate its browser
+ * fingerprint on a 403) before the next attempt. The retry loop calls it
+ * only between attempts, never after the final one.
+ */
+export interface RetryableEngine extends SearchEngine {
+  onRetry?(attempt: number, lastError: unknown): void;
 }
 
 interface BreakerState {
@@ -86,7 +101,11 @@ interface BreakerState {
 const DEFAULT_THRESHOLD = 3;
 const DEFAULT_COOLDOWN_MS = 60_000;
 const MAX_COOLDOWN_MS = 600_000;
-const RETRY_BACKOFF_MS = 100;
+/** Base in-call retry backoff; grows exponentially per attempt (100ms, 300ms,
+ * 900ms, …) so a rate-limited engine is not hammered on retry. */
+const RETRY_BACKOFF_BASE_MS = 100;
+const DEFAULT_RETRY_ATTEMPTS = 2;
+const MAX_RETRY_BACKOFF_MS = 5_000;
 const MAX_LAST_ERROR_LEN = 300;
 
 /** Upstream error bodies can echo hostile content into Error.message —
@@ -189,6 +208,8 @@ export function wrapWithRetryAndBreaker(
 ): SearchEngine {
   const threshold = cfg?.failureThreshold ?? DEFAULT_THRESHOLD;
   const cooldownMs = cfg?.cooldownMs ?? DEFAULT_COOLDOWN_MS;
+  const retryAttempts = Math.max(1, cfg?.retryAttempts ?? DEFAULT_RETRY_ATTEMPTS);
+  const onRetry = (engine as RetryableEngine).onRetry?.bind(engine);
 
   return {
     name: engine.name,
@@ -225,15 +246,22 @@ export function wrapWithRetryAndBreaker(
       }
 
       let lastErr: unknown;
-      for (let attempt = 1; attempt <= 2; attempt++) {
+      for (let attempt = 1; attempt <= retryAttempts; attempt++) {
         try {
           const results = await engine.search(query, options);
           recordSuccess(engine.name);
           return results;
         } catch (err) {
           lastErr = err;
-          if (attempt === 1) {
-            await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS));
+          if (attempt < retryAttempts) {
+            // Let the engine react to the retryable error before the next
+            // attempt (e.g. rotate its browser fingerprint on a 403).
+            onRetry?.(attempt, err);
+            const backoffMs = Math.min(
+              RETRY_BACKOFF_BASE_MS * 3 ** (attempt - 1),
+              MAX_RETRY_BACKOFF_MS,
+            );
+            await new Promise((r) => setTimeout(r, backoffMs));
           }
         }
       }
