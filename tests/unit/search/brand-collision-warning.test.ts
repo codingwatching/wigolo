@@ -5,7 +5,7 @@ import type {
   RawSearchResult,
 } from '../../../src/types.js';
 import type { EngineEntry } from '../../../src/search/core/engine-base.js';
-import { detectBrandCollision } from '../../../src/search/core/brand-collision.js';
+import { detectBrandCollision, detectEntityCollision } from '../../../src/search/core/brand-collision.js';
 
 const verticalState: {
   general: EngineEntry[];
@@ -167,5 +167,62 @@ describe('brand_collision_warning lexical-similarity path', () => {
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.data.brand_collision_warning).toBeUndefined();
+  });
+});
+
+// Entity-collision detector (item 3, v2). A proper-noun-head + generic-tail
+// query (e.g. "Phoenix framework deployment") is ambiguous — the head names an
+// entity that clashes with an everyday word. The warning must anchor the
+// disambiguation on the entity head so the caller can re-query it verbatim.
+describe('detectEntityCollision (brand-collision v2)', () => {
+  it('fires on a proper-noun head + generic tail and quotes the entity head verbatim', () => {
+    const w = detectEntityCollision('Phoenix framework deployment');
+    expect(w).not.toBeNull();
+    expect(w!.detected).toBe(true);
+    // The rewrite must carry the proper-noun head verbatim so the caller can
+    // anchor a follow-up query on the entity.
+    expect(w!.suggested_rewrites.length).toBeGreaterThan(0);
+    expect(w!.suggested_rewrites.some((r) => r.includes('Phoenix'))).toBe(true);
+  });
+
+  it('includes a multi-token entity head verbatim in the rewrite', () => {
+    const w = detectEntityCollision('Comet ML experiment tracking');
+    expect(w).not.toBeNull();
+    expect(w!.suggested_rewrites.some((r) => r.includes('Comet'))).toBe(true);
+  });
+
+  it('returns null on a pure technical query with no generic tail', () => {
+    expect(detectEntityCollision('pgvector hnsw ef_search tuning')).toBeNull();
+  });
+});
+
+// Dual-dispatch: when the entity collision fires, core-provider must run the
+// entity-qualified rewrite CONCURRENTLY and record it in queries_executed so
+// the extra dispatch is auditable. WHY: the caller needs to see that wigolo
+// hedged the ambiguous query with an entity-anchored variant.
+describe('SearchOutput — entity-collision dual-dispatch is auditable', () => {
+  it('emits a brand_collision_warning and records the entity-qualified rewrite in queries_executed', async () => {
+    verticalState.general = [
+      makeEntry('bing', [
+        makeResult('bing', 'https://example.com/phoenix-a'),
+        makeResult('bing', 'https://example.com/phoenix-b'),
+        makeResult('bing', 'https://example.com/phoenix-c'),
+      ]),
+    ];
+    const provider = new CoreSearchProvider();
+    const out = await provider.search(
+      { query: 'Phoenix framework deployment', include_content: false },
+      { router: undefined as never, samplingServer: undefined as never, engines: [], backendStatus: undefined as never },
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.data.brand_collision_warning).toBeDefined();
+    expect(out.data.brand_collision_warning!.detected).toBe(true);
+    expect(out.data.queries_executed).toBeDefined();
+    // The original query plus the entity-qualified rewrite must both appear.
+    expect(out.data.queries_executed).toContain('Phoenix framework deployment');
+    expect(
+      out.data.queries_executed!.some((q) => q.includes('Phoenix') && q !== 'Phoenix framework deployment'),
+    ).toBe(true);
   });
 });

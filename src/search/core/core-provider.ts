@@ -22,7 +22,12 @@ import { dedupAgainstRecentUrls } from './recent-cache-dedup.js';
 import { foldRerankIntoOrdering } from './rerank-fold.js';
 import { applyScoreFloor, DEFAULT_SEARCH_SCORE_FLOOR } from './score-floor.js';
 import { recencyDemotion, hasTemporalIntent } from './recency-boost.js';
-import { detectBrandCollision, detectLexicalCollision } from './brand-collision.js';
+import {
+  detectBrandCollision,
+  detectEntityCollision,
+  detectLexicalCollision,
+  entityQualifiedRewrite,
+} from './brand-collision.js';
 import { computeFreshnessSignal } from './freshness.js';
 import { buildQueryUnderstanding } from './query-understanding.js';
 import { detectRareTerms } from './rare-terms.js';
@@ -246,6 +251,12 @@ export class CoreSearchProvider implements SearchProvider {
     // single-query call (multi-query callers already supplied their own
     // variants — we trust them).
     const autoRewrites: string[] = [];
+    // Every query actually dispatched to the orchestrator (user query/queries
+    // plus any concurrent auto-variant — rare-term, entity-qualified,
+    // low-recall expansion). Surfaced as SearchOutput.queries_executed so the
+    // dual-dispatch fan-out is auditable. Defaults to the user queries so cache
+    // hits / ultra-fast misses still report what was asked.
+    const queriesExecuted: string[] = [...queries];
 
     if (!servedFromCache && !ultraFastMiss) {
       // For a single-query call carrying a compound token
@@ -260,11 +271,29 @@ export class CoreSearchProvider implements SearchProvider {
         category !== 'images' && queries.length === 1
           ? buildRareTermVariant(queries[0])
           : null;
-      const dispatchQueries =
-        rareVariant && rareVariant.trim() !== queries[0].trim()
-          ? [...queries, rareVariant]
-          : queries;
-      if (dispatchQueries.length > queries.length) {
+      // Brand-collision dual-dispatch: when a single-query call is an
+      // "Entity + generic tail" collision (e.g. "Phoenix framework deployment"),
+      // run an entity-qualified variant CONCURRENTLY so the entity head is
+      // anchored and its results RRF-merge with the plain query. Multi-query
+      // callers author their own variants, so we only fire on the single-query
+      // path.
+      const entityVariant =
+        category !== 'images' && queries.length === 1
+          ? entityQualifiedRewrite(queries[0])
+          : null;
+      const dispatchQueries = [...queries];
+      if (rareVariant && rareVariant.trim() !== queries[0]?.trim()) {
+        dispatchQueries.push(rareVariant);
+      }
+      if (
+        entityVariant &&
+        entityVariant.trim() !== queries[0]?.trim() &&
+        !dispatchQueries.includes(entityVariant)
+      ) {
+        dispatchQueries.push(entityVariant);
+        log.debug('entity-collision variant firing', { original: queries[0], variant: entityVariant });
+      }
+      if (rareVariant && dispatchQueries.includes(rareVariant)) {
         log.debug('rare-term variant firing', { original: queries[0], variant: rareVariant });
       }
 
@@ -298,9 +327,14 @@ export class CoreSearchProvider implements SearchProvider {
         ),
       );
 
-      if (rareVariant && dispatchQueries.length > queries.length) {
+      if (rareVariant && dispatchQueries.includes(rareVariant)) {
         autoRewrites.push(rareVariant);
       }
+      if (entityVariant && dispatchQueries.includes(entityVariant)) {
+        autoRewrites.push(entityVariant);
+      }
+      queriesExecuted.length = 0;
+      queriesExecuted.push(...dispatchQueries);
 
       let fused =
         dispatches.length === 1
@@ -342,6 +376,7 @@ export class CoreSearchProvider implements SearchProvider {
           // we keep ranking signal from both passes.
           fused = fuseRankedLists([fused, retry.results]);
           autoRewrites.push(rewrite);
+          queriesExecuted.push(rewrite);
           // Merge enginesUsed + outcomes from the retry into the in-scope
           // accumulators so the response telemetry reflects the full work.
           dispatches.push(retry);
@@ -615,6 +650,7 @@ export class CoreSearchProvider implements SearchProvider {
       search_time_ms: searchElapsed,
       fetch_time_ms: fetchElapsed,
       query_understanding: queryUnderstanding,
+      ...(queriesExecuted.length > 0 ? { queries_executed: [...queriesExecuted] } : {}),
       ...(engineOutcomes ? { engine_outcomes: engineOutcomes } : {}),
       ...(engineTelemetry ? { engine_telemetry: engineTelemetry } : {}),
       // Always emit on engine-pool path (telemetry present); cache hits
@@ -624,11 +660,14 @@ export class CoreSearchProvider implements SearchProvider {
     };
 
     // Try the brand-domain check first (cheap, requires
-    // top-3 to actually carry a brand TLD). Fall back to the lexical
-    // dev-term collision check — fires on "useState" etc. even when the
-    // top-3 has no brand domain. Either path emits the same warning shape.
+    // top-3 to actually carry a brand TLD). Then the entity-collision v2 check
+    // — fires on a proper-noun-head + generic-tail query ("Phoenix framework
+    // deployment") regardless of the top-3 hosts. Finally the lexical dev-term
+    // collision check — fires on "useState" etc. Every path emits the same
+    // warning shape.
     const collisionWarning =
       detectBrandCollision(displayQuery, items.map((i) => i.url)) ??
+      detectEntityCollision(displayQuery) ??
       detectLexicalCollision(displayQuery);
     if (collisionWarning) data.brand_collision_warning = collisionWarning;
 
