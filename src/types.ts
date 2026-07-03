@@ -227,7 +227,13 @@ export interface Extractor {
 }
 
 // Provenance source for a single extracted field
-export type FieldProvenance = 'json-ld' | 'microdata' | 'rdfa' | 'heuristic' | 'llm';
+export type FieldProvenance =
+  | 'json-ld'
+  | 'microdata'
+  | 'rdfa'
+  | 'structured'
+  | 'heuristic'
+  | 'llm';
 
 // One block of structured data found in HTML
 export interface StructuredDataResult {
@@ -698,6 +704,13 @@ export interface AgentSource {
   markdown_content: string;
   fetched: boolean;
   fetch_error?: string;
+  /**
+   * Raw HTML of the fetched page. Carried so schema extraction can consume
+   * real <table>/<dl>/microdata structures the markdown flattens away; the
+   * agent tool otherwise saw only markdown and returned {} for table-backed
+   * schemas. Optional — sources without it fall back to the markdown body.
+   */
+  rawHtml?: string;
 }
 
 export interface AgentStep {

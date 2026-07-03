@@ -1,7 +1,7 @@
 import { createLogger } from '../logger.js';
 import { planExecution } from './planner.js';
 import { executeAgentPlan } from './executor.js';
-import { extractWithSchema } from '../extraction/schema.js';
+import { extractWithSchemaDetailed } from '../extraction/schema.js';
 import {
   type SamplingCapableServer,
   requestSampling,
@@ -173,8 +173,13 @@ function applySchemaExtraction(
 
     for (const source of fetchedSources) {
       try {
-        const html = `<html><body>${source.markdown_content}</body></html>`;
-        const extracted = extractWithSchema(html, schema);
+        // Prefer the raw HTML so the shared schema engine can read real
+        // <table>/<dl>/microdata structures; fall back to wrapping the
+        // markdown body when a source carries no raw HTML.
+        const html = source.rawHtml && source.rawHtml.length > 0
+          ? source.rawHtml
+          : `<html><body>${source.markdown_content}</body></html>`;
+        const extracted = extractWithSchemaDetailed(html, schema).values;
 
         for (const [key, value] of Object.entries(extracted)) {
           if (value !== undefined && value !== null && value !== '') {

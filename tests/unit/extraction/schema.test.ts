@@ -301,3 +301,86 @@ describe('extractWithSchemaDetailed', () => {
     expect(result.provenance.name).toBe('microdata');
   });
 });
+
+// WHY: keyless schema returning {} then falling to prose is why both Extract
+// AND the agent tool failed structured requests. When the data lives in a
+// <table>, <dl>, or key:value structure rather than in class-named DOM nodes
+// or JSON-LD, the old keyless path returned {}. Fuzzy-matching the requested
+// schema fields against the extracted structures recovers those values —
+// without manufacturing false positives from unrelated text.
+describe('extractWithSchemaDetailed structure fuzzy-match (keyless)', () => {
+  it('populates fields from a <table> whose header matches the schema field', () => {
+    const html = `<html><body>
+      <table>
+        <thead><tr><th>Plan</th><th>Price</th></tr></thead>
+        <tbody><tr><td>Pro</td><td>$29</td></tr></tbody>
+      </table>
+    </body></html>`;
+    const schema = {
+      type: 'object',
+      properties: { plan: { type: 'string' }, price: { type: 'string' } },
+    };
+    const result = extractWithSchemaDetailed(html, schema);
+    expect(result.values.plan).toBe('Pro');
+    expect(result.values.price).toBe('$29');
+    expect(result.provenance.plan).toBe('structured');
+    expect(result.provenance.price).toBe('structured');
+  });
+
+  it('matches a schema field against a <dl> definition term (snake/space folding)', () => {
+    const html = `<html><body>
+      <dl><dt>Plan Name</dt><dd>Enterprise</dd></dl>
+    </body></html>`;
+    const schema = { type: 'object', properties: { plan_name: { type: 'string' } } };
+    const result = extractWithSchemaDetailed(html, schema);
+    expect(result.values.plan_name).toBe('Enterprise');
+    expect(result.provenance.plan_name).toBe('structured');
+  });
+
+  it('matches a schema field against a key:value pair', () => {
+    const html = `<html><body>
+      <ul><li>Status: Active</li><li>Owner: platform-team</li></ul>
+    </body></html>`;
+    const schema = { type: 'object', properties: { status: { type: 'string' } } };
+    const result = extractWithSchemaDetailed(html, schema);
+    expect(result.values.status).toBe('Active');
+    expect(result.provenance.status).toBe('structured');
+  });
+
+  it('does NOT manufacture false positives from unrelated structures', () => {
+    // A page with structures that do NOT match the requested fields must
+    // still return {} — fuzzy match must not grab any near-miss. This mirrors
+    // the extractWithSchema "completely unmatched schema -> {}" invariant.
+    const html = `<html><body>
+      <table>
+        <thead><tr><th>Weather</th><th>Temperature</th></tr></thead>
+        <tbody><tr><td>Sunny</td><td>72F</td></tr></tbody>
+      </table>
+    </body></html>`;
+    const schema = {
+      type: 'object',
+      properties: {
+        zzz_no_match: { type: 'string' },
+        yyy_no_match: { type: 'string' },
+      },
+    };
+    const result = extractWithSchemaDetailed(html, schema);
+    expect(result.values).toEqual({});
+  });
+
+  it('prefers JSON-LD/microdata over structure fuzzy-match when both present', () => {
+    const html = `<html><body>
+      <div itemscope itemtype="https://schema.org/Product">
+        <span itemprop="price">$10</span>
+      </div>
+      <table>
+        <thead><tr><th>Price</th></tr></thead>
+        <tbody><tr><td>$999</td></tr></tbody>
+      </table>
+    </body></html>`;
+    const schema = { type: 'object', properties: { price: { type: 'string' } } };
+    const result = extractWithSchemaDetailed(html, schema);
+    expect(result.values.price).toBe('$10');
+    expect(result.provenance.price).toBe('microdata');
+  });
+});
