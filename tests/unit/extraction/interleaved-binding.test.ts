@@ -84,3 +84,46 @@ describe('interleaved-listing field binding', () => {
     expect(numericValues0).toContain('128');
   });
 });
+
+describe('interleaved-listing byline-first layout', () => {
+  // The author/profile link precedes the story link in each record. A
+  // "first non-metric anchor" rule bound title to the author handle
+  // ("jane" / "/u/jane"); the title must be the story link, not the byline.
+  const story = (rank: number, id: number, author: string, title: string): string => `
+    <tr class="entry">
+      <td class="idx"><span class="rank">${rank}.</span></td>
+      <td class="byline"><a href="/u/${author}">${author}</a></td>
+      <td class="subject"><a href="/story/${id}">${title}</a></td>
+    </tr>
+    <tr class="meta"><td colspan="2"></td>
+      <td><span class="score">${100 + id} points</span> <a href="/item/${id}">${id} comments</a></td></tr>
+    <tr class="spacer"></tr>`;
+
+  const html = `<html><body><table class="listing">
+    ${story(1, 101, 'jane', 'Building a columnar query engine from scratch')}
+    ${story(2, 102, 'bob', 'Understanding lock-free ring buffers in audio')}
+    ${story(3, 103, 'amy', 'A practical tour of tracing garbage collectors')}
+  </table></body></html>`;
+
+  function rows() {
+    const listing = extractTables(html).find((t) =>
+      t.rows.some((r) => Object.values(r).some((v) => v.includes('columnar query engine'))),
+    );
+    expect(listing).toBeDefined();
+    return listing!.rows;
+  }
+
+  it('binds title to the story link, not the leading author byline', () => {
+    const r = rows();
+    expect(r[0].title).toBe('Building a columnar query engine from scratch');
+    expect(r[0].href).toBe('/story/101');
+    expect(r[1].title).toBe('Understanding lock-free ring buffers in audio');
+    expect(r[1].href).toBe('/story/102');
+    // The author handle must not become the title.
+    for (const row of r) {
+      expect(row.title).not.toBe('jane');
+      expect(row.title).not.toBe('bob');
+      expect(row.title).not.toBe('amy');
+    }
+  });
+});

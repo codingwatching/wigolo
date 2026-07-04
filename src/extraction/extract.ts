@@ -174,25 +174,36 @@ function isInterleavedListing(bodyRows: Element[], columnCount: number): boolean
 const META_ANCHOR_RE =
   /^\d[\d,]*\s*(?:point|comment|vote|upvote|reply|answer|view|share|like|day|hour|minute|second|week|month|year)s?(?:\s+ago)?$/i;
 
-// The record's title anchor is the FIRST anchor in DOM order whose text is a
-// real title (non-empty, not a bare metric/timestamp link). Vote arrows are
-// empty; "342 points" / "128 comments" / "3 hours ago" are metric links — all
-// skipped deterministically. Falls back to the longest anchor only when every
-// anchor reads as a metric (no substantive title link present). Returns the
-// anchor's href + text, or null when the record carries no linked title.
+// An href that points at a user/author profile rather than the record's
+// content. On a byline-first listing the author link precedes the story link,
+// so a profile-style href must not be chosen as the title.
+const PROFILE_HREF_RE = /(?:^|\/)(?:u|user|users|author|authors|profile|people|member|members)\/|\/@[^/]+\/?$/i;
+
+// The record's title anchor is chosen deterministically in DOM order, in
+// preference tiers so a byline-first layout still picks the story link:
+//   1. first non-metric, non-byline anchor (the story link), else
+//   2. first non-metric anchor (title link with no better option), else
+//   3. the longest anchor (every anchor read as a metric).
+// Vote arrows are empty; "342 points" / "3 hours ago" are metric links; an
+// "/u/jane" author link is a byline — all deprioritised. Returns the anchor's
+// href + text, or null when the record carries no linked title.
 function primaryAnchor(group: Element[]): { href: string; text: string } | null {
-  let firstTitle: { href: string; text: string } | null = null;
+  let firstContent: { href: string; text: string } | null = null;
+  let firstNonMeta: { href: string; text: string } | null = null;
   let longest: { href: string; text: string } | null = null;
   for (const row of group) {
     for (const a of row.querySelectorAll('a[href]')) {
       const text = (a.textContent ?? '').replace(/\s+/g, ' ').trim();
       if (!text) continue;
-      const cand = { href: a.getAttribute('href') ?? '', text };
+      const href = a.getAttribute('href') ?? '';
+      const cand = { href, text };
       if (!longest || text.length > longest.text.length) longest = cand;
-      if (!firstTitle && !META_ANCHOR_RE.test(text)) firstTitle = cand;
+      if (META_ANCHOR_RE.test(text)) continue;
+      if (!firstNonMeta) firstNonMeta = cand;
+      if (!firstContent && !PROFILE_HREF_RE.test(href)) firstContent = cand;
     }
   }
-  return firstTitle ?? longest;
+  return firstContent ?? firstNonMeta ?? longest;
 }
 
 // A short numeric metric cell inside a record's meta content ("342 points",
