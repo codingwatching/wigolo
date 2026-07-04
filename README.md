@@ -267,6 +267,9 @@ For repeated interactive use, run `wigolo serve` so the browser pool, embeddings
 | `WIGOLO_LLM_MODEL_{ANTHROPIC\|OPENAI\|GEMINI\|GROQ}` | — | Per-provider model override (highest precedence). |
 | `WIGOLO_LLM_MAX_CALLS_PER_REQUEST` | `1` | Hard ceiling on LLM calls per tool invocation. |
 | `WIGOLO_LLM_CACHE_TTL_DAYS` | `7` | LLM response cache TTL. |
+| `WIGOLO_LOCAL_LLM` | `off` | Opt-in keyless local language model tier: `off` (default) / `auto` (auto-detect a local model server) / an explicit `http(s)://` endpoint. Off keeps the keyless path unchanged. |
+| `WIGOLO_LOCAL_LLM_MODEL` | — | Preferred model name for the local tier; unset auto-picks an installed model. |
+| `WIGOLO_LOCAL_LLM_BASE_URL` | `http://localhost:11434` | Endpoint probed when `WIGOLO_LOCAL_LLM=auto` (falls back to `WIGOLO_LLM_BASE_URL`, then the default local server). |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | — | Read on every call; never persisted. |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | — | Gemini provider key (either name; read on every call, never persisted). |
 | `GROQ_API_KEY` | — | Same. |
