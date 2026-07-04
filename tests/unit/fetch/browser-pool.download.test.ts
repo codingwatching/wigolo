@@ -18,7 +18,11 @@ const dlPath = join(dlDir, 'downloaded.pdf');
 writeFileSync(dlPath, PDF_BYTES);
 
 const state = {
-  mode: 'download' as 'download' | 'normal',
+  // 'download'          → download event fires synchronously, then goto rejects
+  // 'normal'            → plain HTML navigation
+  // 'deferred-download' → goto rejects FIRST, download event only resolvable via
+  //                       waitForEvent('download') (the real Chromium race)
+  mode: 'download' as 'download' | 'normal' | 'deferred-download',
   downloadListeners: [] as Array<(dl: unknown) => void>,
 };
 
@@ -35,10 +39,21 @@ vi.mock('playwright', () => {
       on: vi.fn((event: string, cb: (dl: unknown) => void) => {
         if (event === 'download') state.downloadListeners.push(cb);
       }),
+      waitForEvent: vi.fn().mockImplementation((event: string) => {
+        if (event === 'download' && state.mode === 'deferred-download') {
+          return Promise.resolve(makeDownloadStub());
+        }
+        return Promise.reject(new Error(`no ${event} event`));
+      }),
       goto: vi.fn().mockImplementation(() => {
         if (state.mode === 'download') {
           // Fire the download event as Chromium would, then reject goto.
           for (const cb of state.downloadListeners) cb(makeDownloadStub());
+          return Promise.reject(new Error('page.goto: Download is starting'));
+        }
+        if (state.mode === 'deferred-download') {
+          // goto rejects BEFORE the download event is captured — the download
+          // is only obtainable by awaiting waitForEvent('download').
           return Promise.reject(new Error('page.goto: Download is starting'));
         }
         return Promise.resolve({
@@ -86,6 +101,21 @@ describe('browser-pool download interception', () => {
     expect(res.rawBuffer!.length).toBeGreaterThan(0);
     expect(res.rawBuffer!.toString()).toContain('hello world download body');
     expect(res.statusCode).toBe(200);
+    expect(res.html).toBe('');
+    await pool.shutdown();
+  });
+
+  it('recovers a deferred download: goto rejects first, bytes are read via waitForEvent', async () => {
+    // WHY: the real Chromium race — page.goto rejects with "Download is
+    // starting" BEFORE the download event handler captured the download.
+    // The old backstop re-threw in this window. It must instead wait briefly
+    // for the download event and return the buffered PDF bytes.
+    state.mode = 'deferred-download';
+    const pool = new MultiBrowserPool();
+    const res = await pool.fetchWithBrowser('https://example.com/deferred');
+    expect(res.contentType).toBe('application/pdf');
+    expect(res.rawBuffer).toBeDefined();
+    expect(res.rawBuffer!.toString()).toContain('hello world download body');
     expect(res.html).toBe('');
     await pool.shutdown();
   });

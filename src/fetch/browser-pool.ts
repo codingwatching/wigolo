@@ -41,6 +41,10 @@ const NAV_RACE_PATTERN = /execution context (?:was )?destroyed|page is navigatin
 // Chromium rejects page.goto with this when the response is a download
 // (e.g. a PDF served with content-type application/pdf).
 const DOWNLOAD_START_PATTERN = /download is starting/i;
+// How long to wait for a `download` event when goto rejects with "Download is
+// starting" before the event handler captured it (an async race). Short — the
+// download has already begun, so the event is imminent.
+const DOWNLOAD_EVENT_WAIT_MS = 3000;
 
 // Read a captured Playwright download into a Buffer, bounded by the caller's
 // abort signal. Returns null when the bytes cannot be read.
@@ -347,8 +351,18 @@ export class MultiBrowserPool {
         // the tool layer extracts the PDF exactly like the HTTP-tier path.
         const msg = err instanceof Error ? err.message : String(err);
         if (capturedDownload || DOWNLOAD_START_PATTERN.test(msg)) {
-          if (capturedDownload) {
-            const buf = await readDownloadBuffer(capturedDownload, url, options.signal);
+          // Chromium can reject goto with "Download is starting" BEFORE the
+          // `download` event handler has captured the object (the event is
+          // emitted asynchronously). When we don't have it yet, wait briefly
+          // for the event so a real PDF isn't lost to the race.
+          let download = capturedDownload;
+          if (!download && typeof page.waitForEvent === 'function') {
+            download = await page
+              .waitForEvent('download', { timeout: DOWNLOAD_EVENT_WAIT_MS })
+              .catch(() => undefined);
+          }
+          if (download) {
+            const buf = await readDownloadBuffer(download, url, options.signal);
             if (buf) {
               log.debug('intercepted browser download, returning buffered bytes', { url, bytes: buf.length });
               return {
