@@ -426,6 +426,22 @@ describe('runAgentPipeline', () => {
     expect(extractStep).toBeDefined();
   });
 
+  it('gathers sources via search for a prompt with no seeded URL (0-pages fix)', async () => {
+    // A non-empty prompt that extracts no keyword queries used to leave the
+    // executor with nothing to fetch → 0 sources. The planner now falls back to
+    // a raw-prompt search so the executor fetches pages even with no seeded URL.
+    const engine = createStubEngine(defaultResults);
+    const router = createStubRouter();
+    const input: AgentInput = { prompt: 'the a an is to of' };
+
+    const result = await runAgentPipeline(input, [engine], router);
+
+    expect(result.pages_fetched).toBeGreaterThan(0);
+    expect(result.sources.length).toBeGreaterThan(0);
+    const searchStep = result.steps.find((s) => s.action === 'search');
+    expect(searchStep).toBeDefined();
+  });
+
   it('handles empty prompt', async () => {
     const engine = createStubEngine([]);
     const router = createStubRouter();
