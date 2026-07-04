@@ -21,7 +21,7 @@ import { applyAuthorityBoost } from '../reranker/authority-boost.js';
 import { domainQualityScore } from './domain-quality.js';
 import { lexicalAlignment } from './lexical-alignment.js';
 import { detectRareTerms, rareTermFactor, isRareTermMiss } from './rare-terms.js';
-import { resolveTimeRange, type TimeRange } from './time-range.js';
+import { resolveTimeRange, isDatedOutOfWindow, type TimeRange } from './time-range.js';
 import { getConfig } from '../../config.js';
 
 // Hosts matching this regex are demoted when the query is ≤2 tokens — short
@@ -121,6 +121,24 @@ function siteScopeSuffix(includeDomains?: string[]): string {
     .map((d) => `site:${d}`);
   if (clauses.length === 0) return '';
   return clauses.length === 1 ? ` ${clauses[0]}` : ` (${clauses.join(' OR ')})`;
+}
+
+// Hard freshness window: drop DATED results whose parsed published_date is
+// provably outside the requested [fromDate, toDate] window. Per-result on the
+// isDatedOutOfWindow predicate — undated / unparseable results survive (kept
+// conservatively, consistent with the undated-demotion path). Uses parsed
+// calendar time, not a string compare, so a dated-but-old result in a non-ISO
+// format (e.g. "Jan 15, 2026") can no longer slip a week window. Non-empty
+// guarantee: if the window would drop everything, the pre-filter set is kept so
+// scarce in-window coverage never collapses to zero results.
+function applyFreshnessWindow(
+  results: RawSearchResult[],
+  fromDate: string | undefined,
+  toDate: string | undefined,
+): RawSearchResult[] {
+  if (!fromDate && !toDate) return results;
+  const kept = results.filter((r) => !isDatedOutOfWindow(r.published_date, fromDate, toDate));
+  return kept.length > 0 ? kept : results;
 }
 
 export interface OrchestratorInput {
@@ -513,18 +531,7 @@ export async function runV1Search(
 
   merged = applyDomainFilters(merged, input.includeDomains, input.excludeDomains);
 
-  if (effectiveFromDate) {
-    merged = merged.filter((r) => {
-      if (!r.published_date) return true;
-      return r.published_date >= effectiveFromDate;
-    });
-  }
-  if (effectiveToDate) {
-    merged = merged.filter((r) => {
-      if (!r.published_date) return true;
-      return r.published_date <= effectiveToDate;
-    });
-  }
+  merged = applyFreshnessWindow(merged, effectiveFromDate, effectiveToDate);
   if (exactPhrase) {
     // union of (urlExactMatchHit observed during ingest) ∪ (post-merge
     // title+snippet match on the urlToResult variant). The post-merge check
@@ -575,12 +582,7 @@ export async function runV1Search(
       wavedEntries.push(...generalEntries);
       merged = scoreOutcomes(allOutcomes, wavedEntries);
       merged = applyDomainFilters(merged, input.includeDomains, input.excludeDomains);
-      if (effectiveFromDate) {
-        merged = merged.filter((r) => !r.published_date || r.published_date >= effectiveFromDate);
-      }
-      if (effectiveToDate) {
-        merged = merged.filter((r) => !r.published_date || r.published_date <= effectiveToDate);
-      }
+      merged = applyFreshnessWindow(merged, effectiveFromDate, effectiveToDate);
       if (exactPhrase) {
         merged = merged.filter((r) => {
           const key = canonKey(r.url);

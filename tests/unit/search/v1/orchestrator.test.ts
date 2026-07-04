@@ -300,6 +300,154 @@ describe('runV1Search — date-bounded routing', () => {
   });
 });
 
+describe('runV1Search — hard freshness window (dated out-of-window)', () => {
+  const DAY = 86_400_000;
+
+  // The leak this slice closes: a DATED result whose published_date is not
+  // lexically ISO-ordered ("Jan 15, 2026", "2026/01/15") compared TRUE against
+  // the "YYYY-MM-DD" week window in the old string filter and survived despite
+  // being months old. The robust parse must drop it.
+  it('drops a months-old result whose published_date is a NON-ISO format', async () => {
+    const dayAgo = new Date(Date.now() - 2 * DAY).toISOString().slice(0, 10);
+
+    const fresh = makeResult('duckduckgo', 'https://news.test/fresh');
+    fresh.published_date = dayAgo;
+    const oldHuman = makeResult('duckduckgo', 'https://news.test/old-human');
+    oldHuman.published_date = 'Jan 15, 2026'; // ~5-6 months before "now"
+    const oldSlash = makeResult('duckduckgo', 'https://news.test/old-slash');
+    oldSlash.published_date = '2026/01/15';
+
+    const ddg = makeEntry({
+      name: 'duckduckgo',
+      supportsDateFilter: false,
+      results: [fresh, oldHuman, oldSlash],
+    });
+    verticalState.news = [ddg.entry];
+
+    const out = await runV1Search({
+      query: 'ai model launch',
+      category: 'news',
+      timeRange: 'week',
+      maxResults: 10,
+    });
+
+    const urls = out.results.map((r) => r.url);
+    expect(urls).toContain('https://news.test/fresh');
+    expect(urls).not.toContain('https://news.test/old-human');
+    expect(urls).not.toContain('https://news.test/old-slash');
+  });
+
+  // Non-empty guarantee: when EVERY result is dated and out of window, the
+  // window must not empty the set — the pre-filter results are kept so scarce
+  // (or entirely-old) coverage still returns something.
+  it('never empties the set — keeps out-of-window dated results when nothing is in-window', async () => {
+    const old1 = makeResult('duckduckgo', 'https://news.test/old-1');
+    old1.published_date = '2020-01-01T00:00:00.000Z';
+    const old2 = makeResult('duckduckgo', 'https://news.test/old-2');
+    old2.published_date = '2021-06-15T00:00:00.000Z';
+
+    const ddg = makeEntry({
+      name: 'duckduckgo',
+      supportsDateFilter: false,
+      results: [old1, old2],
+    });
+    verticalState.news = [ddg.entry];
+
+    const out = await runV1Search({
+      query: 'ai model launch',
+      category: 'news',
+      timeRange: 'week',
+      maxResults: 10,
+    });
+
+    expect(out.results.length).toBeGreaterThan(0);
+  });
+
+  // NEGATIVE gate: with NO explicit time_range / from_date / to_date, an old
+  // DATED result must be completely unaffected — the window gate must not fire.
+  it('does NOT window out old dated results when no time_range/from_date is set', async () => {
+    const old = makeResult('duckduckgo', 'https://gen.test/old');
+    old.published_date = '2020-01-01T00:00:00.000Z';
+    const oldHuman = makeResult('duckduckgo', 'https://gen.test/old-human');
+    oldHuman.published_date = 'Jan 15, 2020';
+
+    const ddg = makeEntry({
+      name: 'duckduckgo',
+      supportsDateFilter: false,
+      results: [old, oldHuman],
+    });
+    verticalState.general = [ddg.entry];
+
+    // A plain query with no date bound and no temporal keyword.
+    const out = await runV1Search({ query: 'react hooks reference', maxResults: 10 });
+
+    const urls = out.results.map((r) => r.url);
+    expect(urls).toContain('https://gen.test/old');
+    expect(urls).toContain('https://gen.test/old-human');
+  });
+
+  // NEGATIVE gate: a result with an UNPARSEABLE published_date must NOT be
+  // treated as out of window — it survives (undated-equivalent), even under an
+  // explicit window.
+  it('keeps a result with an unparseable published_date under an explicit window', async () => {
+    const dayAgo = new Date(Date.now() - 2 * DAY).toISOString().slice(0, 10);
+    const fresh = makeResult('duckduckgo', 'https://news.test/fresh');
+    fresh.published_date = dayAgo;
+    const bogus = makeResult('duckduckgo', 'https://news.test/bogus-date');
+    bogus.published_date = 'sometime last spring';
+
+    const ddg = makeEntry({
+      name: 'duckduckgo',
+      supportsDateFilter: false,
+      results: [fresh, bogus],
+    });
+    verticalState.news = [ddg.entry];
+
+    const out = await runV1Search({
+      query: 'ai model launch',
+      category: 'news',
+      timeRange: 'week',
+      maxResults: 10,
+    });
+
+    const urls = out.results.map((r) => r.url);
+    expect(urls).toContain('https://news.test/fresh');
+    expect(urls).toContain('https://news.test/bogus-date');
+  });
+
+  // from_date/to_date explicit window (not just time_range): a same-day
+  // full-ISO timestamp on the toDate boundary is IN window, an after-window
+  // dated result is dropped.
+  it('honours from_date/to_date boundaries on full-ISO timestamps', async () => {
+    const onToDate = makeResult('duckduckgo', 'https://news.test/on-to-date');
+    onToDate.published_date = '2026-07-01T15:44:13.000Z';
+    const afterWindow = makeResult('duckduckgo', 'https://news.test/after');
+    afterWindow.published_date = '2026-07-05T00:00:00.000Z';
+    const beforeWindow = makeResult('duckduckgo', 'https://news.test/before');
+    beforeWindow.published_date = '2026-06-20T00:00:00.000Z';
+
+    const ddg = makeEntry({
+      name: 'duckduckgo',
+      supportsDateFilter: false,
+      results: [onToDate, afterWindow, beforeWindow],
+    });
+    verticalState.news = [ddg.entry];
+
+    const out = await runV1Search({
+      query: 'ai model launch',
+      category: 'news',
+      fromDate: '2026-06-27',
+      toDate: '2026-07-01',
+      maxResults: 10,
+    });
+
+    const urls = out.results.map((r) => r.url);
+    expect(urls).toContain('https://news.test/on-to-date');
+    expect(urls).not.toContain('https://news.test/after');
+    expect(urls).not.toContain('https://news.test/before');
+  });
+});
+
 describe('runV1Search — RRF fusion', () => {
   it('fuses overlapping URLs across two equal-weight engines', async () => {
     const sharedUrl = 'https://shared.test/1';
