@@ -8,6 +8,7 @@ import {
   checkSamplingSupport,
 } from '../search/sampling.js';
 import { isLlmConfiguredWithKeyStore, runLlmText } from '../integrations/cloud/llm/run.js';
+import { resolveLocalModelTier } from '../integrations/cloud/llm/local-tier.js';
 import type {
   AgentInput,
   AgentOutput,
@@ -322,12 +323,36 @@ async function synthesizeResult(
     }
   }
 
+  // Middle rung of the ladder (host-sampling > local model > deterministic):
+  // when no cloud key / explicit provider ran the synthesis above and host
+  // sampling did not answer, use the C0 opt-in local-model tier if reachable.
+  // The tier is self-configuring so it fires even when WIGOLO_LOCAL_LLM is the
+  // only signal. Null tier (the keyless default) makes zero network calls and
+  // drops straight through to the deterministic evidence fallback below.
+  const tier = await resolveLocalModelTier();
+  if (tier) {
+    try {
+      // Route via the additive backend override — a single-call endpoint that
+      // reads/mutates NO process.env, so concurrent syntheses can never corrupt
+      // a shared WIGOLO_LLM_PROVIDER.
+      const result = await synthesizeViaLlmRunner(prompt, fetchedSources, {
+        backend: { url: tier.endpoint, model: tier.model },
+      });
+      if (result) return { result, samplingUsed: false, llmUsed: true };
+    } catch (err) {
+      log.warn('local-tier synthesis failed, using evidence fallback', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   return { result: buildFallbackSynthesis(prompt, fetchedSources), samplingUsed: false };
 }
 
 async function synthesizeViaLlmRunner(
   prompt: string,
   sources: AgentSource[],
+  opts: { backend?: { url: string; model: string } } = {},
 ): Promise<string | null> {
   const maxCharsPerSource = 3000;
   const sourceBlocks = sources.map((s, i) => {
@@ -340,7 +365,11 @@ async function synthesizeViaLlmRunner(
     'synthesize a clear, well-organized response. Cite sources as [1], [2], etc.\n\n' +
     `User request: ${prompt}\n\n` +
     `Sources:\n${truncated}`;
-  const r = await runLlmText({ prompt: fullPrompt, maxTokens: 2000 });
+  const r = await runLlmText({
+    prompt: fullPrompt,
+    maxTokens: 2000,
+    ...(opts.backend ? { backend: opts.backend } : {}),
+  });
   return r.text && r.text.trim().length > 0 ? r.text.trim() : null;
 }
 
