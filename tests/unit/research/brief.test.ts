@@ -138,6 +138,84 @@ describe('buildResearchBrief', () => {
     expect(brief.key_findings[0]).toContain('Real substantive prose');
   });
 
+  // WHY: a news page's first substantive paragraph is often a photo-caption /
+  // photo-credit span wrapped in an image link (`[![long alt text ...](img)](url)`
+  // with an "(AP Photo/…)"-style credit). When the per-source char slice chops
+  // the link mid-URL the closing `)](url)` is gone, so stripMarkdownLinks cannot
+  // flatten it and the alt-text caption survives as long prose — leaking into
+  // key_findings as a fabricated finding about an UNRELATED story. The finding
+  // must be the article body, not the caption chrome. Observed live on AP
+  // article pages in the round-3 benchmark (truncated `[![…(AP Photo/…)](h`).
+  it('skips a photo-caption/credit span and surfaces the article body', async () => {
+    const md = [
+      '[![A mourner holds a portrait of a slain leader as mourners gather for the start of the dayslong funeral ceremonies at the Grand Mosque, Saturday, July 4, 2026. (AP Photo/Altaf Qadri)](h',
+      '',
+      'NASA confirmed the Artemis mission will launch its uncrewed test flight around the Moon in the coming window, with the agency detailing the trajectory and the science payloads aboard the spacecraft in a briefing today.',
+    ].join('\n');
+    const sources = [mkSource({ markdown_content: md })];
+    const brief = await buildResearchBrief('artemis moon mission', sources, [], 3000, 40000);
+    expect(brief.key_findings.length).toBe(1);
+    expect(brief.key_findings[0]).not.toContain('AP Photo');
+    expect(brief.key_findings[0]).not.toContain('mourner');
+    expect(brief.key_findings[0]).toContain('NASA confirmed the Artemis mission');
+  });
+
+  // WHY: an author byline ("By Jane Smith, Senior Correspondent … 5 min read")
+  // can clear the 80-char substantive-paragraph threshold and leak into
+  // key_findings as if it were a finding. It is provenance chrome, not evidence.
+  it('skips an author byline chrome line and surfaces the article body', async () => {
+    const md = [
+      'By Jane Smith, Senior Technology Correspondent | Published March 3, 2026 | Updated March 4, 2026 | 5 min read',
+      '',
+      'The new data-center cooling standard cuts water usage by nearly forty percent according to the operators who piloted it across three regional facilities over the past year of continuous production load.',
+    ].join('\n');
+    const sources = [mkSource({ markdown_content: md })];
+    const brief = await buildResearchBrief('data center cooling', sources, [], 3000, 40000);
+    expect(brief.key_findings.length).toBe(1);
+    expect(brief.key_findings[0]).not.toMatch(/^By Jane Smith/);
+    expect(brief.key_findings[0]).not.toContain('min read');
+    expect(brief.key_findings[0]).toContain('data-center cooling standard');
+  });
+
+  // WHY: a navigation breadcrumb / menu chain ("Home | News | Technology | …")
+  // is a chain of short link labels separated by pipes/chevrons with no prose.
+  // After link-flattening it can exceed 80 chars and leak into key_findings.
+  it('skips a navigation breadcrumb chain and surfaces the article body', async () => {
+    const md = [
+      'Home | News | Technology | Science | Business | Opinion | Sports | Newsletters | Subscribe | Sign In',
+      '',
+      'Researchers published a peer-reviewed study showing the new battery chemistry retains ninety percent of its capacity after two thousand charge cycles, a meaningful jump over current lithium-ion cells in grid storage.',
+    ].join('\n');
+    const sources = [mkSource({ markdown_content: md })];
+    const brief = await buildResearchBrief('battery chemistry', sources, [], 3000, 40000);
+    expect(brief.key_findings.length).toBe(1);
+    expect(brief.key_findings[0]).not.toContain('Newsletters');
+    expect(brief.key_findings[0]).not.toContain('Sign In');
+    expect(brief.key_findings[0]).toContain('battery chemistry retains');
+  });
+
+  // NEGATIVE (must-not-fire): a GENUINE finding that superficially resembles
+  // boilerplate must NOT be filtered. Fail-open — the boilerplate gate is
+  // narrow (structural nav/byline/caption shape), not "any sentence that starts
+  // with 'By' or mentions a photo". A finding that opens with "By" as an
+  // ordinary preposition, or that discusses photo credits as its subject, is
+  // substantive prose and must survive.
+  it('does NOT filter a genuine finding that superficially resembles a byline', async () => {
+    const md = 'By reducing the memory footprint of each connection, the database now supports ten times as many concurrent clients on identical hardware, according to the benchmark the maintainers published alongside the release notes.';
+    const sources = [mkSource({ markdown_content: md })];
+    const brief = await buildResearchBrief('database connections', sources, [], 3000, 40000);
+    expect(brief.key_findings.length).toBe(1);
+    expect(brief.key_findings[0]).toContain('reducing the memory footprint');
+  });
+
+  it('does NOT filter a genuine finding whose subject is photo credits', async () => {
+    const md = 'The newsroom adopted a policy requiring an explicit photo credit line on every published image, so a caption such as an AP Photo attribution now appears beneath each editorial photograph across the site for transparency.';
+    const sources = [mkSource({ markdown_content: md })];
+    const brief = await buildResearchBrief('newsroom photo policy', sources, [], 3000, 40000);
+    expect(brief.key_findings.length).toBe(1);
+    expect(brief.key_findings[0]).toContain('newsroom adopted a policy');
+  });
+
   it('echoes char caps for host LLM awareness', async () => {
     const brief = await buildResearchBrief('q', [mkSource()], [], 3000, 40000);
     expect(brief.per_source_char_cap).toBe(3000);

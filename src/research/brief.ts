@@ -324,9 +324,59 @@ function firstSubstantiveParagraph(markdown: string): string | null {
     if (p.startsWith('#') || p.startsWith('|') || p.startsWith('```')) continue;
     const cleaned = stripMarkdownLinks(p);
     if (cleaned.length < 80) continue;
-    return cleaned.replace(/\s+/g, ' ');
+    const normalized = cleaned.replace(/\s+/g, ' ');
+    // Skip nav/byline/caption chrome so a candidate advances to the next
+    // paragraph — the article body — instead of surfacing a photo-credit,
+    // author byline, or breadcrumb menu as a fabricated finding. Evaluated on
+    // BOTH the raw paragraph (a truncated image span never link-flattens) and
+    // the normalized prose (nav labels read as plain text after flatten).
+    if (isBoilerplateSpan(p, normalized)) continue;
+    return normalized;
   }
   return null;
+}
+
+// Photo-credit signatures that mark a paragraph as a caption rather than the
+// article body: "(AP Photo/…)", "(Getty Images)", "(Reuters)", "Photo by …",
+// or a standalone "Credit:"/"Image:" attribution.
+const PHOTO_CREDIT_PATTERNS: ReadonlyArray<RegExp> = [
+  /\((?:AP Photo|Getty|Reuters|AFP|Bloomberg|EPA|Shutterstock)[^)]*\)/i,
+  /\bphoto by [A-Z]/,
+  /^(?:photo|image|credit|caption)\s*:/i,
+];
+
+// A byline is provenance chrome ("By Jane Smith … | 5 min read | Published …"),
+// NOT prose. It opens with "By " + a Capitalized proper name AND carries a
+// byline chrome marker (a "N min read", a Published/Updated stamp, or the
+// pipe-delimited meta chain). Requiring the chrome marker is what keeps an
+// ordinary sentence that merely begins with the preposition "By" (e.g. "By
+// reducing the memory footprint …") from being filtered as a byline.
+const BYLINE_LEAD = /^By\s+[A-Z][a-z]+(?:\s+[A-Z][a-z.]+){0,3}\b/;
+const BYLINE_CHROME = /\b\d+\s+min read\b|\b(?:Published|Updated)\b|[|·]/;
+
+// Detect a nav/menu/breadcrumb chain: short labels joined by pipes or chevrons
+// with no sentence punctuation. `separators / segments` is high and the mean
+// segment is short — the shape of "Home | News | Technology | …", not prose.
+function isNavigationChain(text: string): boolean {
+  const separators = (text.match(/[|»›>·]/g) ?? []).length;
+  if (separators < 3) return false;
+  if (/[.!?](?:\s|$)/.test(text)) return false;
+  const segments = text.split(/\s*[|»›>·]\s*/).map((s) => s.trim()).filter(Boolean);
+  if (segments.length < 4) return false;
+  const longSegments = segments.filter((s) => s.split(/\s+/).length > 4).length;
+  return longSegments === 0;
+}
+
+function isBoilerplateSpan(raw: string, normalized: string): boolean {
+  // Caption/credit: a paragraph that opens with an image span (well-formed or
+  // truncated mid-link, which never link-flattens) or carries a photo credit.
+  if (/^\s*!?\[?!\[/.test(raw)) return true;
+  if (PHOTO_CREDIT_PATTERNS.some((re) => re.test(normalized))) return true;
+  // Author byline chrome.
+  if (BYLINE_LEAD.test(normalized) && BYLINE_CHROME.test(normalized)) return true;
+  // Navigation / breadcrumb menu chain.
+  if (isNavigationChain(normalized)) return true;
+  return false;
 }
 
 // Flatten markdown link/image syntax to plain text so a downstream char-slice
