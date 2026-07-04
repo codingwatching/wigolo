@@ -105,6 +105,23 @@ export interface Config {
   llmCacheTtlDays: number;
   llmMaxCallsPerRequest: number;
   /**
+   * Opt-in auto-detect ladder for a local language model server. Resolves
+   * `WIGOLO_LOCAL_LLM` env > persisted `localLlm` > default:
+   *   - 'off'  : disabled (DEFAULT) — behavior is unchanged from before this
+   *              knob existed; no probe is ever made.
+   *   - 'auto' : probe the default local endpoint and use it when reachable.
+   *   - an http(s):// URL : probe that explicit endpoint instead of the default.
+   * Any other value normalizes to 'off' (fail-safe). Consumed by
+   * `resolveLocalModelTier()`; never mutates the keyless / cloud LLM path.
+   */
+  localLlm: 'off' | 'auto' | string;
+  /**
+   * Preferred model name for the local-LLM tier. `null` lets the tier
+   * auto-pick an installed model. Resolves `WIGOLO_LOCAL_LLM_MODEL` env >
+   * persisted `localLlmModel` > null.
+   */
+  localLlmModel: string | null;
+  /**
    * TLS-impersonation HTTP tier mode:
    *   - 'off'  : tier disabled, current pipeline unchanged (DEFAULT)
    *   - 'auto' : only invoked on anti-bot signal (403/429/503 or challenge body)
@@ -338,6 +355,17 @@ export function getConfig(): Config {
     llmBaseUrl: envStr('WIGOLO_LLM_BASE_URL', null, settings, 'llmBaseUrl'),
     llmCacheTtlDays: envInt('WIGOLO_LLM_CACHE_TTL_DAYS', 7, settings, 'llmCacheTtlDays'),
     llmMaxCallsPerRequest: envInt('WIGOLO_LLM_MAX_CALLS_PER_REQUEST', 1, settings, 'llmMaxCallsPerRequest'),
+    localLlm: (() => {
+      const raw = envStr('WIGOLO_LOCAL_LLM', null, settings, 'localLlm');
+      if (!raw) return 'off';
+      const lower = raw.toLowerCase();
+      if (lower === 'auto' || lower === 'off') return lower;
+      // An explicit OpenAI-compatible endpoint is a valid third value; keep it
+      // verbatim so the resolver can probe it. Anything else is a typo → off.
+      if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+      return 'off';
+    })(),
+    localLlmModel: envStr('WIGOLO_LOCAL_LLM_MODEL', null, settings, 'localLlmModel'),
     tlsTier: (() => {
       const raw = (envStr('WIGOLO_TLS_TIER', 'off', settings, 'tlsTier') ?? 'off').toLowerCase();
       return raw === 'auto' || raw === 'on' ? (raw as 'auto' | 'on') : 'off';

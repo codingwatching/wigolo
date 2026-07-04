@@ -28,6 +28,7 @@ import { setLogSuppression } from '../logger.js';
 import { isLlmConfigured } from '../integrations/cloud/llm/run.js';
 import { resolveCustomBackend, pickOllamaModel } from '../integrations/cloud/llm/custom-backend.js';
 import { probeOllama, resolveProbeBaseUrl, maybeOllamaHint, DEFAULT_PROBE_TIMEOUT_MS } from './ollama-probe.js';
+import { resolveLocalModelTier, type LocalModelTier } from '../integrations/cloud/llm/local-tier.js';
 
 function out(line = ''): void { process.stderr.write(`${line}\n`); }
 
@@ -329,6 +330,36 @@ export function buildOllamaDoctorLines(state: {
   return hint ? [`  ${hint}`] : [];
 }
 
+/**
+ * Build the opt-in local-model tier (`WIGOLO_LOCAL_LLM`) diagnostic lines. Pure
+ * so the branching is asserted without a live server. Component names (local
+ * model server / model name) are allowed in doctor output.
+ *
+ *   - off               → state the flag is off (default) so the lever stays
+ *                          discoverable; no endpoint is implied.
+ *   - auto + reachable   → resolved endpoint + model + "reachable".
+ *   - auto + unreachable → "enabled, no local model detected" so an
+ *                          enabled-but-absent server is visible, not hidden.
+ */
+export function buildLocalTierDoctorLines(state: {
+  localLlm: string;
+  tier: LocalModelTier | null;
+}): string[] {
+  if (state.localLlm === 'off') {
+    return [
+      '  local language model (WIGOLO_LOCAL_LLM): off (default) — set to `auto` to auto-detect a keyless local model server',
+    ];
+  }
+  const lines = [`  local language model (WIGOLO_LOCAL_LLM=${sanitizeForTerminal(state.localLlm)}):`];
+  if (state.tier) {
+    lines.push(`    endpoint:  ${sanitizeForTerminal(state.tier.endpoint)} (reachable)`);
+    lines.push(`    model:     ${sanitizeForTerminal(state.tier.model)}`);
+  } else {
+    lines.push('    status:    enabled, no local model detected — synthesis falls back to keyless');
+  }
+  return lines;
+}
+
 function humanRetry(nextRetryAt?: string): string {
   if (!nextRetryAt) return 'not scheduled';
   const when = new Date(nextRetryAt);
@@ -507,6 +538,17 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
       baseUrl,
       model,
     })) {
+      out(line);
+    }
+  }
+
+  // Opt-in local-model tier (WIGOLO_LOCAL_LLM). Off by default — the line is
+  // still printed so the lever is discoverable, but the resolver (and its fast,
+  // negative-cached probe) is only invoked when the flag is on.
+  {
+    const localLlm = cfg.localLlm;
+    const tier = localLlm === 'off' ? null : await resolveLocalModelTier({ localLlm, localLlmModel: cfg.localLlmModel });
+    for (const line of buildLocalTierDoctorLines({ localLlm, tier })) {
       out(line);
     }
   }

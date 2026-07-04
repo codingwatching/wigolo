@@ -52,6 +52,20 @@ describe('WIGOLO_INSTRUCTIONS v3 routing patterns (per-session)', () => {
     expect(WIGOLO_INSTRUCTIONS).toContain('answer');
   });
 
+  it('mentions the opt-in local language model knob with capability language', () => {
+    // WHY: the local-model tier is a keyless quality lever; the host LLM should
+    // learn it exists. The knob name is asserted so the surface tracks the config
+    // contract (memory: config-param change → instructions body + this test).
+    expect(WIGOLO_INSTRUCTIONS).toContain('WIGOLO_LOCAL_LLM');
+    expect(WIGOLO_INSTRUCTIONS).toMatch(/local language model/i);
+  });
+
+  it('uses capability language for the local model — never a vendor name', () => {
+    // WHY: user-facing text must say "local language model", not the component
+    // name. Vendor names are allowed only in warmup/doctor troubleshooting.
+    expect(WIGOLO_INSTRUCTIONS).not.toMatch(/ollama/i);
+  });
+
   it('is a non-empty string of reasonable length', () => {
     expect(typeof WIGOLO_INSTRUCTIONS).toBe('string');
     expect(WIGOLO_INSTRUCTIONS.length).toBeGreaterThan(500);
@@ -93,6 +107,12 @@ describe('WIGOLO_INSTRUCTIONS_FULL v3 routing patterns (resource)', () => {
     expect(WIGOLO_INSTRUCTIONS_FULL).toContain('full-text search syntax');
     expect(WIGOLO_INSTRUCTIONS_FULL).toContain('sitemap');
     expect(WIGOLO_INSTRUCTIONS_FULL).toContain('include_patterns');
+  });
+
+  it('documents the opt-in local language model tier with capability language', () => {
+    expect(WIGOLO_INSTRUCTIONS_FULL).toContain('WIGOLO_LOCAL_LLM');
+    expect(WIGOLO_INSTRUCTIONS_FULL).toMatch(/local language model/i);
+    expect(WIGOLO_INSTRUCTIONS_FULL).not.toMatch(/ollama/i);
   });
 });
 

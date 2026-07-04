@@ -412,4 +412,41 @@ describe('config', () => {
       expect(getConfig().reranker).toBe('none');
     });
   });
+
+  describe('config — local LLM tier (WIGOLO_LOCAL_LLM)', () => {
+    it("defaults to 'off' when nothing is set — keyless default is unchanged", () => {
+      // WHY: the opt-in local tier must be OFF by default so the keyless
+      // benchmark path is byte-for-byte identical to before this knob existed.
+      expect(getConfig().localLlm).toBe('off');
+      expect(getConfig().localLlmModel).toBeNull();
+    });
+
+    it("reads WIGOLO_LOCAL_LLM=auto", () => {
+      process.env.WIGOLO_LOCAL_LLM = 'auto';
+      resetConfig();
+      expect(getConfig().localLlm).toBe('auto');
+    });
+
+    it('preserves an explicit endpoint value verbatim (resolution at use-site)', () => {
+      // WHY: an explicit http(s) endpoint is a legitimate third value alongside
+      // off/auto; config must not normalize or drop it — the resolver decides.
+      process.env.WIGOLO_LOCAL_LLM = 'http://box:11434';
+      resetConfig();
+      expect(getConfig().localLlm).toBe('http://box:11434');
+    });
+
+    it("normalizes an unknown value to 'off' (fail-safe)", () => {
+      // WHY: a typo (WIGOLO_LOCAL_LLM=on) must not accidentally enable an
+      // ambiguous tier — anything that is not 'auto' or an http(s) URL is off.
+      process.env.WIGOLO_LOCAL_LLM = 'yes';
+      resetConfig();
+      expect(getConfig().localLlm).toBe('off');
+    });
+
+    it('reads WIGOLO_LOCAL_LLM_MODEL when set', () => {
+      process.env.WIGOLO_LOCAL_LLM_MODEL = 'qwen2.5:7b-instruct';
+      resetConfig();
+      expect(getConfig().localLlmModel).toBe('qwen2.5:7b-instruct');
+    });
+  });
 });

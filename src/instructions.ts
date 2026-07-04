@@ -35,7 +35,7 @@ Wigolo returns structured evidence — YOU write the final answer.
 - \`research\` → \`brief\` (topics/highlights/key_findings/sections). \`sections.overview.cross_references\` = corroborated; \`sections.gaps\` = coverage limits.
 - \`find_similar\` → \`cold_start\` string when local signals weak. Pass verbatim.
 - \`extract mode: "structured"\` → tables + definitions + jsonld + chart_hints + key_value_pairs in one call.
-- Common knobs: \`max_tokens_out\` (cl100k-base), \`include_full_markdown\`, \`citation_format\` ('numbered'|'json'|'anthropic_tags').
+- Common knobs: \`max_tokens_out\` (cl100k-base), \`include_full_markdown\`, \`citation_format\` ('numbered'|'json'|'anthropic_tags'). \`WIGOLO_LOCAL_LLM=auto\`: keyless local language model (off by default).
 
 ## Rules
 
@@ -50,7 +50,7 @@ Wigolo returns structured evidence — YOU write the final answer.
 
 ## Response fields
 
-\`evidence_score\` (explainable breakdown), \`query_understanding\` (intent/entities/rewrites), \`brand_collision_warning\` (top-3 brand-domain collision + rewrites), \`freshness_signal\` (date + confidence), \`response_time_ms\`, \`engine_telemetry\` (per-engine latency + dedup_kept), \`engine_warnings\` (failed engines with stable code + env-var hint).
+\`evidence_score\` (explainable breakdown), \`query_understanding\` (intent/entities/rewrites), \`brand_collision_warning\`, \`freshness_signal\` (date + confidence), \`response_time_ms\`, \`engine_telemetry\` (latency + dedup_kept), \`engine_warnings\` (failed engines + env-var hint).
 
 ## Tool routing
 
@@ -86,6 +86,7 @@ Wigolo has no internal LLM. It returns *structured evidence* so YOU (the host LL
 - \`find_similar\` → \`cold_start\` string when local signals are weak. Pass to user verbatim.
 - \`extract\` \`mode: "structured"\` → tables + definitions + jsonld + chart_hints + key_value_pairs in one call.
 - \`fetch\` metadata → \`og_type\`, \`canonical_url\`, \`og_image\` when present.
+- Optional local language model tier: set \`WIGOLO_LOCAL_LLM=auto\` (or an explicit \`http(s)://\` endpoint) to auto-detect a keyless local language model and use it for synthesis. Choose the model with \`WIGOLO_LOCAL_LLM_MODEL\`. The fallback ladder is host sampling first, then the local language model, then deterministic evidence. Default off, so the keyless path is unchanged; a missing server degrades silently to deterministic synthesis.
 
 ## When to use which tool
 
