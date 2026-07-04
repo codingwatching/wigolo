@@ -353,6 +353,14 @@ const PHOTO_CREDIT_PATTERNS: ReadonlyArray<RegExp> = [
 // reducing the memory footprint …") from being filtered as a byline.
 const BYLINE_LEAD = /^By\s+[A-Z][a-z]+(?:\s+[A-Z][a-z.]+){0,3}\b/;
 const BYLINE_CHROME = /\b\d+\s+min read\b|\b(?:Published|Updated)\b|[|·]/;
+// A second byline-chrome signature: an author strip whose links flatten to
+// share/social/follow labels ("By Jane Doe Share on Twitter Follow this
+// reporter Email the author"). These strips clear the length bar but carry no
+// "min read"/Published/pipe marker, so BYLINE_CHROME alone misses them. Gated
+// on NO terminal sentence punctuation (see isBoilerplateSpan) so an ordinary
+// prose sentence that merely names a social platform is never filtered.
+const BYLINE_SOCIAL_CHROME =
+  /\b(?:Share(?: on)?|Follow|Tweet|Email the author|Contact the author|Facebook|Twitter|LinkedIn|WhatsApp|Reddit|Print this)\b/i;
 
 // Detect a nav/menu/breadcrumb chain: short labels joined by pipes or chevrons
 // with no sentence punctuation. `separators / segments` is high and the mean
@@ -372,8 +380,14 @@ function isBoilerplateSpan(raw: string, normalized: string): boolean {
   // truncated mid-link, which never link-flattens) or carries a photo credit.
   if (/^\s*!?\[?!\[/.test(raw)) return true;
   if (PHOTO_CREDIT_PATTERNS.some((re) => re.test(normalized))) return true;
-  // Author byline chrome.
-  if (BYLINE_LEAD.test(normalized) && BYLINE_CHROME.test(normalized)) return true;
+  // Author byline chrome: a "By <Name>" lead plus either a read-time/timestamp/
+  // pipe marker OR a run of share/social/follow labels. The social variant is
+  // gated on the span having NO terminal sentence punctuation — a real sentence
+  // opening with "By <Name>" ends in a period and is prose, not a byline strip.
+  if (BYLINE_LEAD.test(normalized)) {
+    if (BYLINE_CHROME.test(normalized)) return true;
+    if (BYLINE_SOCIAL_CHROME.test(normalized) && !/[.!?](?:\s|$)/.test(normalized)) return true;
+  }
   // Navigation / breadcrumb menu chain.
   if (isNavigationChain(normalized)) return true;
   return false;

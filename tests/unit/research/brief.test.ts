@@ -216,6 +216,42 @@ describe('buildResearchBrief', () => {
     expect(brief.key_findings[0]).toContain('newsroom adopted a policy');
   });
 
+  // WHY: a news article's author strip is rendered as a run of markdown link
+  // anchors — the byline itself plus Share/social/Follow/Contact links —
+  // e.g. `[By Priya Nandakumar, …](/profile/…) [Share on Twitter](…) …`. After
+  // stripMarkdownLinks flattens the anchors it becomes "By Priya Nandakumar,
+  // Senior Energy Correspondent Share on Twitter Share on Facebook …", which
+  // clears the 80-char bar yet carries NO "min read"/"Published"/pipe chrome
+  // marker — so the existing byline gate (which requires such a marker) misses
+  // it and the byline strip leaks into key_findings. The finding must be the
+  // article body, not the byline strip.
+  it('skips a byline-anchor social strip and surfaces the article body', async () => {
+    const md = [
+      '[By Priya Nandakumar, Senior Energy Correspondent](/profile/priya-nandakumar) [Share on Twitter](/social/twitter) [Share on Facebook](/social/facebook) [Share on LinkedIn](/social/linkedin) [Email the author](/mailto/priya) [Follow this reporter](/follow/priya)',
+      '',
+      'The regional grid operator reported that the newly commissioned offshore wind array delivered more power in its first quarter of operation than any onshore installation the utility had previously brought online in the region.',
+    ].join('\n');
+    const sources = [mkSource({ markdown_content: md })];
+    const brief = await buildResearchBrief('offshore wind array', sources, [], 3000, 40000);
+    expect(brief.key_findings.length).toBe(1);
+    expect(brief.key_findings[0]).not.toMatch(/^By Priya Nandakumar/);
+    expect(brief.key_findings[0]).not.toContain('Share on Twitter');
+    expect(brief.key_findings[0]).toContain('offshore wind array delivered');
+  });
+
+  // NEGATIVE (must-not-fire): a genuine finding whose prose merely links an
+  // author's name mid-sentence must NOT be dropped by the byline-anchor gate.
+  // The gate is narrow — it fires on a "By <Name>" LEAD followed by short chrome
+  // labels, not on any paragraph that happens to contain an author link. A
+  // substantive sentence that flattens to real prose survives.
+  it('does NOT filter a genuine finding that merely contains an author link', async () => {
+    const md = 'The study led by [Dr. Alan Whitfield](/authors/alan-whitfield) found that reef restoration accelerates when nursery-grown coral fragments are transplanted during the cooler months, roughly doubling survival rates over warm-season transplants in the multi-year trial.';
+    const sources = [mkSource({ markdown_content: md })];
+    const brief = await buildResearchBrief('coral reef restoration', sources, [], 3000, 40000);
+    expect(brief.key_findings.length).toBe(1);
+    expect(brief.key_findings[0]).toContain('reef restoration accelerates');
+  });
+
   it('echoes char caps for host LLM awareness', async () => {
     const brief = await buildResearchBrief('q', [mkSource()], [], 3000, 40000);
     expect(brief.per_source_char_cap).toBe(3000);
