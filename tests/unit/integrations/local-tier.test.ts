@@ -145,6 +145,38 @@ describe('resolveLocalModelTier', () => {
     expect(probe).toHaveBeenCalledTimes(1);
   });
 
+  it("aborts a stalling pickModel on the timeout budget — never hangs", async () => {
+    // WHY: a server can pass the fast reachability probe and then stall on the
+    // /api/tags model-list call. Without a bounded signal on the pick, the
+    // resolver would hang forever. The pick MUST honor an AbortSignal on the
+    // same budget as the probe: the resolver aborts it and degrades to null
+    // (still resolves promptly) rather than blocking the caller indefinitely.
+    const pickModel = vi.fn(
+      (_url: string, _fetchImpl: typeof fetch | undefined, signal?: AbortSignal) =>
+        new Promise<string>((_resolve, reject) => {
+          // Mirror pickOllamaModel: its underlying fetch honors the signal, so an
+          // abort rejects the in-flight pick.
+          signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    );
+    const start = Date.now();
+    const result = await resolveLocalModelTier({
+      localLlm: 'auto',
+      probe: okProbe,
+      pickModel,
+      pickTimeoutMs: 30,
+    });
+    const elapsed = Date.now() - start;
+    // The pick got a signal (bounded call) and the resolver did not hang.
+    expect(pickModel).toHaveBeenCalledWith(
+      'http://localhost:11434',
+      expect.anything(),
+      expect.any(AbortSignal),
+    );
+    expect(result).toBeNull();
+    expect(elapsed).toBeLessThan(2000);
+  });
+
   it("does NOT make isLlmConfigured() true — the local tier is add-alongside", () => {
     // WHY: the non-negotiable OFF guarantee. Setting the new local-tier knob
     // must not leak into the existing configured-check; with no cloud key and

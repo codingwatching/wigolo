@@ -16,7 +16,7 @@
 // back to the deterministic keyless path.
 
 import { getConfig } from '../../../config.js';
-import { probeOllama } from '../../../cli/ollama-probe.js';
+import { probeOllama, DEFAULT_PROBE_TIMEOUT_MS } from '../../../cli/ollama-probe.js';
 import { pickOllamaModel, DEFAULT_OLLAMA_BASE_URL } from './custom-backend.js';
 
 /**
@@ -48,6 +48,13 @@ export interface ResolveLocalModelTierOpts {
   probe?: ProbeFn;
   /** Model picker; injected for tests. Defaults to the installed-model picker. */
   pickModel?: PickModelFn;
+  /**
+   * Hard ceiling (ms) for the model-list pick, matching the probe budget. A
+   * server can pass the reachability probe then stall on `/api/tags`; the pick
+   * runs under an AbortSignal so it can never outlive this budget. Injected for
+   * tests; defaults to the shared probe timeout.
+   */
+  pickTimeoutMs?: number;
 }
 
 // Process-lifetime resolution cache keyed by the resolved endpoint. A negative
@@ -105,12 +112,17 @@ export async function resolveLocalModelTier(
   const probe = opts.probe ?? probeOllama;
   const pickModel = opts.pickModel ?? pickOllamaModel;
   const preferredModel = opts.localLlmModel ?? cfg?.localLlmModel ?? undefined;
+  const pickTimeoutMs = opts.pickTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
 
   let resolved: LocalModelTier | null = null;
   try {
     const { reachable } = await probe(endpoint);
     if (reachable) {
-      const model = preferredModel ?? (await pickModel(endpoint));
+      // The pick runs under an AbortSignal on the same budget as the probe: a
+      // server that passes the probe then stalls on /api/tags must not hang the
+      // resolver. On abort/failure the pick rejects, which degrades to null
+      // below — never a block, never a throw to the caller.
+      const model = preferredModel ?? (await pickModelBounded(pickModel, endpoint, pickTimeoutMs));
       resolved = { available: true, endpoint, model, source };
     }
   } catch {
@@ -121,6 +133,25 @@ export async function resolveLocalModelTier(
 
   resolutionCache.set(endpoint, resolved);
   return resolved;
+}
+
+/**
+ * Run the model pick under a hard timeout. Mirrors the probe's AbortController +
+ * timer pattern so a stalled `/api/tags` call aborts on the budget instead of
+ * hanging. The caller's try/catch turns an abort/failure into a null tier.
+ */
+async function pickModelBounded(
+  pickModel: PickModelFn,
+  endpoint: string,
+  timeoutMs: number,
+): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await pickModel(endpoint, fetch, controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** getConfig() reads disk; guard so a config failure never breaks the resolver. */
