@@ -617,7 +617,13 @@ export class CoreSearchProvider implements SearchProvider {
       // keeps the single best result so the set is never emptied.
       const configuredThreshold = getConfig().relevanceThreshold;
       const floor = Math.max(DEFAULT_SEARCH_SCORE_FLOOR, configuredThreshold);
-      const floored = applyScoreFloor(processed, floor);
+      // Per-engine keep guarantee: a dominant vertical whose pages share the
+      // query's doc-phrase tokens scores high on lexical alignment and
+      // monopolises the kept set, flooring out ANOTHER engine's correct-entity
+      // results entirely (the kept-0 case). Rescue each engine's best result
+      // when the query-wide floor would leave it with none — keeps cross-engine
+      // keep like-for-like. Per-result on `engine`, one rescue per engine.
+      const floored = applyScoreFloor(processed, floor, { perEngineKeep: 1 });
       processed = floored.kept;
 
       const maxResults = input.max_results ?? processed.length;
