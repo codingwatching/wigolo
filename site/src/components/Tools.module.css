@@ -100,7 +100,8 @@
 }
 .panel {
   border-radius: 16px;
-  background: var(--panel-purple);
+  background: #e7e7e0;
+  border: 1px solid var(--line-2);
   overflow: hidden;
   aspect-ratio: 1840 / 1174;
   display: grid;
