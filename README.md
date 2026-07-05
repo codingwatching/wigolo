@@ -4,12 +4,14 @@
 
 Local-first web intelligence over MCP — **no keys, no cloud, no metered bill.**
 
+<sub>works with&nbsp;&nbsp;**Claude Code · Cursor · Codex · Gemini CLI · VS Code · Windsurf · Zed · Antigravity**</sub>
+
 [![npm](https://img.shields.io/npm/v/wigolo?color=cb3837&logo=npm)](https://www.npmjs.com/package/wigolo)
 [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![MCP](https://img.shields.io/badge/MCP-server-7c3aed)](https://modelcontextprotocol.io)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-2563eb)](#license)
 
-[Quickstart](#quickstart) · [Tools](#the-tools) · [Why wigolo](#why-its-different) · [Benchmark](#benchmark) · [Architecture](#architecture) · [Configuration](#configuration) · [Contribute](#contributing)
+[Quickstart](#quickstart) · [Tools](#the-tools) · [Why wigolo](#why-its-different) · [Benchmark](#benchmark) · [Architecture](#architecture) · [Configuration](#configuration) · [FAQ](#faq) · [Contribute](#contributing)
 
 </div>
 
@@ -41,6 +43,8 @@ That's the whole setup — **search, fetch, crawl, extract, cache, and find-simi
 npx wigolo doctor
 ```
 
+Not for you? `npx wigolo config --uninstall --yes` removes everything, cleanly.
+
 ### Optional — enable answer synthesis
 
 `research`, `agent`, and `search format=answer` use an LLM to *write* the final answer. Turn them on by setting a **provider and its key** (in your shell, or in your agent's MCP `env` block). `WIGOLO_LLM_PROVIDER` names the LLM — set it alongside the key:
@@ -64,17 +68,33 @@ Any provider works — use `anthropic` + `ANTHROPIC_API_KEY`, `openai` + `OPENAI
 | 🧲 `find_similar` | Pages similar to a URL or a concept, via 3-way fusion of keyword + semantic + live web. |
 | 🧠 `research` | Decompose a question → fan out sub-queries → fetch sources → synthesize a cited report (or a structured brief the host LLM writes from). |
 | 🤖 `agent` | Autonomous gather loop: plan → search → fetch → extract → synthesize, with a step log, time budget, and optional output schema. |
+| 🔁 `diff` + ⏱️ `watch` | See exactly what changed on a page since last visit; re-check on a schedule and deliver changes to a webhook. |
 
 ## Why it's different
 
-- **$0 per query, free to re-query.** Default search talks to public engines through direct adapters; the reranker and embeddings run on-device. Every response is cached, so asking again is instant and costs nothing.
-- **Private by default.** Cache, embeddings, models, and config live under `~/.wigolo/`. Nothing reaches a third party unless you explicitly opt into an LLM for synthesis.
+wigolo isn't the free stand-in you settle for until the budget clears — it's built to hold the same line as the paid services in this lane, and it brings receipts. What actually separates it:
+
 - **Built for agents, not humans.** One MCP call fans out many queries across many engines in parallel — something a serial host tool-loop can't replicate — with transparent per-result scoring and budget-aware output.
 - **Honest output.** Stale cache, failed fetches, degraded backends, and truncation are surfaced in the result, never disguised as empty-but-successful data.
+- **$0 per query, free to re-query.** Default search talks to public engines through direct adapters; the reranker and embeddings run on-device. Every response is cached, so asking again is instant and costs nothing.
+- **Private by default.** Cache, embeddings, models, and config live under `~/.wigolo/`. Nothing reaches a third party unless you explicitly opt into an LLM for synthesis.
 
-wigolo is a focused web layer for one agent on one machine — not a hosted SaaS, a vector database other apps query, or a browser-automation framework. Within that lane it goes toe-to-toe with the paid services on result quality and wins outright on cost, privacy, and re-query speed — keyless, private, and $0 for every query your agent runs.
+wigolo is a focused web layer for one agent on one machine — not a hosted SaaS, a vector database other apps query, or a browser-automation framework. Within that lane it goes toe-to-toe with the paid services on result quality — and the meter, the key, and the data-egress simply aren't there.
+
+Here's what one real result looks like, dissected — including the failed engine and the weak result, because those are part of the answer too:
+
+<div align="center">
+
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/promo/anatomy-dark.svg">
+<img alt="Anatomy of a wigolo result: explainable score decomposition, live engine telemetry, surfaced degradation, self-flagged junk — one real query, captured live" src="assets/promo/anatomy.svg" width="880">
+</picture>
+
+</div>
 
 ## Benchmark
+
+> **All four tools converged on the same core answer — and only one of them handed back verbatim, byte-pinned evidence while doing it.**
 
 One cold query, run live inside a single **Claude Fable 5** session and fanned out to four web tools on equal footing — built-in **WebSearch**, **wigolo**, **Tavily**, and **Exa** — then reported by the agent itself under one rule: judge on the evidence alone, no favoritism. The query: `when to choose logical vs streaming replication in Postgres`.
 
@@ -88,6 +108,35 @@ One honest query, not a leaderboard — run your own and you'll see the same sha
 
 </div>
 
+### Same fight, different physics
+
+The paid tools are genuinely good — that's what makes the parity interesting. The differences that remain aren't quality, they're physics:
+
+| | wigolo | Firecrawl | Exa | Tavily |
+|---|:---:|:---:|:---:|:---:|
+| Multi-engine web search | ✅ | ✅ | ✅ | ✅ |
+| Fetch & structured extraction | ✅ | ✅ | ✅ | ✅ |
+| Whole-site crawl & map | ✅ | ✅ | — | ✅ |
+| Verbatim excerpts pinned to byte-offset source spans | ✅ | — | — | — |
+| Explainable per-result score decomposition | ✅ | — | — | — |
+| Persistent local memory — re-query instantly, offline | ✅ | — | — | — |
+| Query data stays on your machine | ✅ | — | — | — |
+| API key / account | none | required | required | required |
+| Cost per query | $0 | metered | metered | metered |
+
+<sub>Feature standing as of July 2026 — check each vendor's docs for current state.</sub>
+
+That last row is the one that compounds — agents don't ask once, they ask in bursts:
+
+<div align="center">
+
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/promo/meter-dark.svg">
+<img alt="The meter: a metered cloud API's cost climbs with every query while wigolo stays flat at zero dollars — illustrative pricing" src="assets/promo/meter.svg" width="880">
+</picture>
+
+</div>
+
 ## Architecture
 
 A single Node process speaking MCP (JSON-RPC over stdio). Everything heavy is local and lazy-loaded, so a zero-key install pays nothing for the parts it isn't using.
@@ -95,7 +144,7 @@ A single Node process speaking MCP (JSON-RPC over stdio). Everything heavy is lo
 ```mermaid
 flowchart TD
     A["🤖 AI coding agent<br/>any MCP client"]
-    A -->|MCP over stdio| B["<b>wigolo</b><br/>8 tools · dynamic instructions<br/>in-process browser pool + cache + models"]
+    A -->|MCP over stdio| B["<b>wigolo</b><br/>10 tools · dynamic instructions<br/>in-process browser pool + cache + models"]
 
     B --> C{"Tool layer"}
     C --> T1["search · fetch · crawl · extract"]
@@ -122,6 +171,20 @@ flowchart TD
 - **Code beats model.** Deterministic work — canonicalization, rank fusion, dedup, schema matching, hashing — never touches an LLM. The model is reserved for judgment, opt-in, and capped per request. LLM-filled fields are checked against the source and nulled if absent, so hallucinations don't reach your output.
 - **Routing on observable signals.** The fetch ladder escalates to a real browser on what it *sees* — SPA markers, challenge bodies, thin content — not domain guesses. It learns per-domain and unlearns when a site stops needing it.
 - **Transparent, honest results.** Every result carries a score breakdown and a query-understanding block; degraded state is always surfaced, never hidden.
+
+<div align="center">
+
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/promo/ladder-dark.svg">
+<img alt="wigolo's fetch escalation ladder: plain HTTP, then TLS-impersonation on challenge signals, then a headless browser on SPA shells — learned and unlearned per domain" src="assets/promo/ladder.svg" width="880">
+</picture>
+
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/promo/fusion-dark.svg">
+<img alt="18 search engines fused with reciprocal rank fusion, reranked by an on-device cross-encoder — one scored answer, real output scores" src="assets/promo/fusion.svg" width="880">
+</picture>
+
+</div>
 
 ## Configuration
 
@@ -324,6 +387,50 @@ Keys can also live in the OS keychain or an AES-encrypted file (`wigolo init` / 
 | `max_pages` / `max_time_ms` | agent | Per-invocation page cap (default 3) and wall-clock budget. |
 | `max_tokens_out` | most | Aggregate output-token budget (default 4000). |
 | `include_full_markdown` | fetch, crawl, research, agent | `false` → evidence excerpts instead of full bodies. |
+
+</details>
+
+## FAQ
+
+<details>
+<summary><b>Free? What's the catch?</b></summary>
+
+No catch by design. The expensive parts — ranking, embeddings, the browser engine — run on *your* hardware, so there's no per-query cost to recover and no reason for a meter. Sustained by donations; the AGPL license legally prevents a bait-and-switch into a closed hosted product.
+
+</details>
+
+<details>
+<summary><b>Is the quality really on par with the paid services?</b></summary>
+
+Run one query and judge — the benchmark section above is a live 4-way run, not a chart. Everyday agent queries land at parity; the paid tools still win some deep-extraction edge cases, and crawling is where wigolo is strongest. Every result shows its scoring, so you don't have to take anyone's word for it.
+
+</details>
+
+<details>
+<summary><b>Won't public search engines block or rot?</b></summary>
+
+It's engineered for exactly that: 18 engines fused with rank fusion (any one failing barely moves results), a tiered fetch ladder with per-domain learning, and an optional aggregator fallback. Degraded backends are *reported in the output*, never hidden — and the local cache means everything already seen keeps working regardless.
+
+</details>
+
+<details>
+<summary><b>Is this kind of scraping OK?</b></summary>
+
+wigolo reads the public web the way a browser does — robots.txt respected by default, per-domain rate limits, research-grade volumes for one agent on one machine. It's deliberately the polite end of the spectrum, not a harvesting platform.
+
+</details>
+
+<details>
+<summary><b>AGPL — can I use this at work?</b></summary>
+
+Yes, freely, company-wide. The license only bites if you *modify wigolo and run it as a network service* — then you must publish those modifications. Using it as a local dev tool carries zero obligation. Commercial-licensing questions: reach out.
+
+</details>
+
+<details>
+<summary><b>Why 1.5 GB of disk?</b></summary>
+
+That's the on-device brain: a full browser engine plus the ranking and embedding models the cloud services run on their side and bill you for. Disk is cheap; meters aren't.
 
 </details>
 
