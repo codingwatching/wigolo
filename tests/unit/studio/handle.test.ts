@@ -23,8 +23,11 @@ describe('studio/handle', () => {
 
   it('writes the handle file with 0600 permissions (it carries a bearer token)', () => {
     writeHandle(handle, dataDir);
-    const mode = statSync(studioHandlePath(dataDir)).mode & 0o777;
-    expect(mode).toBe(0o600);
+    // POSIX mode-bit assert (0o600) — skip on win32 (no POSIX perms) to match existing test patterns
+    if (process.platform !== 'win32') {
+      const mode = statSync(studioHandlePath(dataDir)).mode & 0o777;
+      expect(mode).toBe(0o600);
+    }
   });
 
   it('readHandle returns null when no handle exists (not throw)', () => {

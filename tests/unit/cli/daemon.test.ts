@@ -223,7 +223,10 @@ describe('D13 — minted serve bearer via a 0600 handle file (not stderr)', () =
     // flipped value: the bearer file exists (no file on current code -> RED).
     expect(existsSync(bearerPath())).toBe(true);
     expect(readFileSync(bearerPath(), 'utf-8')).toHaveLength(43); // minted token format
-    expect(statSync(bearerPath()).mode & 0o777).toBe(0o600); // owner-only (MUT 0644 -> RED)
+    // POSIX mode-bit assert (0o600) — skip on win32 (no POSIX perms) to match existing test patterns
+    if (process.platform !== 'win32') {
+      expect(statSync(bearerPath()).mode & 0o777).toBe(0o600); // owner-only (MUT 0644 -> RED)
+    }
   });
 
   it('D13-2: does NOT echo the minted bearer VALUE to stderr — points to the file instead', async () => {

@@ -69,7 +69,10 @@ describe('studio/profile-store — encrypted profile store (keychain KEK + disk 
     const onDisk = readFileSync(blobPath('prof-1'), 'utf8');
     expect(onDisk, 'the plaintext secret is never on disk').not.toContain(SECRET);
     expect(onDisk, 'the KEK is never on disk').not.toContain(kc.store.get('prof-1'));
-    expect(statSync(blobPath('prof-1')).mode & 0o777, 'blob is 0o600 at rest').toBe(0o600);
+    // POSIX mode-bit assert (0o600) — skip on win32 (no POSIX perms) to match existing test patterns
+    if (process.platform !== 'win32') {
+      expect(statSync(blobPath('prof-1')).mode & 0o777, 'blob is 0o600 at rest').toBe(0o600);
+    }
   });
 
   it('KEK-missing graceful: get with no KEK → profile_absent, no exception (agent re-login), no scrypt-decrypt attempt', async () => {
