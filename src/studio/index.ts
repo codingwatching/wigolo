@@ -96,10 +96,13 @@ export type {
   GatedNavResult,
 } from './session-drive.js';
 
-// Capture pipeline: NOT re-exported here — capture/artifacts → cache/db → better-sqlite3, which cannot
-// load in the Electron main (spec §13.7). studio_capture is P3 and reaches the cache via a decoupled
-// path decided then. The barrel is deliberately kept better-sqlite3-free so `wigolo/studio` loads in
-// the Electron main. CaptureResult flows through SessionDriveDeps as a type-only reference (erased).
+// Capture pipeline VALUES are NOT re-exported here — capture/artifacts → cache/db → better-sqlite3,
+// which cannot load in the Electron main (spec §13.7 / §13.9). P3 reaches the cache via a decoupled
+// plain-Node DB broker (spec §13.9). The barrel stays better-sqlite3-free so `wigolo/studio` loads in
+// the Electron main. Only PURE PRIMITIVE TYPES are re-exported (`export type` is fully erased by tsc —
+// no runtime `import './capture/...'` is emitted, verified in the P3 gate): the broker-client + host
+// need ArtifactDelta (the captures-panel delta) + CaptureResult (session-drive/persist return shape).
+export type { ArtifactDelta, CaptureResult } from './capture/artifacts.js';
 
 // ── Cross-package surface the Electron host + gateway need through the one `wigolo/studio` subpath ──
 

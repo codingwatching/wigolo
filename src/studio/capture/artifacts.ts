@@ -317,6 +317,45 @@ export function captureFromPage(input: PageCapture, deps: PageCaptureDeps): Capt
 }
 
 /**
+ * P3 region clip — persist a screenshot artifact. Distinct from captureFromPage because the content
+ * hash is the PNG bytes' hash, computed by the host (Electron main, which owns the pixels) and passed
+ * verbatim — it must NOT flow through `contentHashFor` (that hashes text-derived parts and is the
+ * single source of truth for those). Trust-by-construction: content_trusted=0, no caller flag. The
+ * SAME credential choke as captureFromPage runs first (fail-closed, thrown), so a screenshot of a
+ * login/credential page never reaches the durable cache. No embed (an image has no prose); the media
+ * bytes live on disk (§6) and metadata carries the pointer.
+ */
+export function insertScreenshotArtifact(
+  input: { sessionId: string; url: string; title: string; mediaPath: string; contentHash: string },
+  deps: PageCaptureDeps,
+): CaptureResult {
+  if (isCredentialContext(deps.credentialContext)) {
+    throw new CaptureRefusedError('credential_context');
+  }
+  const now = new Date().toISOString();
+  return insertArtifact(
+    deps.db,
+    {
+      sessionId: input.sessionId,
+      type: 'screenshot',
+      url: input.url,
+      normalizedUrl: normalizeUrl(input.url),
+      contentHash: input.contentHash,
+      fetchedAt: now,
+      createdAt: now,
+      title: input.title,
+      markdown: null,
+      metadata: JSON.stringify({ mediaPath: input.mediaPath }),
+      contentTrusted: 0,
+      curatedByHuman: 0,
+    },
+    null, // no embed — an image has no prose; url + title carry the FTS signal
+    resolveEnqueue(deps),
+    deps.onArtifact,
+  );
+}
+
+/**
  * Capture a human-authored note. The ONLY path that sets content_trusted=1 (a human
  * typed it, so its bytes are safe as instructions) and curated_by_human=1 (deliberately
  * authored). url-less; deduped by note text.

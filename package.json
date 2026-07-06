@@ -17,6 +17,10 @@
     "./studio": {
       "import": "./dist/studio/index.js",
       "types": "./dist/studio/index.d.ts"
+    },
+    "./studio-db-broker": {
+      "import": "./dist/daemon/studio-db-broker.js",
+      "types": "./dist/daemon/studio-db-broker.d.ts"
     }
   },
   "types": "dist/types.d.ts",

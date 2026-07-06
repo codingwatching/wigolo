@@ -1,0 +1,134 @@
+/**
+ * Studio DB broker — a plain-Node child process that owns the cache DB (better-sqlite3, Node ABI) so
+ * the Electron main never loads a native module (spec §13.7 / §13.9). Serves studio persistence +
+ * local find_similar over newline-delimited JSON-RPC on stdin/stdout. stderr = logs. It reuses the
+ * salvaged capture pipeline + find_similar VERBATIM; the Electron host computes the security-gate inputs
+ * (session id, nav-epoch, credential signal) from live session state and passes them per call, so the
+ * salvaged handler stays the single source of truth for the gate.
+ */
+import { createInterface } from 'node:readline';
+import type Database from 'better-sqlite3';
+import { initSubsystems } from '../server.js';
+import { getDatabase } from '../cache/db.js';
+import { createLogger } from '../logger.js';
+import { createCaptureHandler } from '../studio/capture/handler.js';
+import {
+  captureFromPage,
+  captureHumanNote,
+  insertScreenshotArtifact,
+  listSessionArtifacts,
+  listSessionComments,
+  type ArtifactDelta,
+  type MarkSelectors,
+  type CaptureResult,
+} from '../studio/capture/artifacts.js';
+import { findSimilar } from '../search/find-similar.js';
+import type { IndexJobInput } from '../embedding/background-queue.js';
+import type { FieldSemantics } from '../studio/credential.js';
+import type { StudioCaptureInput } from './studio-dispatch.js';
+import type { FindSimilarInput } from '../types.js';
+
+const log = createLogger('studio');
+type CredSignal = { pageUrl?: string; fields?: FieldSemantics[] };
+
+export interface BrokerCaptureParams {
+  input: StudioCaptureInput;
+  sessionId: string;
+  currentNavEpoch: number;
+  lastObserveEpoch: number;
+  credentialSignal: CredSignal;
+}
+export interface BrokerHandlerDeps {
+  db: Database.Database;
+  engines: Parameters<typeof findSimilar>[1];
+  router: Parameters<typeof findSimilar>[2];
+  backendStatus?: Parameters<typeof findSimilar>[3];
+  /** Embed-job sink. Injected in tests; production leaves it undefined → the shared background queue. */
+  enqueue?: (job: IndexJobInput) => unknown;
+  onArtifact: (delta: ArtifactDelta) => void;
+}
+
+/** Pure dispatch map — unit-testable without a process. */
+export function createBrokerHandlers(deps: BrokerHandlerDeps) {
+  return {
+    ping: async (): Promise<'pong'> => 'pong',
+    capture: async (p: BrokerCaptureParams) => {
+      const handler = createCaptureHandler({
+        sessionId: p.sessionId,
+        db: deps.db,
+        enqueue: deps.enqueue,
+        credentialContext: async () => p.credentialSignal,
+        currentNavEpoch: () => p.currentNavEpoch,
+        lastObserveEpoch: () => p.lastObserveEpoch,
+        onArtifact: deps.onArtifact,
+      });
+      return handler(p.input);
+    },
+    persistSessionFetch: async (p: { sessionId: string; url: string; title: string; markdown: string; credentialSignal: CredSignal }): Promise<CaptureResult> =>
+      captureFromPage(
+        { type: 'clip', sessionId: p.sessionId, url: p.url, title: p.title, markdown: p.markdown },
+        { db: deps.db, enqueue: deps.enqueue, credentialContext: p.credentialSignal, onArtifact: deps.onArtifact },
+      ),
+    persistMark: async (p: { sessionId: string; url: string; target: MarkSelectors; credentialSignal: CredSignal }): Promise<CaptureResult> =>
+      captureFromPage(
+        { type: 'mark', sessionId: p.sessionId, url: p.url, target: p.target },
+        { db: deps.db, enqueue: deps.enqueue, credentialContext: p.credentialSignal, onArtifact: deps.onArtifact },
+      ),
+    persistComment: async (p: { sessionId: string; text: string }): Promise<CaptureResult> =>
+      captureHumanNote({ sessionId: p.sessionId, text: p.text }, { db: deps.db, enqueue: deps.enqueue }),
+    persistScreenshot: async (p: { sessionId: string; url: string; title: string; mediaPath: string; contentHash: string; credentialSignal: CredSignal }): Promise<CaptureResult> =>
+      insertScreenshotArtifact(
+        { sessionId: p.sessionId, url: p.url, title: p.title, mediaPath: p.mediaPath, contentHash: p.contentHash },
+        { db: deps.db, enqueue: deps.enqueue, credentialContext: p.credentialSignal, onArtifact: deps.onArtifact },
+      ),
+    listArtifacts: async (p: { sessionId: string; limit: number }): Promise<ArtifactDelta[]> =>
+      listSessionArtifacts(deps.db, p.sessionId, p.limit),
+    listComments: async (p: { sessionId: string; limit: number }) =>
+      listSessionComments(deps.db, p.sessionId, p.limit),
+    findSimilar: async (p: { input: FindSimilarInput }) =>
+      findSimilar({ ...p.input, include_web: false }, deps.engines, deps.router, deps.backendStatus),
+  };
+}
+export type BrokerHandlers = ReturnType<typeof createBrokerHandlers>;
+
+interface RpcRequest { id: number; method: keyof BrokerHandlers; params?: unknown }
+
+function send(msg: unknown): void {
+  process.stdout.write(JSON.stringify(msg) + '\n');
+}
+
+async function main(): Promise<void> {
+  const subsystems = await initSubsystems();
+  const handlers = createBrokerHandlers({
+    db: getDatabase(),
+    engines: subsystems.searchEngines,
+    router: subsystems.router,
+    backendStatus: subsystems.backendStatus,
+    onArtifact: (delta) => send({ notify: 'artifact', delta }),
+  });
+  createInterface({ input: process.stdin }).on('line', (line) => {
+    void (async () => {
+      let req: RpcRequest | undefined;
+      try {
+        req = JSON.parse(line) as RpcRequest;
+        const fn = handlers[req.method] as ((p: unknown) => Promise<unknown>) | undefined;
+        if (!fn) throw new Error(`unknown broker method: ${String(req.method)}`);
+        send({ id: req.id, ok: true, result: await fn(req.params) });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        if (req) send({ id: req.id, ok: false, error: { message } });
+        else log.error('broker parse error', { message });
+      }
+    })();
+  });
+  send({ notify: 'ready' });
+  log.info('studio db broker ready');
+}
+
+// Gate solely on the env the client always sets — deterministic, no import-time surprise in tests.
+if (process.env.WIGOLO_STUDIO_BROKER_MAIN === '1') {
+  main().catch((e) => {
+    log.error('broker fatal', { error: e instanceof Error ? e.message : String(e) });
+    process.exit(1);
+  });
+}
