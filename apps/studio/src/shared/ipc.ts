@@ -25,6 +25,7 @@ export const IPC = {
   tabNavigate: 'studio:tab-navigate',
   getState: 'studio:get-state',
   approvalDecide: 'studio:approval-decide',
+  setRailOpen: 'studio:set-rail-open',
   // main → renderer
   stateChanged: 'studio:state-changed',
   approvalParked: 'studio:approval-parked',

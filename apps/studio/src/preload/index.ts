@@ -14,6 +14,7 @@ const studio = {
     ipcRenderer.on(IPC.approvalParked, (_e, a: PendingApprovalDto) => cb(a));
   },
   decideApproval: (id: string, decision: 'allow' | 'deny'): Promise<void> => ipcRenderer.invoke(IPC.approvalDecide, id, decision),
+  setRailOpen: (open: boolean): Promise<void> => ipcRenderer.invoke(IPC.setRailOpen, open),
 };
 
 export type StudioApi = typeof studio;

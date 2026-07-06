@@ -10,7 +10,8 @@ import type { DebuggerLike } from './cdp-transport';
 import { IPC, type PendingApprovalDto } from '../shared/ipc';
 import type { ControlParty, NavGrant } from 'wigolo/studio';
 
-const CHROME_HEIGHT = 88;
+const CHROME_HEIGHT = 88; // titlebar (40) + toolbar (48)
+const RAIL_WIDTH = 380; // the right Agent rail — kept in sync with .rail width in studio.css
 
 const cdpPort = process.env.WIGOLO_STUDIO_CDP_PORT;
 if (cdpPort) app.commandLine.appendSwitch('remote-debugging-port', cdpPort);
@@ -43,9 +44,13 @@ function makeViewFactory(win: BrowserWindow): () => TabView {
 
 async function createWindow(): Promise<void> {
   const win = new BrowserWindow({
-    width: 1280,
-    height: 840,
+    width: 1360,
+    height: 880,
     show: false,
+    // hidden-inset titlebar: the tab strip lives IN the titlebar with the macOS traffic lights inline
+    // (the refined browser look). Falls back to a standard frame off macOS.
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    backgroundColor: '#0c0c10',
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.mjs'),
       contextIsolation: true,
@@ -54,9 +59,12 @@ async function createWindow(): Promise<void> {
     },
   });
 
+  // The Agent rail occupies a fixed right column; the WebContentsView stage is everything left of it,
+  // below the chrome. Toggling the rail (from the renderer) reflows the stage to reclaim/yield the column.
+  let railOpen = true;
   const bounds = (): Rect => {
     const [width, height] = win.getContentSize();
-    return { x: 0, y: CHROME_HEIGHT, width, height: height - CHROME_HEIGHT };
+    return { x: 0, y: CHROME_HEIGHT, width: width - (railOpen ? RAIL_WIDTH : 0), height: height - CHROME_HEIGHT };
   };
   const tabs = new TabManager(makeViewFactory(win), bounds);
   const sessions = new SessionRegistry();
@@ -122,6 +130,11 @@ async function createWindow(): Promise<void> {
 
   ipcMain.handle(IPC.approvalDecide, (_e, id: string, decision: 'allow' | 'deny') => {
     studioHost.resolveApproval(id, decision);
+  });
+
+  ipcMain.handle(IPC.setRailOpen, (_e, open: boolean) => {
+    railOpen = !!open;
+    tabs.relayout(); // reflow the WebContentsView stage to match the new rail state
   });
 
   let gateway: Gateway | null = null;

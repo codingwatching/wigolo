@@ -1,4 +1,15 @@
 import type { TabInfo } from '../../src/shared/ipc';
+import { IconClose } from './icons';
+
+/** Derive a page-origin favicon glyph slot — a colored initial when no favicon is known yet. */
+function faviconInitial(t: TabInfo): string {
+  try {
+    const h = new URL(t.url).hostname.replace(/^www\./, '');
+    return (h[0] ?? '·').toUpperCase();
+  } catch {
+    return '·';
+  }
+}
 
 export function TabStrip(props: {
   tabs: TabInfo[];
@@ -7,30 +18,33 @@ export function TabStrip(props: {
   onNew: () => void;
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 2, height: 40, background: '#ececf1', padding: '0 8px' }}>
+    <div className="titlebar">
       {props.tabs.map((t) => (
         <div
           key={t.id}
           data-testid={`tab-${t.id}`}
+          className={`tab${t.active ? ' tab--active' : ''}`}
           onClick={() => props.onFocus(t.id)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', cursor: 'default',
-            background: t.active ? '#fff' : 'transparent', borderRadius: '8px 8px 0 0', maxWidth: 200,
-          }}
+          title={t.title || t.url}
         >
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }}>
-            {t.title || t.url || 'New tab'}
+          {/* provenance dot slot — violet=agent-driven (spec §4); defaults to a neutral favicon chip */}
+          <span
+            className="tab__fav"
+            style={{ display: 'grid', placeItems: 'center', fontSize: 9, fontWeight: 700, background: 'var(--surface-hover)', color: 'var(--text-dim)' }}
+          >
+            {faviconInitial(t)}
           </span>
+          <span className="tab__title">{t.title || t.url || 'New tab'}</span>
           <span
             data-testid={`close-${t.id}`}
+            className="tab__close"
             onClick={(e) => { e.stopPropagation(); props.onClose(t.id); }}
-            style={{ fontSize: 11, color: '#888' }}
           >
-            ×
+            <IconClose />
           </span>
         </div>
       ))}
-      <span data-testid="new-tab" onClick={props.onNew} style={{ padding: '4px 10px', color: '#666' }}>+</span>
+      <button data-testid="new-tab" className="tab-new" onClick={props.onNew} title="New tab">+</button>
     </div>
   );
 }
