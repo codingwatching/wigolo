@@ -143,6 +143,23 @@ export interface StudioMarksInput {
   [k: string]: unknown;
 }
 
+/**
+ * The DOM-to-code rich element payload (spec §5) — captured by the marking overlay from the page.
+ * ALL string fields are page-derived UNTRUSTED data (host-neutralized before it crosses to the agent).
+ * Framework `component` + `source` are best-effort (§13.2) and degrade to null. Structurally mirrored by
+ * the app-side overlay-core `MarkPayload` (core cannot import the app; the shapes are kept in sync).
+ */
+export interface MarkPayload {
+  tag: string;
+  id: string;
+  classes: string[];
+  attrs: Record<string, string>;
+  dataset: Record<string, string>;
+  text: string;
+  component: string | null;
+  source: { file: string; line: number } | null;
+}
+
 /** One human mark, as the agent reads it: page-derived descriptors (untrusted) + the CURRENT heal verdict. */
 export interface StudioMarkView {
   markId: string;
@@ -154,6 +171,8 @@ export interface StudioMarkView {
   confidence: 'high' | 'medium' | 'low' | 'none';
   /** The live snapshot ref when confidently resolved (high/medium) — the agent passes it to studio_act. Absent for low/none. */
   ref?: string;
+  /** The DOM-to-code rich element payload (§5) — present when the mark carried one. Page-derived → host-neutralized. */
+  payload?: MarkPayload;
 }
 
 export interface StudioMarksOutput {

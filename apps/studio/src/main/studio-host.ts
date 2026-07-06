@@ -7,6 +7,19 @@ import {
   createSessionDrive,
   PreGrantStore,
   StudioEventQueue,
+  MarkStore,
+  buildTarget,
+  buildTargetFromFlat,
+  indexAxByBackendNode,
+  buildSnapshot,
+  flattenDom,
+  heal,
+  generalize,
+  applyGeometry,
+  resolveNodePath,
+  neutralizeMarkers,
+  isCredentialContext,
+  UNTRUSTED_STUDIO_NOTICE,
   type StudioHostHandlers,
   type StudioSessionsAccessor,
   type SessionDrive,
@@ -20,8 +33,17 @@ import {
   type StudioCloseOutput,
   type StudioListOutput,
   type StudioToolError,
+  type StudioMarksInput,
   type StudioMarksOutput,
+  type StudioMarkView,
+  type StudioGeneralizeOutput,
   type StudioCaptureOutput,
+  type MarkPayload,
+  type StructuredTarget,
+  type HealCandidate,
+  type GenBox,
+  type AxNode,
+  type DomNode,
   type ControlParty,
   type NavGrant,
   type NavigableBrowser,
@@ -84,6 +106,13 @@ export interface StudioHostDeps {
   config?: StudioHostConfig;
 }
 
+/** What markElement returns to the human IPC layer for the rail chip (role/name already neutralized). */
+export interface MarkCreated {
+  markId: string;
+  role: string;
+  name: string;
+}
+
 export interface StudioHost {
   handlers: StudioHostHandlers;
   sessions: StudioSessionsAccessor;
@@ -91,6 +120,17 @@ export interface StudioHost {
   onHumanInput(tabId: string): void;
   /** The human's Allow/Deny from the approval card. Allow adds the matching pre-grant; both drain in the next observe. */
   resolveApproval(approvalId: string, decision: 'allow' | 'deny'): void;
+  /**
+   * Human marked an element (overlay → main IPC). Resolves the element-child path, stores the mark, and
+   * enqueues a neutralized `mark` event for the next studio_observe — DROPPED AT SOURCE on a credential
+   * page (a page-derived role/name can be a displayed secret). NOT on StudioHostHandlers: the agent
+   * surface stays the sealed 7-key set (PIN-SPLIT(a)); this is a human-only Electron-IPC seam.
+   */
+  markElement(input: { tabId: string; path: number[]; payload: MarkPayload }): Promise<MarkCreated | StudioToolError>;
+  /** Human pinned a comment on a mark → stored + a trusted `comment` event (dropped at source on a credential page). */
+  addComment(input: { markId: string; text: string }): Promise<{ ok: true } | StudioToolError>;
+  /** The active session's marks for the rail (host-internal mirror of studio_marks list). */
+  listMarks(): Promise<StudioMarksOutput | StudioGeneralizeOutput | StudioToolError>;
   /** Cleanly detach every session's tab (app quit). */
   shutdown(): Promise<void>;
 }
@@ -103,6 +143,12 @@ interface ParkedRecord {
   riskTier: RiskTier;
 }
 
+interface MarkComment {
+  text: string;
+  author: 'human';
+  ts: number;
+}
+
 interface SessionContext {
   sessionId: string;
   name: string;
@@ -112,6 +158,16 @@ interface SessionContext {
   observe: (input: StudioObserveInput) => Promise<StudioObserveOutput | StudioToolError>;
   act: (input: StudioActInput) => Promise<StudioActOutput | StudioToolError>;
   drive: SessionDrive;
+  // ── P2 marking ──
+  markStore: MarkStore;
+  payloads: Map<string, MarkPayload>;
+  comments: Map<string, MarkComment[]>;
+  /** Path (from the overlay) → StructuredTarget via a fresh AX⋈DOM fetch; null if unresolvable. */
+  resolvePicked: (path: number[]) => Promise<StructuredTarget | null>;
+  /** The shared credential-context probe (same one observe/marks use) for the push-path guard. */
+  isCredentialPage: () => Promise<boolean>;
+  /** studio_marks: list (heal each mark) | generalize a mark (preview). Credential-excluded. */
+  marksTool: (input: StudioMarksInput) => Promise<StudioMarksOutput | StudioGeneralizeOutput | StudioToolError>;
   createdAt: number;
   lastActiveAt: number;
   status: 'live' | 'closed';
@@ -226,6 +282,131 @@ export function createStudioHost(deps: StudioHostDeps): StudioHost {
       },
     });
 
+    // ── P2 marking (in-memory per session; DB persistence is P3, native cache can't load in Electron) ──
+    const markStore = new MarkStore();
+    const payloads = new Map<string, MarkPayload>();
+    const comments = new Map<string, MarkComment[]>();
+
+    // One fresh AX⋈DOM fetch → all candidate targets (ported from src/cli/studio.ts; sessionBrowser.cdp →
+    // transport). O(N) via a single flatten + AX-index. DR-4: skip wigolo's own overlay chrome (the
+    // closed-shadow host carries data-wigolo-overlay) so the agent never heals/generalizes/acts on it.
+    const buildHealCandidates = async (): Promise<HealCandidate[]> => {
+      const ax = (await transport.send('Accessibility.getFullAXTree')) as { nodes?: AxNode[] };
+      const doc = (await transport.send('DOM.getDocument', { depth: -1, pierce: true })) as { root?: DomNode };
+      const snap = buildSnapshot(ax.nodes ?? [], doc.root, { tokenBudget: inlineBudget });
+      const flat = flattenDom(doc.root).map;
+      const axByBe = indexAxByBackendNode(ax.nodes ?? []);
+      const isOverlay = (be: number): boolean => {
+        let cur: number | null = be, guard = 0;
+        while (cur != null && guard++ < 200) {
+          const d = flat.get(cur);
+          if (!d) break;
+          if (d.attrs['data-wigolo-overlay'] !== undefined) return true;
+          cur = d.parent;
+        }
+        return false;
+      };
+      const candidates: HealCandidate[] = [];
+      for (const [ref, backendNodeId] of snap.refMap) {
+        if (isOverlay(backendNodeId)) continue;
+        const target = buildTargetFromFlat(flat, axByBe, backendNodeId);
+        if (target) candidates.push({ ref, target });
+      }
+      return candidates;
+    };
+
+    // Path (from the overlay) → backendNodeId (fresh DOM) → StructuredTarget. Null if the node is gone or
+    // the path is stale — declined, never a wrong element.
+    const resolvePicked = async (path: number[]): Promise<StructuredTarget | null> => {
+      const ax = (await transport.send('Accessibility.getFullAXTree')) as { nodes?: AxNode[] };
+      const doc = (await transport.send('DOM.getDocument', { depth: -1, pierce: true })) as { root?: DomNode };
+      const backendNodeId = resolveNodePath(doc.root, path);
+      if (backendNodeId == null) return null;
+      return buildTarget(ax.nodes ?? [], doc.root, backendNodeId);
+    };
+
+    // Viewport-relative box of a live node (CSS px) for the generalize geometric tiebreaker; null when
+    // the node has no box (display:none / detached) — applyGeometry keeps such a structural match.
+    const boxForNode = async (backendNodeId: number): Promise<GenBox | null> => {
+      try {
+        const r = (await transport.send('DOM.getBoxModel', { backendNodeId })) as { model?: { content?: number[] } };
+        const q = r.model?.content;
+        if (!q || q.length < 8) return null;
+        const xs = [q[0], q[2], q[4], q[6]];
+        const ys = [q[1], q[3], q[5], q[7]];
+        const x = Math.min(...xs), y = Math.min(...ys);
+        return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+      } catch {
+        return null;
+      }
+    };
+
+    // The shared credential-context probe — the SAME one observe uses; drives both the pull-path
+    // exclusion (marksView) and the push-path drop-at-source (markElement/addComment enqueue).
+    const isCredentialPage = async (): Promise<boolean> => {
+      const snap = await snapshot();
+      return isCredentialContext({ pageUrl: tab.currentUrl(), fields: snap.domByRef?.values() });
+    };
+
+    // studio_marks list: each mark's page-derived descriptor (neutralized, trusted:false) + its CURRENT
+    // heal verdict against ONE fresh candidate build. Rich payload rides along (§5), also neutralized.
+    const neutralizePayload = (p: MarkPayload): MarkPayload => ({
+      tag: p.tag,
+      id: neutralizeMarkers(p.id),
+      classes: p.classes.map(neutralizeMarkers),
+      attrs: Object.fromEntries(Object.entries(p.attrs).map(([k, v]) => [k, neutralizeMarkers(v)])),
+      dataset: Object.fromEntries(Object.entries(p.dataset).map(([k, v]) => [k, neutralizeMarkers(v)])),
+      text: neutralizeMarkers(p.text),
+      component: p.component === null ? null : neutralizeMarkers(p.component),
+      source: p.source ? { file: neutralizeMarkers(p.source.file), line: p.source.line } : null,
+    });
+
+    const marksView = async (): Promise<StudioMarksOutput> => {
+      const all = markStore.list();
+      if (all.length === 0) return { marks: [], untrusted_notice: UNTRUSTED_STUDIO_NOTICE };
+      const candidates = await buildHealCandidates();
+      return {
+        marks: all.map((m) => {
+          const h = heal(m.target, candidates);
+          const view: StudioMarkView = {
+            markId: m.markId,
+            // D8b: neutralize the boundary marker in the mark's page-derived display text (role/name).
+            role: neutralizeMarkers(m.target.role),
+            name: neutralizeMarkers(m.target.name),
+            trusted: false,
+            confidence: h.confidence,
+          };
+          if (h.ref) view.ref = h.ref;
+          const pl = payloads.get(m.markId);
+          if (pl) view.payload = neutralizePayload(pl);
+          return view;
+        }),
+        untrusted_notice: UNTRUSTED_STUDIO_NOTICE,
+      };
+    };
+
+    // studio_marks{op:'generalize'}: PREVIEW the repeating sibling set (requires_confirmation:true — never acts).
+    const generalizeMark = async (markId?: string): Promise<StudioGeneralizeOutput | StudioToolError> => {
+      if (!markId) return { error_reason: 'missing_mark_id', hint: "op='generalize' needs a markId — read studio_marks for live ids." };
+      const m = markStore.get(markId);
+      if (!m) return { error_reason: 'no_such_mark', hint: 'That mark id is not in the current session. Re-read studio_marks for live ids.' };
+      const structural = generalize(m.target, await buildHealCandidates());
+      const boxes = new Map<string, GenBox>();
+      for (const match of structural.matches) {
+        const box = await boxForNode(match.backendNodeId);
+        if (box) boxes.set(match.ref, box);
+      }
+      const refined = applyGeometry(structural, boxes);
+      return { markId, refs: refined.refs, confidence: refined.confidence, requires_confirmation: true };
+    };
+
+    const marksTool = async (input: StudioMarksInput): Promise<StudioMarksOutput | StudioGeneralizeOutput | StudioToolError> => {
+      // 5e-0: studio_marks is an ungated agent read whose marks carry page-derived role/name — a displayed
+      // secret if a mark was made on a credential screen. Exclude all mark content on a credential context.
+      if (await isCredentialPage()) return { marks: [], credentialContext: true, untrusted_notice: UNTRUSTED_STUDIO_NOTICE };
+      return input.op === 'generalize' ? generalizeMark(input.markId) : marksView();
+    };
+
     return {
       sessionId,
       name,
@@ -235,6 +416,12 @@ export function createStudioHost(deps: StudioHostDeps): StudioHost {
       observe,
       act,
       drive,
+      markStore,
+      payloads,
+      comments,
+      resolvePicked,
+      isCredentialPage,
+      marksTool,
       createdAt: Date.now(),
       lastActiveAt: Date.now(),
       status: 'live',
@@ -292,7 +479,12 @@ export function createStudioHost(deps: StudioHostDeps): StudioHost {
       ctx.lastActiveAt = Date.now();
       return ctx.act(input);
     },
-    marks: async () => notImplemented('Marking', 'P2') as StudioMarksOutput | StudioToolError,
+    marks: async (input) => {
+      const ctx = targetContext();
+      if (!ctx) return noActive();
+      ctx.lastActiveAt = Date.now();
+      return ctx.marksTool(input);
+    },
     capture: async () => notImplemented('Capture', 'P3') as StudioCaptureOutput | StudioToolError,
     spawn: open,
     close: async (input: StudioCloseInput): Promise<StudioCloseOutput | StudioToolError> => {
@@ -352,6 +544,45 @@ export function createStudioHost(deps: StudioHostDeps): StudioHost {
         ctx.preGrant.add({ domain: rec.domain, actionType: rec.actionType, riskTier: rec.riskTier });
       }
       ctx.eventQueue.enqueue({ type: 'approval', approval_id: approvalId, decision });
+    },
+    async markElement({ tabId, path, payload }): Promise<MarkCreated | StudioToolError> {
+      const sid = tabToSession.get(tabId);
+      const ctx = sid ? contexts.get(sid) : undefined;
+      if (!ctx || ctx.status !== 'live') return { error_reason: 'no_active_session', hint: 'That tab has no live session.' };
+      // DR-1: an empty path would resolve to <html> — never a real mark intent (e.g. a shadow-broken path).
+      if (path.length === 0) return { error_reason: 'mark_unresolved', hint: 'That element could not be resolved (empty path — likely a shadow boundary).' };
+      const target = await ctx.resolvePicked(path);
+      if (!target) return { error_reason: 'mark_unresolved', hint: 'That element could not be resolved on the current page.' };
+      const mark = ctx.markStore.add(target);
+      ctx.payloads.set(mark.markId, payload);
+      const role = neutralizeMarkers(target.role);
+      const name = neutralizeMarkers(target.name);
+      // DR-3 push-path guard: drop the content event AT SOURCE on a credential context (a buffered event
+      // would leak the secret role/name on the next post-credential observe). The mark is still STORED
+      // (the human sees it in the rail); only the agent-facing event is withheld. marksView guards the pull.
+      if (!(await ctx.isCredentialPage())) {
+        ctx.eventQueue.enqueue({ type: 'mark', tab_id: tabId, markId: mark.markId, role, name, trusted: false });
+      }
+      return { markId: mark.markId, role, name };
+    },
+    async addComment({ markId, text }): Promise<{ ok: true } | StudioToolError> {
+      const ctx = targetContext();
+      if (!ctx) return { error_reason: 'no_active_session', hint: 'No session is open.' };
+      if (!ctx.markStore.get(markId)) return { error_reason: 'no_such_mark', hint: 'That mark id is not in the current session.' };
+      const list = ctx.comments.get(markId) ?? [];
+      list.push({ text, author: 'human', ts: Date.now() });
+      ctx.comments.set(markId, list);
+      // DR-3: human comment text is trusted (a legitimate human→agent instruction), passes raw with
+      // trusted:true — but still credential-gated at source (a comment on a login screen may quote a secret).
+      if (!(await ctx.isCredentialPage())) {
+        ctx.eventQueue.enqueue({ type: 'comment', tab_id: ctx.tab.tabId, markId, text, author: 'human', trusted: true });
+      }
+      return { ok: true };
+    },
+    async listMarks(): Promise<StudioMarksOutput | StudioGeneralizeOutput | StudioToolError> {
+      const ctx = targetContext();
+      if (!ctx) return { error_reason: 'no_active_session', hint: 'No session is open.' };
+      return ctx.marksTool({});
     },
     async shutdown(): Promise<void> {
       for (const ctx of contexts.values()) {
