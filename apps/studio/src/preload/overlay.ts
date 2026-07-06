@@ -11,13 +11,14 @@
  * (kept in sync with shared/ipc.ts's IPC.overlay* entries — the e2e exercises the real wire).
  */
 import { ipcRenderer } from 'electron';
-import { elementPath, serializePayload, whiskerLabel, ancestorWalk, serializeQuote, type MarkPayload } from './overlay-core';
+import { elementPath, serializePayload, whiskerLabel, ancestorWalk, serializeQuote, rectFromPoints, type MarkPayload } from './overlay-core';
 
 // Channel strings — MUST equal shared/ipc.ts IPC.overlay* (not imported to keep this bundle self-contained).
 const CH = {
   mark: 'studio:overlay-mark',
   generalize: 'studio:overlay-generalize',
   quote: 'studio:overlay-quote',
+  region: 'studio:overlay-region',
   arm: 'studio:overlay-arm',
   assigned: 'studio:overlay-mark-assigned',
 } as const;
@@ -54,6 +55,11 @@ function installOverlay(): void {
         background: #1b1526; border: 1px solid #3a2f52; border-radius: 5px; padding: 2px 7px; white-space: nowrap; display: none; }
       .chip { position: fixed; pointer-events: none; font: 11px ui-sans-serif, system-ui; color: #f4f0ff;
         background: #6f4ad1; border-radius: 999px; padding: 2px 8px; transform: translateY(-50%); }
+      .cliprect { position: fixed; pointer-events: none; border: 1.5px dashed #a06bff; border-radius: 4px;
+        background: rgba(160,107,255,.12); display: none; }
+      .cliphint { position: fixed; left: 50%; top: 12px; transform: translateX(-50%); pointer-events: none;
+        font: 12px ui-sans-serif, system-ui; color: #f4f0ff; background: #1b1526; border: 1px solid #3a2f52;
+        border-radius: 6px; padding: 4px 10px; display: none; }
       .bar { position: fixed; pointer-events: auto; display: none; gap: 4px; background: #171320; border: 1px solid #34294c;
         border-radius: 8px; padding: 4px; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
       .bar button { all: unset; cursor: pointer; font: 13px ui-sans-serif, system-ui; color: #e9e3f7; padding: 3px 7px; border-radius: 5px; }
@@ -62,6 +68,8 @@ function installOverlay(): void {
     </style>
     <div class="outline"></div>
     <div class="whisker"></div>
+    <div class="cliprect"></div>
+    <div class="cliphint">Drag to clip a region · Esc to cancel</div>
     <div class="chips"></div>
     <div class="bar">
       <button data-act="comment" title="Comment (type in the Marks panel →)">💬</button>
@@ -73,7 +81,19 @@ function installOverlay(): void {
   const whisker = root.querySelector('.whisker') as HTMLElement;
   const chips = root.querySelector('.chips') as HTMLElement;
   const bar = root.querySelector('.bar') as HTMLElement;
+  const cliprect = root.querySelector('.cliprect') as HTMLElement;
+  const cliphint = root.querySelector('.cliphint') as HTMLElement;
   let activeMarkId: string | null = null; // the mark the action bar currently targets
+  // ── Region clip (⌘⇧X arms; drag a rectangle; Esc cancels) ──
+  let clipMode = false;
+  let clipStart: { x: number; y: number } | null = null;
+  const setClip = (on: boolean): void => { clipMode = on; clipStart = null; cliphint.style.display = on ? 'block' : 'none'; if (!on) cliprect.style.display = 'none'; };
+  const drawClip = (a: { x: number; y: number }, b: { x: number; y: number }): void => {
+    const r = rectFromPoints(a, b);
+    cliprect.style.left = `${r.x}px`; cliprect.style.top = `${r.y}px`;
+    cliprect.style.width = `${r.width}px`; cliprect.style.height = `${r.height}px`;
+    cliprect.style.display = 'block';
+  };
 
   const attachHost = (): void => { (document.documentElement || document.body).appendChild(host); };
   if (document.documentElement) attachHost();
@@ -96,9 +116,10 @@ function installOverlay(): void {
   };
 
   const arm = (): void => { mode = 'hover'; showHover(false); };
-  const disarm = (): void => { mode = 'idle'; armedByAlt = false; current = null; showHover(false); bar.style.display = 'none'; };
+  const disarm = (): void => { mode = 'idle'; armedByAlt = false; current = null; showHover(false); bar.style.display = 'none'; setClip(false); };
 
   const onMove = (e: MouseEvent): void => {
+    if (clipMode && clipStart) { drawClip(clipStart, { x: e.clientX, y: e.clientY }); return; }
     if (mode !== 'hover') return;
     const el = document.elementFromPoint(e.clientX, e.clientY);
     if (!el || (el as Element).closest('[data-wigolo-overlay]')) return; // never target our own chrome
@@ -124,6 +145,9 @@ function installOverlay(): void {
       if (q) { e.preventDefault(); ipcRenderer.send(CH.quote, q); }
       return;
     }
+    // ⌘⇧X — arm region clip; the next drag draws a rectangle → screenshot artifact (§4 State 4).
+    if (e.metaKey && e.shiftKey && (e.key === 'X' || e.key === 'x')) { e.preventDefault(); setClip(!clipMode); return; }
+    if (e.key === 'Escape' && clipMode) { setClip(false); return; }
     if (e.key === 'Alt' && mode === 'idle') { armedByAlt = true; arm(); return; }
     if (e.key === 'Escape' && mode !== 'idle') { disarm(); return; }
     if (e.shiftKey && e.key === 'ArrowUp' && mode === 'hover' && current) {
@@ -140,6 +164,20 @@ function installOverlay(): void {
   // whole sequence in capture phase while armed; the browser still generates `click` (default-prevented
   // press events do not cancel it), so `commit` below still fires to create the mark.
   const swallowPress = (e: Event): void => {
+    // Region clip owns the drag while armed: record the start on press, commit the rect on release, and
+    // keep the page from seeing (or drag-selecting) any of it.
+    if (clipMode) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const me = e as MouseEvent;
+      if (e.type === 'mousedown') { clipStart = { x: me.clientX, y: me.clientY }; }
+      else if (e.type === 'mouseup' && clipStart) {
+        const rect = rectFromPoints(clipStart, { x: me.clientX, y: me.clientY });
+        setClip(false);
+        if (rect.width > 4 && rect.height > 4) ipcRenderer.send(CH.region, { rect }); // ignore an accidental click (no drag)
+      }
+      return;
+    }
     if (mode !== 'hover') return;
     e.preventDefault();
     e.stopImmediatePropagation();

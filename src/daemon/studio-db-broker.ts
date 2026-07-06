@@ -120,7 +120,8 @@ async function main(): Promise<void> {
       let req: RpcRequest | undefined;
       try {
         req = JSON.parse(line) as RpcRequest;
-        const fn = handlers[req.method] as ((p: unknown) => Promise<unknown>) | undefined;
+        // Own-property only — never resolve a prototype method (e.g. `constructor`) as an RPC handler.
+        const fn = Object.hasOwn(handlers, req.method) ? (handlers[req.method] as (p: unknown) => Promise<unknown>) : undefined;
         if (!fn) throw new Error(`unknown broker method: ${String(req.method)}`);
         send({ id: req.id, ok: true, result: await fn(req.params) });
       } catch (e) {

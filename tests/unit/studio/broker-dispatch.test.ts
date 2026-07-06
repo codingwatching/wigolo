@@ -137,6 +137,18 @@ describe('studio-db-broker — createBrokerHandlers (dispatch, real in-memory DB
     expect(artifactCount()).toBe(0);
   });
 
+  it('persistSessionFetch stores a session-targeted fetch as a clip (returns CaptureResult)', async () => {
+    const r = await handlers.persistSessionFetch({ sessionId: 's1', url: 'https://ex.com/doc', title: 'Doc', markdown: 'fetched body', credentialSignal: {} });
+    expect(r.inserted).toBe(true);
+    expect(typeof r.id).toBe('number');
+  });
+
+  it('persistSessionFetch REFUSES on a credential signal — no row (a session fetch of a login page never persists)', async () => {
+    await expect(handlers.persistSessionFetch({ sessionId: 's1', url: 'https://ex.com/login', title: '', markdown: 'secret', credentialSignal: { pageUrl: 'https://ex.com/login' } }))
+      .rejects.toThrow(/capture refused|credential/i);
+    expect(artifactCount()).toBe(0);
+  });
+
   it('findSimilar (concept, local corpus) returns results without throwing', async () => {
     await handlers.capture(clip());
     const r = await handlers.findSimilar({ input: { concept: 'Hello world', max_results: 5 } });

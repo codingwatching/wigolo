@@ -46,12 +46,11 @@ export function App() {
     window.studio.onGeneralizePreview((p) => setPreview(p));
     capturesStore.subscribe(() => setCaptures(capturesStore.list()));
     window.studio.onCaptureAdded((c) => capturesStore.add(c));
-  }, []);
-
-  // Session change → (re)load the captured items for the Captures rail (degrades to [] when the library is down).
-  useEffect(() => {
+    // Mount-time backfill of already-captured items (empty on a fresh run; live captures then arrive via
+    // the onCaptureAdded delta). Degrades to [] when the library is down. Per-session re-backfill (reading
+    // a resumed session's prior captures) lands with session restore (P4+).
     void window.studio.listCaptures().then((c) => capturesStore.set(c));
-  }, [state.sessionName]);
+  }, []);
 
   const comment = (markId: string, text: string) => {
     marksStore.appendComment(markId, text); // optimistic local render

@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import {
@@ -710,16 +711,17 @@ export function createStudioHost(deps: StudioHostDeps): StudioHost {
         // sessionId is a randomUUID — assert it before it becomes a path segment (traversal belt).
         if (!/^[0-9a-f-]{36}$/i.test(ctx.sessionId)) throw new Error('invalid session id for media path');
         const mediaPath = join(mediaRoot, ctx.sessionId, `${contentHash}.png`);
+        // Write the PNG BEFORE the DB row so the row's mediaPath NEVER dangles: a persist failure then
+        // leaves at worst a harmless orphan FILE (hash-named → idempotent), never a row pointing at nothing.
+        // Skip the write if the content is already on disk (dedup — same hash = same bytes).
+        if (!existsSync(mediaPath)) {
+          await mkdir(dirname(mediaPath), { recursive: true });
+          await writeFile(mediaPath, shot.png);
+        }
         const r = await deps.broker.call<CaptureResult>('persistScreenshot', {
           sessionId: ctx.sessionId, url: shot.url, title: shot.title, mediaPath, contentHash,
           credentialSignal: await ctx.credentialSignal(),
         });
-        // Row-first (§11 — SQLite is the source of truth); write the PNG only on a REAL insert so a dedup
-        // or a refusal leaves no orphan file.
-        if (r.inserted) {
-          await mkdir(dirname(mediaPath), { recursive: true });
-          await writeFile(mediaPath, shot.png);
-        }
         return { artifact_id: r.id, inserted: r.inserted, content_hash: r.contentHash };
       } catch {
         return { error_reason: 'capture_unavailable', hint: 'The local library service is not available right now.' };

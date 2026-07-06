@@ -108,6 +108,7 @@ export function createBrokerClient(opts: BrokerClientOptions = {}): BrokerClient
     });
     child.on('exit', () => {
       rejectAllPending('studio background service exited');
+      buf = ''; // drop any partial line from the dead child — else it corrupts the respawn's first frame (can eat `ready`)
       if (stopped) return;
       readyPromise = new Promise((r) => { readyResolve = r; });
       setTimeout(() => { if (!stopped) start(); }, backoff);

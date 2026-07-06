@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { launchStudio } from './launch';
 import { readHandle, DaemonProxy } from 'wigolo/studio';
+import { IPC } from '../../src/shared/ipc';
 
 // GATED (RUN_STUDIO_E2E) — the real Electron app. Proves the P3 capture loop END-TO-END through the
 // real embedded gateway AND the real DB broker (a plain-Node child, spawned under a real Node binary so
@@ -76,5 +77,29 @@ describe.skipIf(!RUN)('studio capture (e2e, real gateway + real DB broker)', () 
     'wigolo p3 capture e2e sentinel phrase');
     expect(Array.isArray(hits)).toBe(true);
     expect(hits.length).toBeGreaterThanOrEqual(1); // assert >=N, not exact (P2 lesson)
+  }, 40_000);
+
+  it('region clip persists a screenshot artifact via the REAL capturePage + media write', async () => {
+    // Simulate the human drag→region gesture by emitting the real overlay→main IPC with the session tab's
+    // webContents as event.sender (same pattern as marking.spec) — exercises the REAL webContents.capturePage
+    // + the sha256 + the media-file write + persistScreenshot, end-to-end.
+    const emitted = await app.evaluate(({ webContents, ipcMain }, channel) => {
+      const wc = webContents.getAllWebContents().find((w) => { const u = w.getURL(); return u === '' || u === 'about:blank'; });
+      if (!wc) return false;
+      ipcMain.emit(channel, { sender: wc }, { rect: { x: 0, y: 0, width: 200, height: 120 } });
+      return true;
+    }, IPC.overlayRegion);
+    expect(emitted).toBe(true);
+
+    const win = await app.firstWindow();
+    // capturePage + hash + write + persist are async off the emit — poll listCaptures for the screenshot.
+    let hasShot = false;
+    for (let i = 0; i < 40 && !hasShot; i++) {
+      const caps = await win.evaluate(() =>
+        (window as unknown as { studio: { listCaptures(): Promise<Array<{ type: string }>> } }).studio.listCaptures());
+      hasShot = caps.some((c) => c.type === 'screenshot');
+      if (!hasShot) await new Promise((r) => setTimeout(r, 250));
+    }
+    expect(hasShot).toBe(true);
   }, 40_000);
 });

@@ -428,17 +428,24 @@ describe('createStudioHost — marking (P2)', () => {
     expect(view.marks).toEqual([]); // and the pull path has nothing to leak — the credential mark was never stored
   });
 
-  it('CREDENTIAL PUSH PATH: a comment added on a credential page is dropped at source', async () => {
-    const credRef = { v: true };
-    const { host } = makeHost(undefined, () => markDebugger({ credRef }));
+  it('CREDENTIAL PUSH PATH: a comment added on a credential page is dropped at source AND never persisted', async () => {
+    // The mark is created OFF a credential page (so m1 EXISTS — else addComment no-op's on no_such_mark and
+    // the comment gate is never reached). THEN the page becomes a credential context and the comment is added
+    // → dropped: no `comment` event drains AND the write-through `persistComment` is never called (un-leakable).
+    const credRef = { v: false };
+    const broker = makeFakeBroker();
+    const { host } = makeHost(undefined, () => markDebugger({ credRef }), broker);
     await host.handlers.spawn({});
-    await host.markElement({ tabId: 't1', path: [0, 0], payload: samplePayload });
+    await host.markElement({ tabId: 't1', path: [0, 0], payload: samplePayload }); // not credential → m1 created
+    credRef.v = true; // now on a credential context
     await host.addComment({ markId: 'm1', text: 'secret 123456' });
     credRef.v = false;
     const obs = await host.handlers.observe({ since: 0 });
     const events = ('events' in obs ? obs.events : []) as Array<Record<string, unknown>>;
     expect(events.some((e) => e.type === 'comment')).toBe(false);
     expect(JSON.stringify(events)).not.toContain('123456');
+    await new Promise((res) => setTimeout(res, 20)); // let any (wrongly-fired) detached persist run
+    expect(broker.call.mock.calls.some(([m]) => m === 'persistComment')).toBe(false); // never reached the library
   });
 
   it('DR-4: the overlay chrome is excluded from generalize CANDIDATES (even sharing the seed role+spine+cluster)', async () => {
