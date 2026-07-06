@@ -81,7 +81,13 @@ async function createWindow(): Promise<void> {
     },
     createTab: async ({ initialHolder, grant }: { initialHolder: ControlParty; grant: NavGrant }): Promise<HostTab> => {
       const view = new WebContentsView({
-        webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+        // The per-tab marking overlay runs in this sandboxed, context-isolated tab's isolated world (P2).
+        webPreferences: {
+          preload: join(import.meta.dirname, '../preload/overlay.mjs'),
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
       });
       win.contentView.addChildView(view);
       const wc = view.webContents;

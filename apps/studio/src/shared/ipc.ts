@@ -1,8 +1,31 @@
+import type { MarkPayload } from '../preload/overlay-core';
+
 export interface TabInfo {
   id: string;
   url: string;
   title: string;
   active: boolean;
+}
+
+/** overlay(tab) → main: the human committed a mark. `path` is element-child indices from documentElement. */
+export interface OverlayMarkMsg {
+  nonce: string;
+  path: number[];
+  payload: MarkPayload;
+}
+
+/** main → renderer: one mark for the Marks rail pane. role/name/payload are page-derived (untrusted, host-neutralized). */
+export interface MarkCommentDto {
+  text: string;
+  author: 'human' | 'agent';
+}
+export interface MarkDto {
+  markId: string;
+  role: string;
+  name: string;
+  confidence: 'high' | 'medium' | 'low' | 'none';
+  ref?: string;
+  comments: MarkCommentDto[];
 }
 
 export interface StudioState {
@@ -26,7 +49,19 @@ export const IPC = {
   getState: 'studio:get-state',
   approvalDecide: 'studio:approval-decide',
   setRailOpen: 'studio:set-rail-open',
+  // overlay(tab) → main
+  overlayMark: 'studio:overlay-mark',
+  overlayGeneralize: 'studio:overlay-generalize',
+  // main → overlay(tab)
+  overlayArm: 'studio:overlay-arm',
+  overlayMarkAssigned: 'studio:overlay-mark-assigned',
+  // renderer(chrome) → main
+  armMarkMode: 'studio:arm-mark-mode',
+  markComment: 'studio:mark-comment',
+  markGeneralize: 'studio:mark-generalize',
   // main → renderer
   stateChanged: 'studio:state-changed',
   approvalParked: 'studio:approval-parked',
+  marksChanged: 'studio:marks-changed',
+  generalizePreview: 'studio:generalize-preview',
 } as const;
