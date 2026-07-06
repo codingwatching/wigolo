@@ -3,6 +3,7 @@
   "version": "0.1.40-beta.2",
   "description": "Local-first web intelligence MCP server for AI coding agents",
   "type": "module",
+  "workspaces": ["apps/*"],
   "main": "dist/index.js",
   "exports": {
     ".": {
