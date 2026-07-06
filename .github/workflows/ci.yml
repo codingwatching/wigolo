@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, studio-handoff]
   pull_request:
     branches: [main]
   workflow_call:
@@ -15,6 +15,10 @@ jobs:
   lint-build-unit:
     name: lint + build + unit (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Existing jobs never launch Electron; skip the ~100MB binary the workspaces
+    # conversion would otherwise pull on every OS.
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -50,6 +54,8 @@ jobs:
   full-suite:
     name: full test suite (ubuntu)
     runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -67,3 +73,46 @@ jobs:
       - run: npx playwright install --with-deps chromium
 
       - run: npm test
+
+  studio:
+    name: studio (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Full install here (no skip env) — the studio e2e launches the real app.
+      - name: Install dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Lint studio (tsc --noEmit)
+        shell: bash
+        run: npm run lint -w apps/studio
+
+      - name: Unit tests (studio)
+        shell: bash
+        run: npm test -w apps/studio
+
+      # Electron needs GUI system libraries on Linux runners; install via
+      # Playwright's dep installer (Playwright is already a devDependency).
+      - name: Install Linux GUI libs for Electron
+        if: runner.os == 'Linux'
+        run: npx playwright install-deps
+
+      - name: E2E (Linux, virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:e2e -w apps/studio
+
+      - name: E2E (macOS / Windows)
+        if: runner.os != 'Linux'
+        shell: bash
+        run: npm run test:e2e -w apps/studio
