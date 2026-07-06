@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
-import { serializeQuote } from '../../src/preload/overlay-core';
+import { serializeQuote, rectFromPoints } from '../../src/preload/overlay-core';
 
 /** P3 T3 — the pure quote-capture serializer (⌘⇧C). The DOM-event/IPC wiring in overlay.ts is exercised
  *  in the headed e2e lane; the text + context extraction is pinned here under jsdom. */
@@ -28,5 +28,12 @@ describe('serializeQuote — human quote capture', () => {
     document.body.innerHTML = '<span id="s">inline text</span>';
     const q = serializeQuote({ text: 'inline', anchorNode: document.getElementById('s') }, 'u')!;
     expect(q.context).toContain('inline text');
+  });
+});
+
+describe('rectFromPoints — region-clip drag normalization', () => {
+  it('normalizes two corners into a top-left rect regardless of drag direction', () => {
+    expect(rectFromPoints({ x: 100, y: 80 }, { x: 20, y: 200 })).toEqual({ x: 20, y: 80, width: 80, height: 120 });
+    expect(rectFromPoints({ x: 20, y: 200 }, { x: 100, y: 80 })).toEqual({ x: 20, y: 80, width: 80, height: 120 });
   });
 });

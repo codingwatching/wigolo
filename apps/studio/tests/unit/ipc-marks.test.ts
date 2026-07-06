@@ -22,6 +22,7 @@ function setup(over: Partial<MarksIpcDeps> = {}) {
   const markElement = vi.fn(async () => ({ markId: 'm1', role: 'button', name: 'Buy' }));
   const addComment = vi.fn(async () => ({ ok: true as const }));
   const captureQuote = vi.fn(async () => ({ artifact_id: 1, inserted: true, content_hash: 'h' }));
+  const captureRegion = vi.fn(async () => ({ artifact_id: 2, inserted: true, content_hash: 'h2' }));
   const marks = vi.fn(async () => ({ markId: 'm1', refs: ['e1', 'e2', 'e3'], confidence: 'high' as const, requires_confirmation: true as const }));
   const sendToTab = vi.fn();
   const sendToRenderer = vi.fn();
@@ -29,7 +30,7 @@ function setup(over: Partial<MarksIpcDeps> = {}) {
   const sender = { id: 'wc-1' };
   const deps: MarksIpcDeps = {
     ipcMain: f.ipcMain,
-    host: { markElement, addComment, captureQuote, handlers: { marks } } as unknown as MarksIpcDeps['host'],
+    host: { markElement, addComment, captureQuote, captureRegion, handlers: { marks } } as unknown as MarksIpcDeps['host'],
     resolveTab: (s) => (s === sender ? 't1' : undefined),
     sendToTab,
     sendToRenderer,
@@ -38,7 +39,7 @@ function setup(over: Partial<MarksIpcDeps> = {}) {
     ...over,
   };
   registerMarksIpc(deps);
-  return { f, deps, markElement, addComment, captureQuote, marks, sendToTab, sendToRenderer, broadcastMarks, sender };
+  return { f, deps, markElement, addComment, captureQuote, captureRegion, marks, sendToTab, sendToRenderer, broadcastMarks, sender };
 }
 
 describe('registerMarksIpc — overlay↔main↔renderer marks routing', () => {
@@ -89,6 +90,19 @@ describe('registerMarksIpc — overlay↔main↔renderer marks routing', () => {
     const t = setup();
     await t.f.fireOn(IPC.overlayQuote, { sender: { id: 'stranger' } }, { text: 'q', url: 'u', context: 'c' });
     expect(t.captureQuote).not.toHaveBeenCalled();
+  });
+
+  it('overlayRegion: sender→tabId→host.captureRegion with the dragged rect', async () => {
+    const t = setup();
+    const rect = { x: 10, y: 20, width: 100, height: 50 };
+    await t.f.fireOn(IPC.overlayRegion, { sender: t.sender }, { rect });
+    expect(t.captureRegion).toHaveBeenCalledWith('t1', rect);
+  });
+
+  it('overlayRegion from an UNKNOWN sender does not capture', async () => {
+    const t = setup();
+    await t.f.fireOn(IPC.overlayRegion, { sender: { id: 'stranger' } }, { rect: { x: 0, y: 0, width: 1, height: 1 } });
+    expect(t.captureRegion).not.toHaveBeenCalled();
   });
 
   it('armMarkMode arms the focused session tab overlay', async () => {

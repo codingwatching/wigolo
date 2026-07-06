@@ -1,5 +1,5 @@
 import { ipcMain, type BrowserWindow } from 'electron';
-import { IPC, type StudioState, type OverlayMarkMsg, type QuoteMsg } from '../shared/ipc';
+import { IPC, type StudioState, type OverlayMarkMsg, type QuoteMsg, type RegionMsg } from '../shared/ipc';
 import type { TabManager } from './tab-manager';
 import type { SessionRegistry } from './session-registry';
 import type { StudioHost } from './studio-host';
@@ -36,7 +36,7 @@ interface IpcMainLike {
 export interface MarksIpcDeps {
   ipcMain: IpcMainLike;
   /** Mark creation / comments / quote capture live on the StudioHost object (human seam); reads via handlers.marks. */
-  host: Pick<StudioHost, 'markElement' | 'addComment' | 'captureQuote'> & { handlers: Pick<StudioHostHandlers, 'marks'> };
+  host: Pick<StudioHost, 'markElement' | 'addComment' | 'captureQuote' | 'captureRegion'> & { handlers: Pick<StudioHostHandlers, 'marks'> };
   /** Correlate the sending tab's webContents → its session tabId (null if not a session tab). */
   resolveTab(sender: unknown): string | undefined;
   /** main → a specific tab's overlay preload. */
@@ -88,6 +88,15 @@ export function registerMarksIpc(deps: MarksIpcDeps): void {
       const tabId = resolveTab(event.sender);
       if (!tabId) return; // not a session tab → nowhere to route
       await host.captureQuote(tabId, raw as QuoteMsg);
+    })();
+  });
+
+  // overlay(tab) → main: the human dragged a rectangle to clip a region → screenshot artifact.
+  ipc.on(IPC.overlayRegion, (event, raw) => {
+    void (async () => {
+      const tabId = resolveTab(event.sender);
+      if (!tabId) return;
+      await host.captureRegion(tabId, (raw as RegionMsg).rect);
     })();
   });
 

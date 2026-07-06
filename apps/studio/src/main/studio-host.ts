@@ -1,4 +1,7 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 import {
   PageSnapshotter,
   createResolver,
@@ -55,7 +58,7 @@ import {
 } from 'wigolo/studio';
 import type { TabDrive } from './drive-engine';
 import type { BrokerClient } from './broker-client';
-import type { QuoteMsg } from '../shared/ipc';
+import type { QuoteMsg, RegionMsg } from '../shared/ipc';
 
 // The Electron main process IS the studio session host (spec §2). This module composes
 // the salvaged domain layer (perception → observe, act, session-drive) over the per-tab
@@ -114,6 +117,12 @@ export interface StudioHostDeps {
    * `call` is needed here — the app boots the full client (spawn/ready/teardown) in index.ts.
    */
   broker: Pick<BrokerClient, 'call'>;
+  /**
+   * Capture a viewport region of a session tab as PNG bytes (P3 region clip). index.ts wires this to the
+   * tab's `webContents.capturePage(rect)`. Optional: a host without it declines region clip explicitly
+   * (never a silent no-op). Kept off the main path so most host tests don't need it (mock-mirror-safe).
+   */
+  capturePage?: (tabId: string, rect: RegionMsg['rect']) => Promise<{ png: Buffer; url: string; title: string }>;
   config?: StudioHostConfig;
 }
 
@@ -146,6 +155,12 @@ export interface StudioHost {
    * (human-only Electron-IPC seam; the agent surface stays the sealed set).
    */
   captureQuote(tabId: string, quote: QuoteMsg): Promise<StudioCaptureOutput | StudioToolError>;
+  /**
+   * Human dragged a rectangle to clip a region → a screenshot artifact (PNG on disk under
+   * ~/.wigolo/studio/media, DB stores the pointer). Credential-gated at source (fail-closed BEFORE any
+   * capture/write). Human-only (not on StudioHostHandlers).
+   */
+  captureRegion(tabId: string, rect: RegionMsg['rect']): Promise<StudioCaptureOutput | StudioToolError>;
   /** The active session's marks for the rail (host-internal mirror of studio_marks list). */
   listMarks(): Promise<StudioMarksOutput | StudioGeneralizeOutput | StudioToolError>;
   /** Cleanly detach every session's tab (app quit). */
@@ -228,6 +243,9 @@ export function createStudioHost(deps: StudioHostDeps): StudioHost {
   const cap = cfg.sessionCap ?? DEFAULT_SESSION_CAP;
   const inlineBudget = cfg.inlineBudget ?? DEFAULT_INLINE_BUDGET;
   const spillMaxBytes = cfg.spillMaxBytes ?? DEFAULT_SPILL_MAX_BYTES;
+  // Region-clip media root — the SAME data dir the broker uses (index.ts passes WIGOLO_DATA_DIR when set,
+  // else both default to ~/.wigolo). The DB row stores a pointer; the PNG bytes live here (§6).
+  const mediaRoot = join(cfg.dataDir ?? join(homedir(), '.wigolo'), 'studio', 'media');
 
   const contexts = new Map<string, SessionContext>();
   const tabToSession = new Map<string, string>();
@@ -656,6 +674,36 @@ export function createStudioHost(deps: StudioHostDeps): StudioHost {
           lastObserveEpoch: ctx.lastObserveEpoch(),
           credentialSignal: await ctx.credentialSignal(),
         });
+      } catch {
+        return { error_reason: 'capture_unavailable', hint: 'The local library service is not available right now.' };
+      }
+    },
+    async captureRegion(tabId: string, rect: RegionMsg['rect']): Promise<StudioCaptureOutput | StudioToolError> {
+      const sid = tabToSession.get(tabId);
+      const ctx = sid ? contexts.get(sid) : undefined;
+      if (!ctx || ctx.status !== 'live') return { error_reason: 'no_active_session', hint: 'That tab has no live session.' };
+      if (!deps.capturePage) return { error_reason: 'capture_unavailable', hint: 'Region capture is not available in this build.' };
+      // Fail-CLOSED on a credential context BEFORE any pixel capture or disk write — a screenshot of a
+      // login/2FA page must never be taken or persisted (isCredentialContext inspects url+fields, not
+      // pixels, so this host gate is the real guard; the broker re-gates on the same signal too).
+      if (await ctx.isCredentialPage()) return { error_reason: 'credential_context', hint: 'Region capture is disabled on login/credential pages.' };
+      try {
+        const shot = await deps.capturePage(tabId, rect);
+        const contentHash = createHash('sha256').update(shot.png).digest('hex');
+        // sessionId is a randomUUID — assert it before it becomes a path segment (traversal belt).
+        if (!/^[0-9a-f-]{36}$/i.test(ctx.sessionId)) throw new Error('invalid session id for media path');
+        const mediaPath = join(mediaRoot, ctx.sessionId, `${contentHash}.png`);
+        const r = await deps.broker.call<CaptureResult>('persistScreenshot', {
+          sessionId: ctx.sessionId, url: shot.url, title: shot.title, mediaPath, contentHash,
+          credentialSignal: await ctx.credentialSignal(),
+        });
+        // Row-first (§11 — SQLite is the source of truth); write the PNG only on a REAL insert so a dedup
+        // or a refusal leaves no orphan file.
+        if (r.inserted) {
+          await mkdir(dirname(mediaPath), { recursive: true });
+          await writeFile(mediaPath, shot.png);
+        }
+        return { artifact_id: r.id, inserted: r.inserted, content_hash: r.contentHash };
       } catch {
         return { error_reason: 'capture_unavailable', hint: 'The local library service is not available right now.' };
       }

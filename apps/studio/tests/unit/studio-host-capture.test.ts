@@ -1,4 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { createDriveEngine } from '../../src/main/drive-engine';
 import { createStudioHost, type HostTab } from '../../src/main/studio-host';
 import type { DebuggerLike } from '../../src/main/cdp-transport';
@@ -50,11 +54,17 @@ function gateBroker(over: { call?: (m: string, p: unknown) => unknown } = {}) {
   return { call };
 }
 
-function makeHost(broker: { call: ReturnType<typeof vi.fn> }) {
+interface HostOpts {
+  capturePage?: (tabId: string, rect: { x: number; y: number; width: number; height: number }) => Promise<{ png: Buffer; url: string; title: string }>;
+  dataDir?: string;
+}
+function makeHost(broker: { call: ReturnType<typeof vi.fn> }, opts: HostOpts = {}) {
   const engine = createDriveEngine();
   let n = 0;
   const host = createStudioHost({
     broker: broker as never,
+    capturePage: opts.capturePage,
+    config: opts.dataDir ? { dataDir: opts.dataDir } : undefined,
     onParked: () => { /* no card in this test */ },
     createTab: async ({ initialHolder, grant }) => {
       const tabId = `t${++n}`;
@@ -150,6 +160,61 @@ describe('studio-host — captureQuote (human ⌘⇧C)', () => {
     await host.handlers.spawn({ startUrl: 'https://ex.com/pricing' });
     await host.handlers.observe({});
     const r = await host.captureQuote('t1', quote);
+    expect(r).toMatchObject({ error_reason: 'capture_unavailable' });
+  });
+});
+
+describe('studio-host — captureRegion (human drag → screenshot)', () => {
+  const rect = { x: 10, y: 20, width: 100, height: 50 };
+  const png = Buffer.from('\x89PNG fake bytes');
+
+  it('captures pixels → persists a screenshot artifact → writes the PNG to media on a real insert', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wigolo-region-'));
+    try {
+      const broker = gateBroker();
+      const capturePage = vi.fn(async () => ({ png, url: 'https://ex.com/dash', title: 'Dashboard' }));
+      const { host } = makeHost(broker, { capturePage, dataDir: dir });
+      const opened = await host.handlers.spawn({ startUrl: 'https://ex.com/dash' }) as { session_id: string };
+      await host.handlers.observe({});
+      const r = await host.captureRegion('t1', rect);
+      expect(r).toMatchObject({ inserted: true });
+      expect(capturePage).toHaveBeenCalledWith('t1', rect);
+      const ps = broker.call.mock.calls.find(([m]) => m === 'persistScreenshot')!;
+      const hash = createHash('sha256').update(png).digest('hex');
+      expect((ps[1] as { contentHash: string }).contentHash).toBe(hash);
+      // row-first, then the PNG lands on disk under media/<sessionId>/<hash>.png
+      expect(existsSync(join(dir, 'studio', 'media', opened.session_id, `${hash}.png`))).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('REFUSES on a credential page BEFORE capturing pixels (no capturePage, no persist, no file)', async () => {
+    const broker = gateBroker();
+    const capturePage = vi.fn(async () => ({ png, url: 'https://accounts.example.com/login', title: 'Login' }));
+    const { host } = makeHost(broker, { capturePage });
+    await host.handlers.spawn({ startUrl: 'https://accounts.example.com/login' });
+    await host.handlers.observe({});
+    const r = await host.captureRegion('t1', rect);
+    expect(r).toMatchObject({ error_reason: 'credential_context' });
+    expect(capturePage).not.toHaveBeenCalled();
+    expect(broker.call.mock.calls.some(([m]) => m === 'persistScreenshot')).toBe(false);
+  });
+
+  it('broker down → capture_unavailable (never throws)', async () => {
+    const broker = gateBroker({ call: (m) => { if (m === 'persistScreenshot') throw new Error('down'); return { id: 1, inserted: true, contentHash: 'h' }; } });
+    const capturePage = vi.fn(async () => ({ png, url: 'https://ex.com/dash', title: 'D' }));
+    const { host } = makeHost(broker, { capturePage });
+    await host.handlers.spawn({ startUrl: 'https://ex.com/dash' });
+    await host.handlers.observe({});
+    const r = await host.captureRegion('t1', rect);
+    expect(r).toMatchObject({ error_reason: 'capture_unavailable' });
+  });
+
+  it('declines when capturePage is not wired (explicit, never a silent no-op)', async () => {
+    const broker = gateBroker();
+    const { host } = makeHost(broker); // no capturePage
+    await host.handlers.spawn({ startUrl: 'https://ex.com/dash' });
+    await host.handlers.observe({});
+    const r = await host.captureRegion('t1', rect);
     expect(r).toMatchObject({ error_reason: 'capture_unavailable' });
   });
 });

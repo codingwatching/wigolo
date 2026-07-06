@@ -102,6 +102,11 @@ export function serializeQuote(input: { text: string; anchorNode: Node | null },
   return { text, url, context };
 }
 
+/** Normalize two drag corners into a top-left rect (region clip). Pure — jsdom/unit testable. */
+export function rectFromPoints(a: { x: number; y: number }, b: { x: number; y: number }): { x: number; y: number; width: number; height: number } {
+  return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(a.x - b.x), height: Math.abs(a.y - b.y) };
+}
+
 export function serializePayload(el: Element): MarkPayload {
   const attrs: Record<string, string> = {};
   for (const a of Array.from(el.attributes)) attrs[a.name] = a.value;

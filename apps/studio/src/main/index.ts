@@ -87,6 +87,15 @@ async function createWindow(): Promise<void> {
 
   const studioHost = createStudioHost({
     broker,
+    // The host writes region-clip media under the SAME data dir the broker uses (both honor WIGOLO_DATA_DIR).
+    config: process.env.WIGOLO_DATA_DIR ? { dataDir: process.env.WIGOLO_DATA_DIR } : undefined,
+    // Region clip: capture a viewport rect of the session tab as PNG bytes (the host hashes + persists).
+    capturePage: async (tabId, rect) => {
+      const wc = sessionTabWc.get(tabId);
+      if (!wc) throw new Error('no such session tab');
+      const img = await wc.capturePage(rect);
+      return { png: img.toPNG(), url: wc.getURL(), title: wc.getTitle() };
+    },
     onParked: (notice) => {
       const dto: PendingApprovalDto = { id: notice.approval_id, action: notice.action, risk: notice.risk };
       win.webContents.send(IPC.approvalParked, dto);

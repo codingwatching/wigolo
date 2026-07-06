@@ -3,6 +3,11 @@ import type { MarkPayload, QuotePayload } from '../preload/overlay-core';
 /** overlay(tab) → main: the human captured a text selection as a cited quote (⌘⇧C). */
 export type QuoteMsg = QuotePayload;
 
+/** overlay(tab) → main: the human dragged a rectangle to clip a region (screenshot). Client-space CSS px. */
+export interface RegionMsg {
+  rect: { x: number; y: number; width: number; height: number };
+}
+
 export interface TabInfo {
   id: string;
   url: string;
@@ -58,6 +63,7 @@ export const IPC = {
   overlayMark: 'studio:overlay-mark',
   overlayGeneralize: 'studio:overlay-generalize',
   overlayQuote: 'studio:overlay-quote',
+  overlayRegion: 'studio:overlay-region',
   // main → overlay(tab)
   overlayArm: 'studio:overlay-arm',
   overlayMarkAssigned: 'studio:overlay-mark-assigned',
