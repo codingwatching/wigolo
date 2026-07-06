@@ -1,6 +1,6 @@
 import { createLogger } from '../logger.js';
 import type { ControlToken, ControlParty } from './control-token.js';
-import type { MouseInput, KeyInput, AgentMouseInput, AgentInputEvent } from './input.js';
+import type { MouseInput, KeyInput, AgentMouseInput, AgentInputEvent } from './input-events.js';
 
 /**
  * Couples the control token to the input channel for one session: gates every

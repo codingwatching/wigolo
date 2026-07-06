@@ -25,7 +25,7 @@
 import { navigateSession, type NavigableBrowser } from './nav.js';
 import { policyForHolder, type NavGrant } from './nav-policy.js';
 import type { ControlParty } from './control-token.js';
-import type { AgentInputEvent } from './input.js';
+import type { AgentInputEvent } from './input-events.js';
 import { isResolveError, type ResolveResult, type ResolveErrorReason } from './perception/resolve.js';
 import type { StudioActInput, StudioActOutput, StudioToolError } from '../daemon/studio-dispatch.js';
 import type { AuditRecordInput, AuditOutcome } from './audit.js';

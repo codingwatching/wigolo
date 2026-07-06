@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createActHandler, keystrokeEvents, type ActControlToken } from '../../../src/studio/act.js';
 import type { NavGrant } from '../../../src/studio/nav-policy.js';
 import type { ControlParty } from '../../../src/studio/control-token.js';
-import type { AgentInputEvent } from '../../../src/studio/input.js';
+import type { AgentInputEvent } from '../../../src/studio/input-events.js';
 import { createResolver, type ResolveResult } from '../../../src/studio/perception/resolve.js';
 import { buildSnapshot, type AxNode, type DomNode, type PerceptionCdp } from '../../../src/studio/perception/snapshot.js';
 import { isStudioToolError, type StudioActOutput, type StudioToolError } from '../../../src/daemon/studio-dispatch.js';
