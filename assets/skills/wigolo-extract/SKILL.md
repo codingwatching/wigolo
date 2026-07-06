@@ -1,7 +1,7 @@
 ---
 name: wigolo-extract
 description: |
-  Local-first structured extraction from any webpage — tables, definition lists, key-value pairs, JSON-LD, microdata, chart hints (SVG titles / aria-labels / figcaptions), and metadata. Use when the user wants structured data, pricing tables, feature comparisons, or says "extract the table", "get structured data", "pull the pricing", "extract as JSON". Defer to firecrawl-agent when the task requires autonomous navigation across many pages to assemble the structured result.
+  Local-first structured extraction from any webpage — tables, definition lists, key-value pairs, JSON-LD, microdata, chart hints (SVG titles / aria-labels / figcaptions), and metadata. Use when the user wants structured data, pricing tables, feature comparisons, or says "extract the table", "get structured data", "pull the pricing", "extract as JSON". For autonomous navigation across many pages, use wigolo's `agent` tool instead.
 ---
 
 # wigolo extract
@@ -55,8 +55,8 @@ When a page has visual charts (SVG, Canvas), `chart_hints` contains text descrip
 
 ## When NOT to use wigolo-extract
 
-- **Multi-page autonomous structured extraction** — use `agent` (wigolo) or `firecrawl-agent`.
-- **Page requires login / click / form-fill before the data appears** — use `firecrawl-interact` first.
+- **Multi-page autonomous structured extraction** — use wigolo's `agent` tool instead.
+- **Page requires login / click / form-fill before the data appears** — handle authentication with `use_auth` or interact with the page before extracting.
 
 ## See Also
 

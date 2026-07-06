@@ -84,6 +84,24 @@ describe('synthesizeLocal', () => {
     expect(body.response_format).toBeUndefined();
   });
 
+  it('instructs the model to place an inline [N] citation after EVERY claim', async () => {
+    process.env['WIGOLO_LLM_PROVIDER'] = 'http://localhost:1234';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: 'ok [1].' } }] }),
+        { status: 200 },
+      ),
+    );
+    await synthesizeLocal('q', [{ url: 'u', title: 't', markdown: 'm' }]);
+    const body = JSON.parse(String((fetchSpy.mock.calls[0]![1] as RequestInit).body));
+    const prompt = body.messages[0].content as string;
+    // A weak/terse citation instruction lets small local models drop markers
+    // entirely (live qwen2.5:7b emitted a citation-free brief). The prompt must
+    // demand a marker on every sentence and show the exact [N] shape.
+    expect(prompt).toMatch(/every (sentence|claim|fact)/i);
+    expect(prompt).toContain('[1]');
+  });
+
   it('extracts multiple citation markers (1-based -> 0-based)', async () => {
     process.env['WIGOLO_LLM_PROVIDER'] = 'http://localhost:1234';
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
@@ -204,7 +222,131 @@ describe('synthesizeLocal', () => {
 });
 
 /**
- * Slice 1c: synthesizeLocal's configured-gate must be keystore-aware.
+ * The C0 opt-in local-model tier lets synthesis run when only WIGOLO_LOCAL_LLM
+ * is on — no cloud key, no explicit WIGOLO_LLM_PROVIDER. Passing `tier` must
+ * bypass the keystore gate and route runLlmText at the tier's endpoint/model.
+ */
+describe('synthesizeLocal with a local-model tier', () => {
+  const ORIGINAL_PROVIDER_LOCAL = process.env['WIGOLO_LLM_PROVIDER'];
+  const ORIGINAL_MODEL_LOCAL = process.env['WIGOLO_LLM_MODEL'];
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    delete process.env['WIGOLO_LLM_PROVIDER'];
+    delete process.env['WIGOLO_LLM_MODEL'];
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_PROVIDER_LOCAL === undefined) delete process.env['WIGOLO_LLM_PROVIDER'];
+    else process.env['WIGOLO_LLM_PROVIDER'] = ORIGINAL_PROVIDER_LOCAL;
+    if (ORIGINAL_MODEL_LOCAL === undefined) delete process.env['WIGOLO_LLM_MODEL'];
+    else process.env['WIGOLO_LLM_MODEL'] = ORIGINAL_MODEL_LOCAL;
+  });
+
+  it('runs synthesis via the tier endpoint even when no provider/key is configured', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: 'Tier answer [1].' } }] }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+
+    const result = await synthesizeLocal(
+      'What is AI?',
+      [{ url: 'https://a.com', title: 'A', markdown: 'AI rocks' }],
+      { tier: { endpoint: 'http://localhost:9999', model: 'qwen2.5:7b-instruct' } },
+    );
+
+    expect(result.text).toBe('Tier answer [1].');
+    expect(result.citations).toEqual([0]);
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe('http://localhost:9999/v1/chat/completions');
+    const body = JSON.parse(String((init as RequestInit).body));
+    expect(body.model).toBe('qwen2.5:7b-instruct');
+  });
+
+  it('never touches WIGOLO_LLM_PROVIDER env — routes via the backend param', async () => {
+    process.env['WIGOLO_LLM_PROVIDER'] = 'gemini';
+    let providerDuringCall: string | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      providerDuringCall = process.env['WIGOLO_LLM_PROVIDER'];
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: 'ok [1].' } }] }),
+        { status: 200 },
+      );
+    });
+
+    await synthesizeLocal(
+      'q',
+      [{ url: 'u', title: 't', markdown: 'm' }],
+      { tier: { endpoint: 'http://localhost:9999', model: 'm1' } },
+    );
+
+    // The ambient provider is untouched DURING and after the call — routing is
+    // via the additive backend param, not an env bridge.
+    expect(providerDuringCall).toBe('gemini');
+    expect(process.env['WIGOLO_LLM_PROVIDER']).toBe('gemini');
+  });
+
+  it('env is untouched even when the tier call throws', async () => {
+    process.env['WIGOLO_LLM_PROVIDER'] = 'gemini';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('boom', { status: 500 }));
+
+    await expect(
+      synthesizeLocal(
+        'q',
+        [{ url: 'u', title: 't', markdown: 'm' }],
+        { tier: { endpoint: 'http://localhost:9999', model: 'm1' } },
+      ),
+    ).rejects.toThrow(/500/);
+
+    expect(process.env['WIGOLO_LLM_PROVIDER']).toBe('gemini');
+  });
+
+  // Concurrency regression: an env-bridge (set/restore process.env around the
+  // call) corrupts a shared WIGOLO_LLM_PROVIDER when two tier calls overlap —
+  // the second captures the first's mutated 'http://...' as its baseline and
+  // restores THAT, durably rerouting the process cloud->local. The additive
+  // backend param mutates nothing, so the ambient provider survives untouched.
+  it('two overlapping tier calls do not corrupt a shared WIGOLO_LLM_PROVIDER', async () => {
+    process.env['WIGOLO_LLM_PROVIDER'] = 'anthropic';
+
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    let inFlight = 0;
+    let bothOverlapped = false;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      inFlight++;
+      if (inFlight === 2) bothOverlapped = true;
+      // Park inside the call so both calls' windows overlap before either ends.
+      await gate;
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: 'ok [1].' } }] }),
+        { status: 200 },
+      );
+    });
+
+    const call = () =>
+      synthesizeLocal(
+        'q',
+        [{ url: 'u', title: 't', markdown: 'm' }],
+        { tier: { endpoint: 'http://localhost:9999', model: 'm1' } },
+      );
+
+    const p1 = call();
+    const p2 = call();
+    // Let both reach the parked fetch, then release.
+    await vi.waitFor(() => expect(bothOverlapped).toBe(true));
+    releaseGate();
+    await Promise.all([p1, p2]);
+
+    expect(process.env['WIGOLO_LLM_PROVIDER']).toBe('anthropic');
+  });
+});
+
+/**
+ * synthesizeLocal's configured-gate must be keystore-aware.
  *
  * Zero-env scenario: no provider/key env vars, provider chosen in config.json,
  * key in the OS keychain. The env-only isLlmConfigured() gate would wrongly

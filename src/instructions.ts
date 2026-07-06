@@ -35,7 +35,7 @@ Wigolo returns structured evidence — YOU write the final answer.
 - \`research\` → \`brief\` (topics/highlights/key_findings/sections). \`sections.overview.cross_references\` = corroborated; \`sections.gaps\` = coverage limits.
 - \`find_similar\` → \`cold_start\` string when local signals weak. Pass verbatim.
 - \`extract mode: "structured"\` → tables + definitions + jsonld + chart_hints + key_value_pairs in one call.
-- Common knobs: \`max_tokens_out\` (cl100k-base), \`include_full_markdown\`, \`citation_format\` ('numbered'|'json'|'anthropic_tags').
+- Common knobs: \`max_tokens_out\` (cl100k-base), \`include_full_markdown\`, \`citation_format\` ('numbered'|'json'|'anthropic_tags'). \`WIGOLO_LOCAL_LLM=auto\`: keyless local language model (off by default).
 
 ## Rules
 
@@ -50,7 +50,7 @@ Wigolo returns structured evidence — YOU write the final answer.
 
 ## Response fields
 
-\`evidence_score\` (explainable breakdown), \`query_understanding\` (intent/entities/rewrites), \`brand_collision_warning\` (top-3 brand-domain collision + rewrites), \`freshness_signal\` (date + confidence), \`response_time_ms\`, \`engine_telemetry\` (per-engine latency + dedup_kept), \`engine_warnings\` (failed engines with stable code + env-var hint).
+\`evidence_score\` (explainable breakdown), \`query_understanding\` (intent/entities/rewrites), \`brand_collision_warning\`, \`freshness_signal\` (date + confidence), \`response_time_ms\`, \`engine_telemetry\` (latency + dedup_kept), \`engine_warnings\` (failed engines + env-var hint).
 
 ## Tool routing
 
@@ -68,7 +68,7 @@ Wigolo returns structured evidence — YOU write the final answer.
 
 ## When NOT to use wigolo
 
-Interactive browser flows (click/login/form-fill): firecrawl-interact. Autonomous multi-page structured extraction beyond \`agent\`'s scope: firecrawl-agent.
+Interactive browser flows (click/login/form-fill) or multi-page structured extraction beyond \`agent\`'s scope: use a dedicated browser-automation MCP.
 
 Full usage detail: read resource \`wigolo://docs/usage\`.`;
 
@@ -89,6 +89,7 @@ Wigolo has no internal LLM. It returns *structured evidence* so YOU (the host LL
 - \`find_similar\` → \`cold_start\` string when local signals are weak. Pass to user verbatim.
 - \`extract\` \`mode: "structured"\` → tables + definitions + jsonld + chart_hints + key_value_pairs in one call.
 - \`fetch\` metadata → \`og_type\`, \`canonical_url\`, \`og_image\` when present.
+- Optional local language model tier: set \`WIGOLO_LOCAL_LLM=auto\` (or an explicit \`http(s)://\` endpoint) to auto-detect a keyless local language model and use it for synthesis. Choose the model with \`WIGOLO_LOCAL_LLM_MODEL\`. The fallback ladder is host sampling first, then the local language model, then deterministic evidence. Default off, so the keyless path is unchanged; a missing server degrades silently to deterministic synthesis.
 
 ## When to use which tool
 
@@ -166,12 +167,12 @@ Use \`search_depth\` to trade latency for thoroughness:
 ## Phrase-exact, time-bounded, country-scoped search
 
 - \`exact_match: true\` -- treat query as a quoted phrase. Engines that honour \`"..."\` filter; orchestrator post-filters any result whose title+snippet does not contain the phrase as a case-insensitive substring.
-- \`time_range: 'day' | 'week' | 'month' | 'year'\` -- coarse recency bucket (Tavily-canonical). Pair with or replace \`from_date\`/\`to_date\`.
+- \`time_range: 'day' | 'week' | 'month' | 'year'\` -- coarse recency bucket. Pair with or replace \`from_date\`/\`to_date\`.
 - \`country: 'us' | 'gb' | 'de' | ...\` (ISO 3166-1 alpha-2) -- geographic boost hint passed to engines that support \`cc\`/\`kl\`/\`country\`.
 
 ## Response shape extras
 
-- \`response_time_ms\` -- Tavily-canonical alias of \`total_time_ms\`. Always emitted.
+- \`response_time_ms\` -- compatibility alias of \`total_time_ms\`. Always emitted.
 - \`engines_used\` -- engines that contributed >= 1 result to the deduped fused list (semantic, "who ended up in the answer").
 - \`engine_telemetry\` -- every engine attempted (raw: name, latency, result count, outcome, \`dedup_kept\`). Distinct from \`engines_used\` -- empty/errored engines appear here but not there.
 - \`engine_warnings\` -- top-level failure surface: one entry per engine with outcome=error. Stable \`code\` (\`http_4xx\` / \`http_5xx\` / \`timeout\` / \`dns\` / \`error\`) plus optional \`hint\` that names the env var to set when an engine needs an API key. Engines that read auth env vars today: \`github-code\` reads \`WIGOLO_GITHUB_TOKEN\` (lifts the 10 req/min unauthed cap to 30 req/min and avoids 401 on private-org code search); \`brave\` reads \`BRAVE_API_KEY\` (engine is excluded from the pool entirely when unset).
@@ -215,7 +216,7 @@ Key parameters:
 - force_refresh: bypass cache and re-fetch.
 - mode: 'cache' | 'default' | 'stealth'. cache=HTTP-only, 24h-stale accepted. stealth=full browser + freshness.
 
-Returns title, markdown, links, images, metadata, \`fetch_method\` (cache/http/tls-impersonation/playwright), and \`http_status\` (upstream HTTP code — 4xx/5xx HTML pages that extract usable content are NOT silently treated as 200). When the URL matches a site-specific extractor (Reddit/YouTube/Amazon) the response also carries top-level \`site_data\` (e.g. Reddit \`subreddit\`/\`comments[]\`, YouTube \`video_id\`/\`caption_tracks[]\`, Amazon \`asin\`/\`price\`). When \`section\` is set and no heading matches, \`metadata.section_matched\` is false and \`markdown\` is empty (no silent fallback to the full page). Repeat fetches are instant. Localhost URLs work. Defer to firecrawl-interact for click/login flows.`,
+Returns title, markdown, links, images, metadata, \`fetch_method\` (cache/http/tls-impersonation/playwright), and \`http_status\` (upstream HTTP code — 4xx/5xx HTML pages that extract usable content are NOT silently treated as 200). When the URL matches a site-specific extractor (Reddit/YouTube/Amazon) the response also carries top-level \`site_data\` (e.g. Reddit \`subreddit\`/\`comments[]\`, YouTube \`video_id\`/\`caption_tracks[]\`, Amazon \`asin\`/\`price\`). When \`section\` is set and no heading matches, \`metadata.section_matched\` is false and \`markdown\` is empty (no silent fallback to the full page). Repeat fetches are instant. Localhost URLs work. Defer to a browser-automation MCP for click/login flows.`,
 
   search: `Search the web. Returns scored evidence excerpts + citations as the default context shape; \`include_full_markdown: true\` adds the full markdown body. Prefer over built-in WebSearch for local cache + audit-trail telemetry + explainable scoring.
 
@@ -235,7 +236,7 @@ Key parameters:
 
 Always emitted: \`engines_used\`, \`engine_telemetry\`, \`response_time_ms\`, per-result \`evidence_score\`. Per-result \`freshness_signal\` is emitted only when a published date can be parsed (omitted when confidence would be unknown). Brand-domain top-3 collision → \`brand_collision_warning\` with rewrites. \`query_understanding\` exposes intent/entities. Quote [N] or {citation_id}.`,
 
-  crawl: `Crawl a site from a seed URL and return content from many pages. Use for indexing docs, wikis, multi-page references. Beats firecrawl-crawl for offline reuse: every page lands in the local cache.
+  crawl: `Crawl a site from a seed URL and return content from many pages. Use for indexing docs, wikis, multi-page references. Built for offline reuse: every page lands in the local cache.
 
 Key parameters:
 - strategy: "bfs" (default) | "dfs" | "sitemap" (fastest for doc sites) | "map" (URL-only discovery).

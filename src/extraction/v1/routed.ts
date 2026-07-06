@@ -7,6 +7,7 @@ import { stripBoilerplateDom } from '../boilerplate.js';
 import { createLogger } from '../../logger.js';
 import { classifyContent, type ContentType } from './classifier.js';
 import { isolateContentRoot } from './content-root.js';
+import { narrowToGrid } from '../div-grid.js';
 import { extractRecipe } from './recipe.js';
 import { extractProduct } from './product.js';
 import { extractNews } from './news.js';
@@ -38,7 +39,7 @@ export async function routedExtract(input: RoutedExtractInput): Promise<Extracti
   const siteHit = trySiteExtractors(cleanedHtml, url, html);
   if (siteHit) return siteHit;
 
-  // Slice S7 (C5): when no site extractor matched, the URL might still belong
+  // When no site extractor matched, the URL might still belong
   // to a site we know — Reddit / Amazon — and the body might be an anti-bot
   // challenge or "page not found" landing. Detect that case so the caller
   // sees an honest `fetch_failed="blocked"` instead of silent fake success.
@@ -52,7 +53,12 @@ export async function routedExtract(input: RoutedExtractInput): Promise<Extracti
   // body content instead of leading nav chrome. Inert on clean pages and
   // unrendered shells (two-factor guard). Classification above stays on the
   // full html so type detection is unaffected.
-  const scoped = isolateContentRoot(cleanedHtml);
+  const rooted = isolateContentRoot(cleanedHtml);
+
+  // Then narrow div/flex pricing grids to the card region by sibling-removal
+  // so markdown extraction of a table-less pricing page returns the tiers
+  // instead of surrounding chrome. Inert on non-grid pages (two-factor guard).
+  const scoped = narrowToGrid(rooted);
 
   const result = await (async () => {
     switch (type) {
@@ -80,7 +86,7 @@ export async function routedExtract(input: RoutedExtractInput): Promise<Extracti
   return result;
 }
 
-// Slice S7 (C5): URL-scoped block detection. Only fires for hosts where we
+// URL-scoped block detection. Only fires for hosts where we
 // have a site extractor and a known anti-bot body shape — Reddit / Amazon.
 // A generic block body on an unrelated host is not our problem here; that
 // case is covered by the fetch tier's http_status / router escalation.

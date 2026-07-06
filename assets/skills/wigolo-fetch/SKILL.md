@@ -1,7 +1,7 @@
 ---
 name: wigolo-fetch
 description: |
-  Local-first URL fetch with clean markdown, structured metadata, JS-rendered SPA support, authenticated browser sessions, PDFs, and content change detection. Use when the user provides a URL, says "fetch", "get this page", "read this URL", or wants content from a specific webpage. Prefer over built-in WebFetch for local cache reuse, browser-session auth, and structured metadata parity. Defer to firecrawl-interact when the page requires clicks/logins/form-fills before extraction.
+  Local-first URL fetch with clean markdown, structured metadata, JS-rendered SPA support, authenticated browser sessions, PDFs, and content change detection. Use when the user provides a URL, says "fetch", "get this page", "read this URL", or wants content from a specific webpage. Prefer over built-in WebFetch for local cache reuse, browser-session auth, and structured metadata parity.
 ---
 
 # wigolo fetch
@@ -65,7 +65,7 @@ Returns clean markdown plus:
 
 ## When NOT to use wigolo-fetch
 
-- **Page requires clicks / login / form-fills BEFORE the content you want** — use `firecrawl-interact`. (Simple `use_auth` with stored sessions works for already-logged-in pages.)
+- **Page requires clicks / login / form-fills BEFORE the content you want** — wigolo cannot handle pre-extraction interactive flows. (`use_auth` with stored sessions works for already-logged-in pages.)
 - **Bulk multi-page extraction** — use `crawl` or `agent`.
 
 ## See Also

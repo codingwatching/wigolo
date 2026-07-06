@@ -7,6 +7,7 @@ import { wrapWithRetryAndBreaker, type EngineEntry } from '../engine-base.js';
 import { RssFeedEngine } from '../rss/rss-engine.js';
 import { loadFeedConfig } from '../rss/feed-config.js';
 import { countFeedItems } from '../rss/feed-store.js';
+import { getConfig } from '../../../config.js';
 import { createLogger } from '../../../logger.js';
 
 const log = createLogger('search');
@@ -46,7 +47,7 @@ export function getNewsEngines(): EngineEntry[] {
     // scrapes /search?filters=tnews and surfaces .news_dt → published_date so
     // the recency layer can rank it like the other date-aware engines.
     { engine: wrapWithRetryAndBreaker(new BingNewsEngine()), weight: 0.9, supportsDateFilter: false, quality: 'medium' },
-    // Wave-3 A3 (news-vertical recall): HN/Lobsters/Bing-News alone are too
+    // HN/Lobsters/Bing-News alone are too
     // tech-skewed and too thin for general news recall — a date-bounded news
     // query was collapsing to HN-Algolia's 2 results. Reusing the general
     // vertical's broad web engines (same adapters as verticals/general.ts)
@@ -55,7 +56,10 @@ export function getNewsEngines(): EngineEntry[] {
     // results client-side against the resolved window. `secondary` keeps them
     // from dominating consensus the same way they do in the general pool.
     { engine: wrapWithRetryAndBreaker(new DuckDuckGoEngine()), weight: 0.9, supportsDateFilter: false, secondary: true, quality: 'medium' },
-    { engine: wrapWithRetryAndBreaker(new MojeekEngine()), weight: 0.7, supportsDateFilter: false, secondary: true, quality: 'low' },
+    // Held out of the primary wave by default (probeOnly): mojeek 403s most
+    // callers so it is a per-call tax; the degraded-recovery wave still pulls
+    // it when the pool collapses. Same rationale as verticals/general.ts.
+    { engine: wrapWithRetryAndBreaker(new MojeekEngine()), weight: 0.7, supportsDateFilter: false, secondary: true, quality: 'low', probeOnly: getConfig().searchMojeekProbeOnly },
   ];
 
   if (hasRssConfigured()) {

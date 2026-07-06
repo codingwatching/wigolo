@@ -28,6 +28,7 @@ import { setLogSuppression } from '../logger.js';
 import { isLlmConfigured } from '../integrations/cloud/llm/run.js';
 import { resolveCustomBackend, pickOllamaModel } from '../integrations/cloud/llm/custom-backend.js';
 import { probeOllama, resolveProbeBaseUrl, maybeOllamaHint, DEFAULT_PROBE_TIMEOUT_MS } from './ollama-probe.js';
+import { resolveLocalModelTier, type LocalModelTier } from '../integrations/cloud/llm/local-tier.js';
 
 function out(line = ''): void { process.stderr.write(`${line}\n`); }
 
@@ -85,8 +86,8 @@ async function checkPlaywright(): Promise<{ installed: boolean; version?: string
     }
   } catch { /* ignore */ }
 
-  // Use the SAME shared probe warmup uses (GH #116) so doctor cannot disagree
-  // with warmup about browser health. The verdict is launchable — a real
+  // Use the SAME shared probe warmup uses so doctor cannot disagree
+  // with warmup about browser health. The check is launchability — a real
   // headless launch — not just existsSync, which on bare Linux passes while
   // launch() fails for missing OS libs.
   const [chromiumProbe, firefoxProbe, webkitProbe] = await Promise.all([
@@ -170,7 +171,7 @@ function probeWreqJsAvailable(): boolean {
 /**
  * Format the engine-health summary for doctor output. Pure so the lines can
  * be asserted from tests without spinning up the whole CLI. Returns one
- * string per line (no trailing newlines). Slice S11a — adds per-engine
+ * string per line (no trailing newlines). Adds per-engine
  * status visibility for the cold-start health check.
  *
  *   ok        → "  bing            general    ok"
@@ -193,14 +194,14 @@ export function formatEngineHealthLines(entries: EngineHealthEntry[]): string[] 
     const name = e.name.padEnd(15);
     const vertical = e.vertical.padEnd(10);
     const suffix: string = e.status !== 'ok' && e.hint ? `${e.status} (${e.hint})` : e.status;
-    // Slice 4: an open/half-open breaker means the engine will not dispatch
+    // An open/half-open breaker means the engine will not dispatch
     // even though its config status says "ok" — render it with the last
     // upstream error so users see WHY the engine is dark.
     const breakerNote =
       e.breaker && e.breaker !== 'closed'
         ? ` [breaker ${e.breaker}${e.lastError ? ` — ${e.lastError.slice(0, 60)}` : ''}]`
         : '';
-    // Wave-2 W3: an informational note about a KNOWN, non-user-fixable
+    // An informational note about a KNOWN, non-user-fixable
     // limitation (e.g. mojeek IP-reputation 403s). Rendered even for "ok"
     // engines so doctor is honest about why an engine may go dark.
     const limitationNote = e.note ? ` — note: ${e.note}` : '';
@@ -210,7 +211,7 @@ export function formatEngineHealthLines(entries: EngineHealthEntry[]): string[] 
 }
 
 /**
- * Live per-engine probe behind `doctor --probe-engines` (Slice 4). Dedupes
+ * Live per-engine probe behind `doctor --probe-engines`. Dedupes
  * the registered entries by engine name, skips parked (disabled) adapters,
  * and runs one bounded query per engine SEQUENTIALLY — politeness beats
  * speed for a diagnostic that hits 15+ third-party services. No-op when
@@ -329,6 +330,36 @@ export function buildOllamaDoctorLines(state: {
   return hint ? [`  ${hint}`] : [];
 }
 
+/**
+ * Build the opt-in local-model tier (`WIGOLO_LOCAL_LLM`) diagnostic lines. Pure
+ * so the branching is asserted without a live server. Component names (local
+ * model server / model name) are allowed in doctor output.
+ *
+ *   - off               → state the flag is off (default) so the lever stays
+ *                          discoverable; no endpoint is implied.
+ *   - auto + reachable   → resolved endpoint + model + "reachable".
+ *   - auto + unreachable → "enabled, no local model detected" so an
+ *                          enabled-but-absent server is visible, not hidden.
+ */
+export function buildLocalTierDoctorLines(state: {
+  localLlm: string;
+  tier: LocalModelTier | null;
+}): string[] {
+  if (state.localLlm === 'off') {
+    return [
+      '  local language model (WIGOLO_LOCAL_LLM): off (default) — set to `auto` to auto-detect a keyless local model server',
+    ];
+  }
+  const lines = [`  local language model (WIGOLO_LOCAL_LLM=${sanitizeForTerminal(state.localLlm)}):`];
+  if (state.tier) {
+    lines.push(`    endpoint:  ${sanitizeForTerminal(state.tier.endpoint)} (reachable)`);
+    lines.push(`    model:     ${sanitizeForTerminal(state.tier.model)}`);
+  } else {
+    lines.push('    status:    enabled, no local model detected — synthesis falls back to keyless');
+  }
+  return lines;
+}
+
 function humanRetry(nextRetryAt?: string): string {
   if (!nextRetryAt) return 'not scheduled';
   const when = new Date(nextRetryAt);
@@ -346,7 +377,7 @@ function humanRetry(nextRetryAt?: string): string {
  *   search engine bootstrap failed/no_runtime, or search engine process supposed to be up but isn't.
  */
 export interface DoctorOptions {
-  /** Run a live search probe against every registered engine (Slice 4). */
+  /** Run a live search probe against every registered engine. */
   probeEngines?: boolean;
 }
 
@@ -511,6 +542,17 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
     }
   }
 
+  // Opt-in local-model tier (WIGOLO_LOCAL_LLM). Off by default — the line is
+  // still printed so the lever is discoverable, but the resolver (and its fast,
+  // negative-cached probe) is only invoked when the flag is on.
+  {
+    const localLlm = cfg.localLlm;
+    const tier = localLlm === 'off' ? null : await resolveLocalModelTier({ localLlm, localLlmModel: cfg.localLlmModel });
+    for (const line of buildLocalTierDoctorLines({ localLlm, tier })) {
+      out(line);
+    }
+  }
+
   out('');
   out('[wigolo doctor] Search backend:');
   const rawBackend = process.env.WIGOLO_SEARCH;
@@ -529,7 +571,7 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
     out(`  signals:       ${SIGNAL_NAMES.join(', ')}`);
   }
 
-  // Slice S11a: cold-start engine health summary. Registry-level — we don't
+  // Cold-start engine health summary. Registry-level — we don't
   // dispatch a live query; we just inspect the pools + the env-var contract.
   // Broken engines surface visibly without blocking startup or doctor exit.
   out('');
@@ -546,7 +588,7 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
     out(`  (engine health summary failed: ${msg.slice(0, 80)})`);
   }
 
-  // Slice 4: opt-in live probe of every registered engine. Off by default —
+  // Opt-in live probe of every registered engine. Off by default —
   // doctor stays network-free unless the user explicitly asks.
   try {
     await runEngineProbeSection(opts?.probeEngines ?? false, getRegisteredEngineEntries());
@@ -559,7 +601,7 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
   const state = getBootstrapState(dataDir) as BootstrapState | null;
   out('[wigolo doctor] Search engine:');
   if (!state) {
-    out('  status:        not bootstrapped — run `npx @staticn0va/wigolo warmup`');
+    out('  status:        not bootstrapped — run `npx wigolo warmup`');
     degraded = true;
   } else if (state.status === 'ready') {
     out(`  status:        ready`);
@@ -600,7 +642,7 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
     out('');
     out('[wigolo doctor] Recovery:');
     if (state.nextRetryAt) out(`  - Wait until next auto-retry (${humanRetry(state.nextRetryAt)}), or`);
-    out(`  - Force retry now: npx @staticn0va/wigolo warmup --force`);
+    out(`  - Force retry now: npx wigolo warmup --force`);
   }
 
   await checkCoreEmbeddings();

@@ -8,7 +8,7 @@ const MIN_CONTENT_THRESHOLD = 100;
 export function readabilityExtract(html: string, _url: string): ExtractionResult | null {
   try {
     const { document } = parseHTML(html);
-    const reader = new Readability(document as any);
+    const reader = new Readability(document as unknown as Document);
     const article = reader.parse();
     if (!article || !article.content) return null;
 

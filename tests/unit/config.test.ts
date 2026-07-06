@@ -413,93 +413,40 @@ describe('config', () => {
     });
   });
 
-  describe('config — studio screencast + session browser (phase 1)', () => {
-    it('studioBrowserHeadless defaults to false (headed session browser per spec)', () => {
-      expect(getConfig().studioBrowserHeadless).toBe(false);
+  describe('config — local LLM tier (WIGOLO_LOCAL_LLM)', () => {
+    it("defaults to 'off' when nothing is set — keyless default is unchanged", () => {
+      // WHY: the opt-in local tier must be OFF by default so the keyless
+      // benchmark path is byte-for-byte identical to before this knob existed.
+      expect(getConfig().localLlm).toBe('off');
+      expect(getConfig().localLlmModel).toBeNull();
     });
 
-    it('reads WIGOLO_STUDIO_HEADLESS=1 as true (CI / headless host)', () => {
-      process.env.WIGOLO_STUDIO_HEADLESS = '1';
+    it("reads WIGOLO_LOCAL_LLM=auto", () => {
+      process.env.WIGOLO_LOCAL_LLM = 'auto';
       resetConfig();
-      expect(getConfig().studioBrowserHeadless).toBe(true);
+      expect(getConfig().localLlm).toBe('auto');
     });
 
-    it('studioScreencastQuality defaults to 60', () => {
-      expect(getConfig().studioScreencastQuality).toBe(60);
-    });
-
-    it('reads WIGOLO_STUDIO_SCREENCAST_QUALITY', () => {
-      process.env.WIGOLO_STUDIO_SCREENCAST_QUALITY = '40';
+    it('preserves an explicit endpoint value verbatim (resolution at use-site)', () => {
+      // WHY: an explicit http(s) endpoint is a legitimate third value alongside
+      // off/auto; config must not normalize or drop it — the resolver decides.
+      process.env.WIGOLO_LOCAL_LLM = 'http://box:11434';
       resetConfig();
-      expect(getConfig().studioScreencastQuality).toBe(40);
+      expect(getConfig().localLlm).toBe('http://box:11434');
     });
 
-    it('studioScreencastMaxWidth / MaxHeight default to 1280 x 720', () => {
-      expect(getConfig().studioScreencastMaxWidth).toBe(1280);
-      expect(getConfig().studioScreencastMaxHeight).toBe(720);
-    });
-
-    it('reads WIGOLO_STUDIO_SCREENCAST_MAX_WIDTH / _HEIGHT', () => {
-      process.env.WIGOLO_STUDIO_SCREENCAST_MAX_WIDTH = '1600';
-      process.env.WIGOLO_STUDIO_SCREENCAST_MAX_HEIGHT = '900';
+    it("normalizes an unknown value to 'off' (fail-safe)", () => {
+      // WHY: a typo (WIGOLO_LOCAL_LLM=on) must not accidentally enable an
+      // ambiguous tier — anything that is not 'auto' or an http(s) URL is off.
+      process.env.WIGOLO_LOCAL_LLM = 'yes';
       resetConfig();
-      expect(getConfig().studioScreencastMaxWidth).toBe(1600);
-      expect(getConfig().studioScreencastMaxHeight).toBe(900);
+      expect(getConfig().localLlm).toBe('off');
     });
 
-    it('studioScreencastEveryNthFrame defaults to 1', () => {
-      expect(getConfig().studioScreencastEveryNthFrame).toBe(1);
-    });
-
-    it('studioFrameAckTimeoutMs defaults to 1000', () => {
-      expect(getConfig().studioFrameAckTimeoutMs).toBe(1000);
-    });
-
-    it('reads WIGOLO_STUDIO_FRAME_ACK_TIMEOUT_MS', () => {
-      process.env.WIGOLO_STUDIO_FRAME_ACK_TIMEOUT_MS = '500';
+    it('reads WIGOLO_LOCAL_LLM_MODEL when set', () => {
+      process.env.WIGOLO_LOCAL_LLM_MODEL = 'qwen2.5:7b-instruct';
       resetConfig();
-      expect(getConfig().studioFrameAckTimeoutMs).toBe(500);
-    });
-
-    it('studioBrowserCrashMaxRestarts defaults to 2', () => {
-      expect(getConfig().studioBrowserCrashMaxRestarts).toBe(2);
-    });
-
-    it('reads WIGOLO_STUDIO_BROWSER_CRASH_MAX_RESTARTS', () => {
-      process.env.WIGOLO_STUDIO_BROWSER_CRASH_MAX_RESTARTS = '5';
-      resetConfig();
-      expect(getConfig().studioBrowserCrashMaxRestarts).toBe(5);
-    });
-
-    it('studioNavAllowPrivateForHuman defaults to true (co-browsing localhost is a primary use case)', () => {
-      expect(getConfig().studioNavAllowPrivateForHuman).toBe(true);
-    });
-
-    it('reads WIGOLO_STUDIO_NAV_ALLOW_PRIVATE_FOR_HUMAN=false as false', () => {
-      process.env.WIGOLO_STUDIO_NAV_ALLOW_PRIVATE_FOR_HUMAN = 'false';
-      resetConfig();
-      expect(getConfig().studioNavAllowPrivateForHuman).toBe(false);
-    });
-
-    it('studioSnapshotTokenBudget defaults to 4000', () => {
-      expect(getConfig().studioSnapshotTokenBudget).toBe(4000);
-    });
-
-    it('reads WIGOLO_STUDIO_SNAPSHOT_TOKEN_BUDGET', () => {
-      process.env.WIGOLO_STUDIO_SNAPSHOT_TOKEN_BUDGET = '8000';
-      resetConfig();
-      expect(getConfig().studioSnapshotTokenBudget).toBe(8000);
-    });
-
-    it('vision budget caps default and read from env', () => {
-      expect(getConfig().studioVisionMaxCallsPerTurn).toBe(3);
-      expect(getConfig().studioVisionMaxBytesPerTurn).toBe(4_000_000);
-      expect(getConfig().studioVisionInlineByteCap).toBe(262144);
-      process.env.WIGOLO_STUDIO_VISION_MAX_CALLS_PER_TURN = '5';
-      process.env.WIGOLO_STUDIO_VISION_INLINE_BYTE_CAP = '1000';
-      resetConfig();
-      expect(getConfig().studioVisionMaxCallsPerTurn).toBe(5);
-      expect(getConfig().studioVisionInlineByteCap).toBe(1000);
+      expect(getConfig().localLlmModel).toBe('qwen2.5:7b-instruct');
     });
   });
 });

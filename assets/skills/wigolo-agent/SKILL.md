@@ -1,7 +1,7 @@
 ---
 name: wigolo-agent
 description: |
-  Autonomous data gathering across sources — plans search queries and URLs from a natural-language prompt, executes in parallel within a time budget, optionally extracts structured fields via JSON Schema, and synthesizes results with full step transparency. Use when the user needs data collected from the web with a specific shape, says "gather data", "find pricing for", "collect information about", "extract from multiple sites", or provides a JSON schema for web data. Defer to firecrawl-agent for autonomous extraction that requires navigating through interactive flows (logins, multi-step wizards) on individual pages.
+  Autonomous data gathering across sources — plans search queries and URLs from a natural-language prompt, executes in parallel within a time budget, optionally extracts structured fields via JSON Schema, and synthesizes results with full step transparency. Use when the user needs data collected from the web with a specific shape, says "gather data", "find pricing for", "collect information about", "extract from multiple sites", or provides a JSON schema for web data.
 ---
 
 # wigolo agent
@@ -75,7 +75,7 @@ Use `steps` to debug weak results — if extraction is poor, check which pages w
 
 ## When NOT to use wigolo-agent
 
-- **Per-page interactive flow needed (login, multi-step wizard, click-through pagination)** — use `firecrawl-agent` or chain `firecrawl-interact` + wigolo's `extract`.
+- **Per-page interactive flow needed (login, multi-step wizard, click-through pagination)** — handle authentication or interaction externally, then chain with wigolo's `extract`.
 
 ## See Also
 

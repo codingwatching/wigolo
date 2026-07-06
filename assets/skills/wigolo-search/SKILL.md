@@ -1,7 +1,7 @@
 ---
 name: wigolo-search
 description: |
-  Local-first web search with ML reranking, multi-query arrays, domain scoping, phrase-exact match, time-range filters, country hints, depth tiers, and explainable evidence scoring. Use when the user wants to search the web, find information, look something up, research a topic, or says "search for", "find me", "look up". Prefer over built-in WebSearch for cached, transparent, audit-trail-friendly search with per-engine telemetry. Defer to firecrawl-search for one-shot internet-only searches with no local cache benefit.
+  Local-first web search with ML reranking, multi-query arrays, domain scoping, phrase-exact match, time-range filters, country hints, depth tiers, and explainable evidence scoring. Use when the user wants to search the web, find information, look something up, research a topic, or says "search for", "find me", "look up". Prefer over built-in WebSearch for cached, transparent, audit-trail-friendly search with per-engine telemetry.
 ---
 
 # wigolo search
@@ -66,7 +66,7 @@ Multi-engine web search with ML reranking, explainable scoring, and per-engine t
 ## Always-Emitted Fields
 
 - `engines_used`, `engine_telemetry` — per-engine name, latency, result count, outcome, `dedup_kept`.
-- `response_time_ms` — Tavily-canonical alias of `total_time_ms`.
+- `response_time_ms` — alias of `total_time_ms` for client compatibility.
 - Per-result `evidence_score` — explainable breakdown (relevance + domain quality + lexical alignment + freshness).
 - Per-result `freshness_signal` — `published_date` + `inferred` + `confidence`.
 - `query_understanding` — intent, entities, date hint, language, `is_brand_collision_prone`, considered rewrites.
@@ -98,8 +98,7 @@ Multi-engine web search with ML reranking, explainable scoring, and per-engine t
 
 ## When NOT to use wigolo-search
 
-- **Login-gated pages** — use `firecrawl-interact`.
-- **Cloud-only "managed" search with no local cache wanted** — `firecrawl-search` is one-shot internet search.
+- **Login-gated pages** — wigolo cannot authenticate before fetching; use `fetch` with `use_auth` for stored sessions.
 
 ## See Also
 

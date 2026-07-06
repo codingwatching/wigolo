@@ -1,0 +1,120 @@
+.section {
+  padding-block: 100px 120px;
+  background: var(--bg-warm);
+  border-top: 1px solid var(--line-2);
+}
+.grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 480px) 1fr;
+  gap: 80px;
+  align-items: start;
+}
+.title {
+  margin-top: 20px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(38px, 5vw, 72px);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.lede {
+  margin-top: 24px;
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--muted);
+  max-width: 44ch;
+}
+.ctas {
+  margin-top: 32px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+}
+.secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  padding: 12px 20px;
+  border: 1.5px solid var(--ink);
+  border-radius: 4px;
+  transition: background 0.18s var(--ease), color 0.18s var(--ease);
+  white-space: nowrap;
+}
+.secondary:hover {
+  background: var(--ink);
+  color: #fff;
+}
+.form {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 560px;
+}
+.honey {
+  display: none;
+}
+.label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.textarea,
+.input {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px 14px;
+  resize: vertical;
+}
+.textarea:focus,
+.input:focus {
+  outline: none;
+  border-color: var(--factory-purple);
+}
+.formFoot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+}
+.privacy {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted-2);
+}
+.err {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #b0532f;
+}
+@media (max-width: 1024px) {
+  .grid {
+    grid-template-columns: 1fr;
+    gap: 44px;
+  }
+}
+@media (max-width: 640px) {
+  .section {
+    padding-block: 64px 72px;
+  }
+  .form {
+    padding: 20px;
+  }
+}

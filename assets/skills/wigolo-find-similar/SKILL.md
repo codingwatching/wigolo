@@ -1,7 +1,7 @@
 ---
 name: wigolo-find-similar
 description: |
-  Hybrid semantic discovery — fuses embeddings + keyword (FTS5) + live web search via 3-way Reciprocal Rank Fusion. Use when the user has a good source and wants more like it, says "find similar", "related pages", "more like this", or wants to discover content related to a known URL or concept. Works best after a `crawl` or several `fetch` calls have warmed the local cache. Emits `cold_start` when local signals are weak. No equivalent in firecrawl.
+  Hybrid semantic discovery — fuses embeddings + keyword (FTS5) + live web search via 3-way Reciprocal Rank Fusion. Use when the user has a good source and wants more like it, says "find similar", "related pages", "more like this", or wants to discover content related to a known URL or concept. Works best after a `crawl` or several `fetch` calls have warmed the local cache. Emits `cold_start` when local signals are weak.
 ---
 
 # wigolo find_similar

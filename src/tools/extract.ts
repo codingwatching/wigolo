@@ -4,10 +4,12 @@ import { guardNavigation, type NavSource } from '../security/ssrf.js';
 import { extractMetadata, extractSelector, extractTables } from '../extraction/extract.js';
 import {
   extractWithSchema,
+  extractWithSchemaDetailed,
   extractWithSchemaDetailedAsync,
 } from '../extraction/schema.js';
 import { extractJsonLd } from '../extraction/jsonld.js';
-import { extractStructured } from '../extraction/structured.js';
+import { extractStructured, mergeGridTables } from '../extraction/structured.js';
+import { detectDivGridTables } from '../extraction/div-grid.js';
 import { getCachedContent, isExpired } from '../cache/store.js';
 import { fetchWithPlaywright } from '../fetch/playwright-tier.js';
 import { countTokens, truncateByTokens } from '../search/tokens.js';
@@ -17,7 +19,8 @@ import {
   extractNamedSchema,
   NAMED_SCHEMAS,
 } from '../extraction/v1/schemas/index.js';
-import { isLocalLlmEnabled, extractWithLocalLlm } from '../extraction/v1/local-llm.js';
+import { extractWithLocalLlm } from '../extraction/v1/local-llm.js';
+import { resolveLocalModelTier } from '../integrations/cloud/llm/local-tier.js';
 import { extractBrandAsync } from '../extraction/brand.js';
 import { applyEvidenceFilter, getSourceText } from '../extraction/schema-truth.js';
 
@@ -111,7 +114,7 @@ function clampExtractData(
   return data;
 }
 
-// H3: default char ceiling for mode='tables' when caller didn't pass
+// default char ceiling for mode='tables' when caller didn't pass
 // max_tokens_out. Large tables blow token budgets; this default keeps the
 // response useful for the common case while flipping `truncated: true` so
 // callers can detect the clip and re-request explicitly if they need more.
@@ -312,38 +315,67 @@ export async function handleExtract(
       );
     }
 
-    if (mode === 'schema' && input.schema && isLocalLlmEnabled()) {
-      const llmData = await extractWithLocalLlm({
-        schema: input.schema as unknown as Record<string, unknown>,
-        html,
-        url: sourceUrl ?? input.url ?? '',
-      });
-      // C1: evidence-only constraint also applies to the local-llm path.
-      // Otherwise an LLM hallucination (e.g. `developer: "Nvidia"` for an
-      // MCP Wikipedia page that says "Anthropic") would escape unchecked.
-      const raw = (llmData ?? {}) as Record<string, unknown>;
-      const allFields = Object.keys(raw);
-      let finalData: Record<string, unknown> = raw;
+    const localTier =
+      mode === 'schema' && input.schema ? await resolveLocalModelTier() : null;
+    if (mode === 'schema' && input.schema && localTier) {
+      // Structure-first: run the deterministic passes (JSON-LD / microdata /
+      // structure fuzzy-match / DOM heuristic) BEFORE the local model, so the
+      // model only fills genuine gaps and structured data is never overwritten
+      // by a model guess. Structure-sourced fields are trusted; only
+      // model-filled fields go through the evidence-only filter. When the tier
+      // is null (flag off — the default — or server down) this whole block is
+      // skipped and control flows to the deterministic schema path below,
+      // byte-for-byte identical to the keyless behavior.
+      const det = extractWithSchemaDetailed(html, input.schema);
+      const structuredValues: Record<string, unknown> = { ...det.values };
+      const missing = Object.keys(input.schema.properties ?? {}).filter(
+        (k) => structuredValues[k] === undefined,
+      );
+
       let warnings: string[] | undefined;
-      if (allFields.length > 0) {
-        const sourceText = getSourceText(html);
-        const filtered = applyEvidenceFilter({
-          values: raw,
-          provenance: {}, // local-llm path has no separate provenance map
-          sourceText,
-          fields: allFields,
+      if (missing.length > 0) {
+        const llmData = await extractWithLocalLlm({
+          schema: input.schema as unknown as Record<string, unknown>,
+          html,
+          url: sourceUrl ?? input.url ?? '',
+          tier: localTier,
         });
-        finalData = filtered.values;
-        if (filtered.rejectedFields.length > 0) {
-          warnings = [
-            `evidence-only filter: nulled ${filtered.rejectedFields.length} ` +
-              `field(s) the LLM proposed but were not present in source text ` +
-              `(${filtered.rejectedFields.join(', ')}).`,
-          ];
+        const raw = (llmData ?? {}) as Record<string, unknown>;
+        // evidence-only constraint applies to the local-llm path: an LLM can
+        // free-form-complete a confidently-wrong value; the verifier nulls
+        // any model field not present in the source text. A rejected field is
+        // set to null (not dropped) so the caller sees it was attempted and
+        // failed verification, not silently absent.
+        const modelFilled = missing.filter(
+          (k) => raw[k] !== undefined && raw[k] !== null && raw[k] !== '',
+        );
+        if (modelFilled.length > 0) {
+          // Note: applyEvidenceFilter verifies string/number/boolean fields
+          // against source but accepts array/object fields by default (see
+          // schema-truth.ts). Model-filled nested array/object fields are thus
+          // grounded by the prompt (verbatim-facts instruction over the
+          // deterministic pre-extraction), not structurally verified here.
+          // Array-level evidence verification is out of scope this round.
+          const filtered = applyEvidenceFilter({
+            values: raw,
+            provenance: {},
+            sourceText: getSourceText(html),
+            fields: modelFilled,
+          });
+          for (const k of modelFilled) {
+            structuredValues[k] = filtered.values[k];
+          }
+          if (filtered.rejectedFields.length > 0) {
+            warnings = [
+              `evidence-only filter: nulled ${filtered.rejectedFields.length} ` +
+                `field(s) the model proposed but were not present in source text ` +
+                `(${filtered.rejectedFields.join(', ')}).`,
+            ];
+          }
         }
       }
       return buildSuccessOutput(
-        finalData,
+        structuredValues,
         sourceUrl,
         'schema',
         input.max_tokens_out,
@@ -359,7 +391,10 @@ export async function handleExtract(
         data = extractSelector(html, input.css_selector!, input.multiple ?? false);
         break;
       case 'tables':
-        data = extractTables(html);
+        // Merge <table>-derived rows with div/flex-grid card structures so a
+        // pricing page built from styled <div>s (no <table>) still returns a
+        // per-tier grid instead of an empty result.
+        data = mergeGridTables(extractTables(html), detectDivGridTables(html));
         break;
       case 'structured':
         data = extractStructured(html);

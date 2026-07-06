@@ -3,7 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'v*.*.*'        # stable, e.g. v1.2.3
+      - 'v*.*.*-*'      # pre-release, e.g. v0.1.39-beta.0
 
 permissions:
   contents: write
@@ -41,10 +42,16 @@ jobs:
           fi
           echo "Tag and package.json agree on version $PKG_VERSION"
 
+      # Beta versions (x.y.z-beta.N) publish to the default `latest` dist-tag so
+      # `npm install wigolo` works during the public beta. (For a separate opt-in
+      # beta channel instead, add `--tag beta`.)
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      # Publish as a normal GitHub Release so the newest version earns the Latest
+      # badge and shows in the repo sidebar. The -beta.N version string is what
+      # marks it as a beta; GitHub's "Pre-release" flag is intentionally not set.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

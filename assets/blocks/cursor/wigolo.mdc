@@ -39,11 +39,6 @@ Default `WIGOLO_SEARCH=core`. Opt-in: `searxng` (legacy aggregator) and `hybrid`
 
 `evidence_score`, `query_understanding`, `brand_collision_warning`, `freshness_signal`, `response_time_ms`, `engine_telemetry`.
 
-## When NOT to use wigolo
-
-- **Click / login / form-fill flows** → `firecrawl-interact`.
-- **Autonomous multi-page extraction beyond `agent`'s scope** → `firecrawl-agent`.
-
 ## Quick Examples
 
 ```json

@@ -1,0 +1,134 @@
+.section {
+  padding-block: 100px 120px;
+  background: var(--bg-warm);
+  border-top: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--line-2);
+}
+.inner {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 80px;
+  align-items: start;
+}
+.head {
+  position: sticky;
+  top: calc(var(--nav-h) + 40px);
+}
+.title {
+  margin-top: 20px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(38px, 5vw, 72px);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.lede {
+  margin-top: 24px;
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--muted);
+  max-width: 34ch;
+}
+.tableWrap {
+  overflow-x: auto;
+}
+.table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.table th,
+.table td {
+  border-bottom: 1px solid var(--line-2);
+}
+.corner {
+  background: var(--surface);
+}
+.tool {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: center;
+  padding: 18px 14px;
+  width: 118px;
+}
+.usHead {
+  background: var(--factory-stage);
+  color: var(--factory-purple);
+}
+.group {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+  text-align: left;
+  padding: 20px 20px 10px;
+  background: var(--surface);
+}
+.rowLabel {
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: 15.5px;
+  color: var(--ink-2);
+  text-align: left;
+  padding: 14px 20px;
+  line-height: 1.4;
+}
+.cell {
+  text-align: center;
+  padding: 14px 12px;
+  color: var(--ink);
+}
+.cell svg {
+  display: inline-block;
+  vertical-align: middle;
+}
+.us {
+  background: var(--factory-stage);
+  color: var(--factory-purple);
+}
+.dash {
+  color: var(--muted-2);
+}
+.word {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+}
+.foot {
+  margin-top: 18px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--muted-2);
+  max-width: 64ch;
+}
+.meter {
+  margin-top: 40px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+@media (max-width: 1024px) {
+  .inner {
+    grid-template-columns: 1fr;
+    gap: 44px;
+  }
+  .head {
+    position: static;
+  }
+}
+@media (max-width: 640px) {
+  .section {
+    padding-block: 64px 72px;
+  }
+}

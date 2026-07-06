@@ -15,6 +15,13 @@ export interface LocalSynthesisOptions {
   timeoutMs?: number;
   maxTokens?: number;
   modelOverride?: string;
+  /**
+   * Opt-in local-model tier (from resolveLocalModelTier). When present, the
+   * keystore gate is bypassed and runLlmText is routed at this endpoint/model —
+   * enabling synthesis when only WIGOLO_LOCAL_LLM is on (no cloud key, no
+   * explicit WIGOLO_LLM_PROVIDER).
+   */
+  tier?: { endpoint: string; model: string };
 }
 
 export interface LocalSynthesisSource {
@@ -33,7 +40,10 @@ export async function synthesizeLocal(
   sources: LocalSynthesisSource[],
   opts: LocalSynthesisOptions = {},
 ): Promise<LocalSynthesisResult> {
-  if (!(await isLlmConfiguredWithKeyStore())) {
+  // A local-model tier is self-configuring: it carries its own endpoint/model,
+  // so it bypasses the keystore gate (that gate only knows about cloud keys and
+  // an explicit WIGOLO_LLM_PROVIDER). Without a tier, require a configured LLM.
+  if (!opts.tier && !(await isLlmConfiguredWithKeyStore())) {
     throw new Error('LLM not configured. Set WIGOLO_LLM_PROVIDER or a provider API key.');
   }
 
@@ -52,16 +62,30 @@ export async function synthesizeLocal(
   });
 
   const prompt =
-    'You answer questions using ONLY the provided sources. Cite each fact with [N] where N is the source number.\n\n' +
+    'You are a research assistant. Answer the question in flowing prose using ONLY ' +
+    'the numbered sources below.\n' +
+    'FORMAT + CITATION RULES (mandatory):\n' +
+    '- Do NOT write a numbered or bulleted list, do NOT use section headings, and ' +
+    'do NOT restate the source titles.\n' +
+    '- Support every sentence with a citation: append the supporting source ' +
+    'number(s) in square brackets at the END of each sentence, e.g. "Tokio uses a ' +
+    'work-stealing scheduler [1]." A single sentence may cite multiple sources, ' +
+    'e.g. [1][2].\n' +
+    '- Never write a factual sentence without a trailing [N] citation.\n\n' +
     `Question: ${question}\n\n` +
     `Sources:\n${sourceBlocks.join('\n\n')}`;
 
   try {
+    // A tier routes via the additive `backend` override — a single-call endpoint
+    // that reads/mutates NO process.env, so concurrent synthesis calls can never
+    // corrupt a shared WIGOLO_LLM_PROVIDER. Without a tier, the existing
+    // env/keystore resolution is preserved exactly.
     const result = await runLlmText({
       prompt,
       maxTokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
-      modelOverride: opts.modelOverride,
+      modelOverride: opts.tier?.model ?? opts.modelOverride,
       timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      ...(opts.tier ? { backend: { url: opts.tier.endpoint, model: opts.tier.model } } : {}),
     });
     log.info('local synthesis ok', { provider: result.provider, model: result.model, latencyMs: result.latencyMs });
     return { text: result.text, citations: extractCitations(result.text) };

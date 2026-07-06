@@ -236,24 +236,6 @@ export function removeMcpJson(configPath: string, keyPath: string[]): void {
   writeFileSync(configPath, JSON.stringify(root, null, 2) + '\n', 'utf-8');
 }
 
-/**
- * Detect firecrawl skill directories already present in the given skills base.
- * Used to print a disambiguation notice at install time so the user understands
- * how wigolo and firecrawl skills will interact in the same agent host.
- */
-export function detectFirecrawlSkills(skillsBase: string): string[] {
-  if (!existsSync(skillsBase)) return [];
-  let entries: string[];
-  try {
-    entries = readdirSync(skillsBase);
-  } catch {
-    return [];
-  }
-  return entries
-    .filter((name) => name === 'firecrawl' || name.startsWith('firecrawl-'))
-    .sort();
-}
-
 /** Detect whether wigolo is installed globally and return the appropriate command. */
 export function getMcpCommand(): { command: string; args: string[] } {
   try {
@@ -267,5 +249,5 @@ export function getMcpCommand(): { command: string; args: string[] } {
   } catch {
     // not found globally
   }
-  return { command: 'npx', args: ['-y', '@staticn0va/wigolo'] };
+  return { command: 'npx', args: ['-y', 'wigolo'] };
 }

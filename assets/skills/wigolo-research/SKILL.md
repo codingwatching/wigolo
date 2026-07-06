@@ -1,7 +1,7 @@
 ---
 name: wigolo-research
 description: |
-  Local-first multi-step research with question decomposition, parallel search, structured briefs, cross-references, and gap analysis. Use when the user needs comprehensive analysis, comparison reports, literature reviews, or says "research", "compare X vs Y", "deep dive", "thorough analysis", "find everything about". Returns a structured `brief` with `topics`, `highlights`, `key_findings`, `sections.overview.cross_references`, `sections.comparison`, `sections.gaps`. No equivalent in firecrawl.
+  Local-first multi-step research with question decomposition, parallel search, structured briefs, cross-references, and gap analysis. Use when the user needs comprehensive analysis, comparison reports, literature reviews, or says "research", "compare X vs Y", "deep dive", "thorough analysis", "find everything about". Returns a structured `brief` with `topics`, `highlights`, `key_findings`, `sections.overview.cross_references`, `sections.comparison`, `sections.gaps`.
 ---
 
 # wigolo research

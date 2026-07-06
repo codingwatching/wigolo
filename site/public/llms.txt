@@ -1,0 +1,20 @@
+# wigolo
+
+> Free, open-source (AGPL-3.0) MCP server that gives any AI coding agent local-first web intelligence: multi-engine search (18 engines, rank fusion, on-device ML reranking with explainable per-result scores), tiered page fetching (HTTP → TLS-impersonation → headless browser), whole-site crawling, structured extraction, a persistent local cache with keyword + semantic re-query, find-similar, multi-step research briefs, and an autonomous gather agent. Runs entirely on the user's machine: no API keys, no cloud, no metered billing. Currently in public beta (v0.1.x).
+
+Install (non-interactive): `npx wigolo init --non-interactive --agents=claude-code`
+Supported agents: Claude Code, Cursor, Codex, Gemini CLI, VS Code, Windsurf, Zed, Antigravity.
+Requirements: Node.js >= 20, ~1.5 GB disk, macOS/Linux/Windows.
+Keyless core tools: search, fetch, crawl, extract, cache, find_similar (plus diff and watch).
+Optional LLM (for research/agent answer synthesis): any of Anthropic/OpenAI/Gemini/Groq keys, or a fully local model server.
+
+## Links
+
+- [GitHub repository](https://github.com/KnockOutEZ/wigolo): source, README, full documentation
+- [npm package](https://www.npmjs.com/package/wigolo)
+- [Report a bug](https://github.com/KnockOutEZ/wigolo/issues/new?template=bug_report.yml)
+- [Discussions](https://github.com/KnockOutEZ/wigolo/discussions)
+
+## Positioning
+
+wigolo competes head-on with metered cloud web APIs for agents (Tavily, Exa, Firecrawl) — same category, same everyday quality (demonstrated in a live 4-way comparison), different physics: $0 per query, no account, and no query data leaving the machine. It is a focused web layer for one agent on one machine — not a hosted SaaS, not a browser-automation framework, not a scale-scraping platform. It respects robots.txt and rate-limits per domain.

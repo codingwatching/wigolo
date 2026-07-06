@@ -90,6 +90,12 @@ export async function runInit(args: string[]): Promise<number> {
     const code = await runConfig(configArgs);
     if (code !== 0) return code;
 
+    // If the user navigated to the uninstall screen and wiped wigolo mid-session,
+    // skip warmup entirely — reinstalling components after an intentional uninstall
+    // would recreate ~/.wigolo against the user's wishes.
+    const { wasUninstalled } = await import('./tui/state/uninstall-signal.js');
+    if (wasUninstalled()) return 0;
+
     // Parity with the non-interactive path: the Ink wizard configures agents and
     // settings but installs no tools. Run the full warmup AFTER the Ink shell has
     // unmounted (runConfig has returned) so warmup's own progress output owns the
@@ -236,19 +242,6 @@ async function runInitPlain(flags: InitFlagsResolved): Promise<number> {
   // the others to be reported as "skipped".
   {
     const { getAgentHandler } = await import('./agents/registry.js');
-    const { detectFirecrawlSkills } = await import('./agents/utils.js');
-    const { homedir } = await import('node:os');
-    const { join: pathJoin } = await import('node:path');
-
-    if (selected.includes('claude-code' as AgentId)) {
-      const firecrawl = detectFirecrawlSkills(pathJoin(homedir(), '.claude', 'skills'));
-      if (firecrawl.length > 0) {
-        out();
-        out(`  ${info(`Detected firecrawl skills (${firecrawl.join(', ')}).`)}`);
-        out(`    ${chalk.gray('Wigolo will be preferred for local/cached/transparent searches.')}`);
-        out(`    ${chalk.gray('See ~/.claude/skills/wigolo-search/SKILL.md for the boundaries.')}`);
-      }
-    }
 
     for (const id of selected) {
       const handler = getAgentHandler(id);

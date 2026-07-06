@@ -1,0 +1,218 @@
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  width: 100%;
+  transition: background 0.25s var(--ease), box-shadow 0.25s var(--ease),
+    backdrop-filter 0.25s var(--ease);
+}
+.scrolled {
+  background: rgba(244, 244, 240, 0.82);
+  backdrop-filter: saturate(1.2) blur(14px);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
+}
+.inner {
+  display: flex;
+  align-items: center;
+  gap: 40px;
+  height: var(--nav-h);
+  max-width: var(--maxw);
+  margin-inline: auto;
+  padding-inline: var(--pad-x);
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.brand img {
+  width: 30px;
+  height: 26px;
+}
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 25px;
+  letter-spacing: -0.01em;
+}
+.menu {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.menuItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-body);
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--ink);
+  padding: 8px 12px;
+  border-radius: 6px;
+  transition: background 0.15s, opacity 0.15s;
+}
+.menuItem:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+.caret {
+  opacity: 0.55;
+  margin-top: 1px;
+  transition: transform 0.2s var(--ease);
+}
+.navItem {
+  position: relative;
+}
+.navItem:hover .caret,
+.navItem:focus-within .caret {
+  transform: rotate(180deg);
+}
+
+/* ---- dropdown panel ---- */
+.panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 12px;
+  min-width: 300px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 24px 64px -24px rgba(20, 15, 40, 0.28),
+    0 4px 14px -8px rgba(20, 15, 40, 0.12);
+  padding: 10px;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-8px);
+  transition: opacity 0.2s var(--ease), transform 0.2s var(--ease),
+    visibility 0.2s var(--ease);
+  z-index: 120;
+}
+/* invisible bridge so the cursor can cross the gap without closing */
+.panel::before {
+  content: "";
+  position: absolute;
+  top: -14px;
+  left: 0;
+  right: 0;
+  height: 14px;
+}
+.panelWide {
+  min-width: 560px;
+}
+.navItem:hover .panel,
+.navItem:focus-within .panel {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+.panelGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+}
+.panelWide .panelGrid {
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+}
+.panelLink {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  transition: background 0.15s var(--ease);
+}
+.panelLink:hover {
+  background: rgba(0, 0, 0, 0.045);
+}
+.panelTitle {
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.panelMono {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--factory-purple);
+}
+.panelDesc {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.right {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  margin-left: auto;
+}
+.gh {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+.gh:hover {
+  opacity: 0.6;
+}
+.contact {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+.contact:hover {
+  opacity: 0.6;
+}
+.download {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--black);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 500;
+  padding: 11px 16px;
+  border-radius: 5px;
+  transition: background 0.16s var(--ease);
+}
+.download:hover {
+  background: #2a2a28;
+}
+.apple {
+  margin-bottom: 1px;
+}
+.key {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: #cfcdc7;
+}
+
+@media (max-width: 1180px) {
+  .menu {
+    display: none;
+  }
+}
+@media (max-width: 720px) {
+  .contact,
+  .gh {
+    display: none;
+  }
+  .inner {
+    gap: 16px;
+  }
+}

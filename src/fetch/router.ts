@@ -19,6 +19,7 @@ import {
   getDomainRouting,
   recordTlsImpersonationSuccess,
 } from '../cache/store.js';
+import { anySignal } from '../util/abort.js';
 import type { RawFetchResult, BrowserAction, Mode, StageError } from '../types.js';
 import { guardNavigation, type NavSource } from '../security/ssrf.js';
 
@@ -40,7 +41,7 @@ const KNOWN_SPA_DOMAINS = new Set<string>([
   'nuxt.com',
 ]);
 
-// Wave-2 W4: known anti-bot, connection-timeout-prone CONTENT domains. These
+// Known anti-bot, connection-timeout-prone CONTENT domains. These
 // close the connection / time out BEFORE returning a 4xx/5xx, so the
 // signal-based HTTP→TLS escalation never sees a response to react to — the
 // plain-HTTP fetch just burns the whole per-fetch budget on a doomed call and
@@ -117,6 +118,10 @@ export interface BrowserPoolInterface {
     url: string,
     options?: { headers?: Record<string, string>; storageStatePath?: string; userDataDir?: string; screenshot?: boolean; actions?: BrowserAction[]; cdpUrl?: string; signal?: AbortSignal },
   ): Promise<RawFetchResult>;
+  /** Optional pre-launch of the browser engine so a later fetch doesn't pay
+   *  cold-start inline. Idempotent + best-effort. Pools that don't implement it
+   *  simply skip prewarming. */
+  warm?(): Promise<void>;
 }
 
 export type HttpFetcher = (
@@ -130,7 +135,7 @@ export type PlaywrightFetcher = (
 ) => Promise<{ html: string; text: string }>;
 
 /**
- * Slice D2: injectable TLS-impersonation fetcher. Same shape as `tlsFetch`
+ * Injectable TLS-impersonation fetcher. Same shape as `tlsFetch`
  * from tls-tier.ts; left injectable so unit tests can stub without touching
  * the wreq-js native binary.
  */
@@ -138,6 +143,13 @@ export type TlsFetcher = (
   url: string,
   options?: { headers?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal },
 ) => Promise<TlsFetchResult>;
+
+/**
+ * Cheap content-type probe. Resolves true when the URL serves a PDF (by HEAD
+ * content-type or magic-bytes). Injectable so router tests don't hit the
+ * network. Defaults to {@link defaultPdfProbe}.
+ */
+export type PdfProbe = (url: string, signal?: AbortSignal) => Promise<boolean>;
 
 /** Pluggable hooks to learning/persistence layer so router tests don't need a DB. */
 export interface TlsRoutingPersistence {
@@ -150,15 +162,106 @@ export interface SmartRouterOptions {
   browserPool?: BrowserPoolInterface;
   httpFetcher?: HttpFetcher;
   playwrightFetcher?: PlaywrightFetcher;
-  /** Slice D2 — when provided, overrides the default lazy-loaded wreq backend. */
+  /** When provided, overrides the default lazy-loaded wreq backend. */
   tlsFetcher?: TlsFetcher;
-  /** Slice D2 — persistence for `prefer_tls_impersonation` learning. */
+  /** Persistence for `prefer_tls_impersonation` learning. */
   tlsPersistence?: TlsRoutingPersistence;
+  /** Overrides the default HEAD/magic-bytes PDF probe (tests inject a stub). */
+  pdfProbe?: PdfProbe;
 }
 
 interface DomainStats {
   failureCount: number;
   preferPlaywright: boolean;
+}
+
+// Path extensions that a browser treats as a file download rather than a
+// navigable document. Chromium fires a download event / throws "Download is
+// starting" on these, so they must be buffered by the byte tier instead of
+// being handed to Playwright. Pattern-level (extension set), NOT a site list.
+const BINARY_DOWNLOAD_EXTENSIONS = [
+  '.pdf', '.zip',
+  '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+];
+
+// True when the URL's pathname ends in a known binary-download extension.
+// Returns false (never throws) for malformed URLs.
+export function looksLikeBinaryDownload(url: string): boolean {
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return BINARY_DOWNLOAD_EXTENSIONS.some((ext) => pathname.endsWith(ext));
+}
+
+// The leading bytes of every PDF file. Used as a content-sniff fallback when a
+// server serves a PDF without a distinguishing content-type header.
+const PDF_MAGIC = '%PDF-';
+
+/**
+ * True when an HTTP/TLS-tier result is a PDF regardless of URL extension —
+ * either the response advertised `application/pdf`, or the buffered bytes begin
+ * with the PDF magic marker. A PDF response is a completed byte-tier result and
+ * must never be re-routed to the browser (which treats it as a download and
+ * hard-errors "Download is starting"). Extension-independent by design.
+ */
+export function looksLikePdfResult(result: { contentType?: string; rawBuffer?: Buffer }): boolean {
+  const ct = result.contentType?.toLowerCase() ?? '';
+  if (ct.includes('application/pdf')) return true;
+  const buf = result.rawBuffer;
+  if (buf && buf.length >= PDF_MAGIC.length) {
+    return buf.subarray(0, PDF_MAGIC.length).toString('latin1') === PDF_MAGIC;
+  }
+  return false;
+}
+
+/**
+ * Cheap content-type probe: a HEAD request that reads only `Content-Type`, with
+ * a bounded ranged-GET magic-bytes fallback when HEAD is unreliable (blocked /
+ * missing header). Resolves true when the URL serves a PDF, false otherwise or
+ * on any error — a probe failure must never block a fetch. Bounded to a short
+ * timeout so it adds minimal latency and can only run when we are already about
+ * to pay a browser cold-start.
+ */
+export async function defaultPdfProbe(url: string, signal?: AbortSignal): Promise<boolean> {
+  const probeTimeoutMs = 3000;
+  const timeout = AbortSignal.timeout(probeTimeoutMs);
+  const combined = signal ? anySignal([signal, timeout]) : { signal: timeout, cleanup: () => {} };
+  try {
+    const head = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: combined.signal });
+    const ct = head.headers.get('content-type')?.toLowerCase() ?? '';
+    if (ct.includes('application/pdf')) return true;
+    // HEAD returned a definitive non-PDF content-type → trust it, skip the GET.
+    if (ct && !ct.includes('application/octet-stream')) return false;
+    // No / ambiguous content-type: sniff the first bytes with a ranged GET.
+    const ranged = await fetch(url, {
+      method: 'GET',
+      redirect: 'follow',
+      headers: { Range: 'bytes=0-15' },
+      signal: combined.signal,
+    });
+    const rangedCt = ranged.headers.get('content-type')?.toLowerCase() ?? '';
+    if (rangedCt.includes('application/pdf')) return true;
+    // Read only the first chunk from the stream — a server that ignores the
+    // Range header would otherwise stream the whole file into memory. We only
+    // need the 5-byte %PDF- marker; cancel the body once we have it.
+    const reader = ranged.body?.getReader();
+    if (!reader) return false;
+    try {
+      const { value } = await reader.read();
+      if (!value) return false;
+      const head5 = Buffer.from(value.subarray(0, PDF_MAGIC.length)).toString('latin1');
+      return head5 === PDF_MAGIC;
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+  } catch {
+    return false;
+  } finally {
+    combined.cleanup();
+  }
 }
 
 function isKnownSpaDomain(host: string): boolean {
@@ -180,7 +283,7 @@ function matchesDomainSet(host: string, set: Set<string> | readonly string[]): b
 }
 
 /**
- * Wave-2 W4: a domain is in the anti-bot TLS-first set when it is in the
+ * A domain is in the anti-bot TLS-first set when it is in the
  * built-in {@link ANTI_BOT_TLS_DOMAINS} list OR the operator-supplied
  * WIGOLO_TLS_DOMAINS list. Both match the host exactly or as a subdomain.
  */
@@ -189,7 +292,7 @@ function isAntiBotTlsDomain(host: string, extra: readonly string[]): boolean {
 }
 
 /**
- * Slice C/3 (FIX2): public predicate over a full URL. True when the URL's host
+ * Public predicate over a full URL. True when the URL's host
  * is in the curated anti-bot/TLS-first set or the operator-supplied
  * WIGOLO_TLS_DOMAINS list — i.e. the same domains {@link SmartRouter.fetch}
  * routes through the TLS-impersonation tier first. The search-hydration path
@@ -207,7 +310,7 @@ export function isAntiBotTlsFirstUrl(url: string, extraDomains: readonly string[
   return isAntiBotTlsDomain(host, extraDomains);
 }
 
-// Wave-2 W4: connection-level timeout / reset errors that surface as a THROW
+// Connection-level timeout / reset errors that surface as a THROW
 // (no HTTP status) rather than a response. Mirrors the retryable set the HTTP
 // client uses; the AbortSignal.timeout path throws TimeoutError, while raw
 // socket failures carry a Node error `code`.
@@ -228,6 +331,7 @@ export class SmartRouter {
   private readonly playwrightFetcher: PlaywrightFetcher;
   private readonly tlsFetcher: TlsFetcher;
   private readonly tlsPersistence: TlsRoutingPersistence;
+  private readonly pdfProbe: PdfProbe;
 
   constructor(httpClient: HttpClient, browserPool: BrowserPoolInterface);
   constructor(options: SmartRouterOptions);
@@ -246,7 +350,8 @@ export class SmartRouter {
         'httpFetcher' in httpClientOrOptions ||
         'playwrightFetcher' in httpClientOrOptions ||
         'tlsFetcher' in httpClientOrOptions ||
-        'tlsPersistence' in httpClientOrOptions)
+        'tlsPersistence' in httpClientOrOptions ||
+        'pdfProbe' in httpClientOrOptions)
     ) {
       const opts = httpClientOrOptions as SmartRouterOptions;
       if (!opts.httpFetcher && !opts.httpClient) {
@@ -258,6 +363,7 @@ export class SmartRouter {
       this.playwrightFetcher = opts.playwrightFetcher ?? fetchWithPlaywright;
       this.tlsFetcher = opts.tlsFetcher ?? tlsFetch;
       this.tlsPersistence = opts.tlsPersistence ?? defaultTlsPersistence();
+      this.pdfProbe = opts.pdfProbe ?? defaultPdfProbe;
       return;
     } else {
       // Backwards-compat: single HttpClient positional (unusual but safe)
@@ -267,6 +373,7 @@ export class SmartRouter {
     this.playwrightFetcher = fetchWithPlaywright;
     this.tlsFetcher = tlsFetch;
     this.tlsPersistence = defaultTlsPersistence();
+    this.pdfProbe = defaultPdfProbe;
   }
 
   private makeDefaultHttpFetcher(): HttpFetcher {
@@ -277,6 +384,43 @@ export class SmartRouter {
       const r = await this.httpClient.fetch(url, opts);
       return { url: r.url, html: r.html, text: '' };
     };
+  }
+
+  /**
+   * Dispatch an implicit/auto-path fetch that would otherwise go to the browser
+   * tier. A browser treats a PDF response as a download and hard-errors
+   * ("Download is starting"), so — for URLs whose extension didn't already
+   * short-circuit to HTTP — we run a cheap content-type probe first. When the
+   * probe says PDF, the fetch is served by the byte tier instead. The probe
+   * only runs on this browser-bound path, so normal HTML fetches (which are
+   * served HTTP-first) never pay for it.
+   */
+  private async browserOrHttpForBinary(
+    url: string,
+    domain: string,
+    opts: { headers?: Record<string, string>; screenshot?: boolean; conditionalHeaders?: RouterFetchOptions['conditionalHeaders']; signal?: AbortSignal },
+    logger: ReturnType<typeof createLogger>,
+  ): Promise<RawFetchResult> {
+    const { headers, screenshot, conditionalHeaders, signal } = opts;
+    // An extension-typed binary already routed to HTTP upstream, so this probe
+    // only fires for extensionless URLs about to hit the browser.
+    if (!looksLikeBinaryDownload(url)) {
+      let isPdf = false;
+      try {
+        isPdf = await this.pdfProbe(url, signal);
+      } catch {
+        isPdf = false;
+      }
+      if (isPdf) {
+        if (!this.httpClient) throw new Error('SmartRouter: httpClient not configured');
+        logger.debug('content-type probe identified a PDF, routing to http instead of browser', { url, domain });
+        const result = await this.httpClient.fetch(url, { headers, conditionalHeaders, signal });
+        this.ensureStats(domain);
+        return this.toRawFetchResult(result);
+      }
+    }
+    if (!this.browserPool) throw new Error('SmartRouter: browserPool not configured');
+    return this.browserPool.fetchWithBrowser(url, { headers, screenshot, signal });
   }
 
   async fetch(url: string, options: RouterFetchOptions & { mode: 'stealth' }): Promise<RawFetchResult | StageError>;
@@ -405,7 +549,7 @@ export class SmartRouter {
       logger.debug('routing to http (never)', { url });
       const result = await this.httpClient.fetch(url, { headers, conditionalHeaders, signal });
       const neverStats = this.ensureStats(domain);
-      // Slice 5 (audit H4): a known-SPA domain that returns substantive
+      // A known-SPA domain that returns substantive
       // HTTP content on a render_js: never call proves the domain is
       // reachable without a browser. Reset the sticky pre-mark so a
       // subsequent default-mode fetch on the same domain skips Playwright.
@@ -420,16 +564,30 @@ export class SmartRouter {
       return this.toRawFetchResult(result);
     }
 
+    // Binary downloads (PDF/zip/office docs) must go to the byte tier: the
+    // HTTP/TLS tiers buffer them into rawBuffer, but a browser treats a
+    // download response as a "Download is starting" hard error. Force HTTP when
+    // the URL looks like a binary download. Explicit browser requests
+    // (renderJs='always' / useAuth / actions) already returned above and are
+    // honored; renderJs='never' is already HTTP-only — so this only affects the
+    // implicit auto path where the domain might otherwise prefer Playwright.
+    if (looksLikeBinaryDownload(url)) {
+      if (!this.httpClient) throw new Error('SmartRouter: httpClient not configured');
+      logger.debug('routing to http (binary download)', { url });
+      const result = await this.httpClient.fetch(url, { headers, conditionalHeaders, signal });
+      this.ensureStats(domain);
+      return this.toRawFetchResult(result);
+    }
+
     // auto: check if domain is already marked for Playwright
     const stats = this.ensureStats(domain);
 
     if (stats.preferPlaywright) {
-      if (!this.browserPool) throw new Error('SmartRouter: browserPool not configured');
       logger.debug('routing to playwright (domain marked)', { url, domain });
-      return this.browserPool.fetchWithBrowser(url, { headers, screenshot, signal });
+      return this.browserOrHttpForBinary(url, domain, { headers, screenshot, conditionalHeaders, signal }, logger);
     }
 
-    // Slice D2 + Wave-2 W4: decide whether to try the TLS-impersonation tier
+    // Decide whether to try the TLS-impersonation tier
     // before HTTP. We try TLS-first when:
     //   - WIGOLO_TLS_TIER=on, or
     //   - WIGOLO_TLS_TIER=auto AND the domain has been promoted via repeated
@@ -468,7 +626,17 @@ export class SmartRouter {
         return this.toRawFetchResult(result);
       }
 
-      // Slice 5 (audit H4): a 429 without a challenge body is a rate-limit,
+      // A PDF response is a completed byte-tier result. The HTTP tier returns
+      // it with empty html + rawBuffer; without this short-circuit the empty
+      // html trips the SPA-shell heuristic below and escalates to the browser,
+      // which hard-errors on the download. Recognise it by content-type or
+      // magic bytes — extensionless PDFs (arxiv.org/pdf/<id>) land here too.
+      if (looksLikePdfResult(result)) {
+        logger.debug('http returned a PDF, passing through (no browser escalation)', { url, domain });
+        return this.toRawFetchResult(result);
+      }
+
+      // A 429 without a challenge body is a rate-limit,
       // not an anti-bot wall. Playwright cannot bypass a rate limit, so
       // escalation just pays the browser cold-start cost. Surface the 429
       // directly so callers (tools/fetch.ts) can map it to a stage error.
@@ -477,7 +645,7 @@ export class SmartRouter {
         return this.toRawFetchResult(result);
       }
 
-      // Slice D2: anti-bot signal (403/503 or challenge body, plus 429 with
+      // Anti-bot signal (403/503 or challenge body, plus 429 with
       // a challenge body) escalates to the TLS tier first when
       // WIGOLO_TLS_TIER is auto/on; if the TLS tier also fails or isn't
       // installed, fall through to Playwright.
@@ -497,7 +665,7 @@ export class SmartRouter {
         return this.browserPool.fetchWithBrowser(url, { headers, screenshot, signal });
       }
 
-      // Slice 5 (audit H4): with TLS tier disabled, escalate to Playwright
+      // With TLS tier disabled, escalate to Playwright
       // only when we have a STRONG anti-bot signal — a Cloudflare/DataDome
       // challenge body. A bare 403 (or any anti-bot status code without a
       // challenge marker) is NOT enough on its own: an admin endpoint
@@ -518,7 +686,7 @@ export class SmartRouter {
         return this.browserPool.fetchWithBrowser(url, { headers, screenshot, signal });
       }
 
-      // Slice 5 (audit H4): SPA-shell detection is only meaningful for 2xx
+      // SPA-shell detection is only meaningful for 2xx
       // responses. A 4xx/5xx body is an error page, not a hydration shell —
       // escalating to Playwright won't recover content the server refuses
       // to ship. Pass non-2xx through; tools/fetch.ts surfaces them as
@@ -532,7 +700,7 @@ export class SmartRouter {
         return this.browserPool.fetchWithBrowser(url, { headers, screenshot, signal });
       }
 
-      // Slice 5 (audit H4): a known-SPA domain (pre-marked preferPlaywright
+      // A known-SPA domain (pre-marked preferPlaywright
       // via KNOWN_SPA_DOMAINS) that returns a substantive HTTP response
       // demonstrates the domain is reachable without a browser. Reset the
       // sticky pre-mark so subsequent requests skip the Playwright cold
@@ -555,7 +723,7 @@ export class SmartRouter {
         error: err instanceof Error ? err.message : String(err),
       });
 
-      // Wave-2 W4: timeout-as-escalation-signal. Anti-bot content domains (and
+      // Timeout-as-escalation-signal. Anti-bot content domains (and
       // any domain when the global tier is on) close the connection / time out
       // BEFORE returning a status code, so the response-based escalation above
       // never fires. When the HTTP attempt throws a timeout/connection error
@@ -585,6 +753,18 @@ export class SmartRouter {
 
   getDomainStats(domain: string): DomainStats | undefined {
     return this.domainMap.get(domain);
+  }
+
+  /**
+   * Pre-launch the browser engine so a subsequent fetch that escalates to the
+   * browser doesn't pay the cold-start inline. Best-effort and idempotent —
+   * a no-op when no browser pool is configured or the pool doesn't support
+   * warming. Latency-only; never changes fetch results.
+   */
+  async prewarmBrowser(): Promise<void> {
+    if (this.browserPool?.warm) {
+      await this.browserPool.warm();
+    }
   }
 
   private ensureStats(domain: string): DomainStats {
@@ -622,7 +802,7 @@ export class SmartRouter {
     };
   }
 
-  // --- Slice D2: TLS-impersonation tier helpers ---
+  // --- TLS-impersonation tier helpers ---
 
   /**
    * Attempt the TLS-impersonation tier for `url`. Returns:
@@ -658,6 +838,31 @@ export class SmartRouter {
         error: err instanceof Error ? err.message : String(err),
       });
       return { ok: false, reason: 'error', error: err };
+    }
+
+    // A PDF from the TLS tier is a completed byte result: empty html + rawBuffer.
+    // Return it before the js-required check, which would otherwise treat the
+    // empty html as a "please enable JS" shell (looksJsRequired('') is true) and
+    // escalate to the browser — where the PDF download hard-errors.
+    if (looksLikePdfResult(r)) {
+      try {
+        this.tlsPersistence.recordSuccess(domain);
+      } catch {
+        // Persistence is best-effort — never block a successful fetch.
+      }
+      return {
+        ok: true,
+        result: {
+          url: r.url,
+          finalUrl: r.finalUrl,
+          html: r.html,
+          contentType: r.contentType,
+          statusCode: r.statusCode,
+          method: 'tls-impersonation',
+          headers: r.headers,
+          rawBuffer: r.rawBuffer,
+        },
+      };
     }
 
     if (isAntiBotSignal(r.statusCode, r.html)) {

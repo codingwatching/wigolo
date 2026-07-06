@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="440" viewBox="0 0 880 440" role="img" aria-label="wigolo's fetch escalation ladder: plain HTTP first, TLS-impersonation on anti-bot challenges, headless browser on SPA shells — decided by observed signals, learned per domain">
+  <style>
+    .mono { font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace; }
+    .eyebrow { font-size: 11px; letter-spacing: 2.2px; fill: #595f60; font-weight: 500; }
+    .tiny { font-size: 10.5px; fill: #8b9092; }
+    .small { font-size: 12px; fill: #595f60; }
+
+    @keyframes hop {
+      0%, 8%   { transform: translateY(0); }
+      26%, 40% { transform: translateY(104px); }
+      58%, 78% { transform: translateY(208px); }
+      92%, 100%{ transform: translateY(0); }
+    }
+    .pulse { animation: hop 8s cubic-bezier(0.16, 1, 0.3, 1) infinite; }
+
+    @keyframes ping { 0% { r: 7; opacity: 0.7; } 70% { r: 16; opacity: 0; } 100% { r: 16; opacity: 0; } }
+    .ping { animation: ping 2s ease-out infinite; }
+
+    @keyframes sigA { 0%, 10% { opacity: 0; } 16%, 30% { opacity: 1; } 36%, 100% { opacity: 0; } }
+    @keyframes sigB { 0%, 42% { opacity: 0; } 48%, 66% { opacity: 1; } 72%, 100% { opacity: 0; } }
+    .sigA { opacity: 0; animation: sigA 8s linear infinite; }
+    .sigB { opacity: 0; animation: sigB 8s linear infinite; }
+  </style>
+
+  <rect width="880" height="440" fill="#f4f4f0"/>
+  <rect x="1.5" y="1.5" width="877" height="437" fill="none" stroke="#dbdfe0"/>
+
+  <text x="36" y="46" class="mono eyebrow">WIGOLO · SMART FETCH</text>
+  <text x="36" y="74" class="mono" font-size="26" fill="#0c0c09" font-weight="700">THE ESCALATION LADDER</text>
+  <text x="844" y="46" text-anchor="end" class="mono tiny">routed on what the page does — not its domain</text>
+  <line x1="36" y1="92" x2="844" y2="92" stroke="#dbdfe0"/>
+
+  <!-- rail -->
+  <line x1="78" y1="140" x2="78" y2="348" stroke="#dbdfe0" stroke-width="2"/>
+
+  <!-- pulse dot -->
+  <g class="pulse">
+    <circle class="ping" cx="78" cy="140" r="7" fill="none" stroke="#523c79" stroke-width="2"/>
+    <circle cx="78" cy="140" r="7" fill="#523c79"/>
+  </g>
+
+  <!-- rung 1 -->
+  <g>
+    <rect x="110" y="112" width="540" height="56" rx="8" fill="#ffffff" stroke="#dbdfe0"/>
+    <text x="130" y="136" class="mono" font-size="14" fill="#0c0c09" font-weight="700">1 · PLAIN HTTP</text>
+    <text x="130" y="156" class="mono small">the fast path — most pages end here</text>
+  </g>
+  <!-- signal 1->2 -->
+  <g class="sigA">
+    <text x="130" y="192" class="mono" font-size="11.5" fill="#b0532f">↓ challenge body detected · 403 wall</text>
+  </g>
+
+  <!-- rung 2 -->
+  <g>
+    <rect x="110" y="216" width="540" height="56" rx="8" fill="#ffffff" stroke="#dbdfe0"/>
+    <text x="130" y="240" class="mono" font-size="14" fill="#0c0c09" font-weight="700">2 · TLS-IMPERSONATION</text>
+    <text x="130" y="260" class="mono small">real-browser fingerprints, no render cost</text>
+  </g>
+  <!-- signal 2->3 -->
+  <g class="sigB">
+    <text x="130" y="296" class="mono" font-size="11.5" fill="#b0532f">↓ SPA shell · thin content</text>
+  </g>
+
+  <!-- rung 3 -->
+  <g>
+    <rect x="110" y="320" width="540" height="56" rx="8" fill="#ffffff" stroke="#dbdfe0"/>
+    <text x="130" y="344" class="mono" font-size="14" fill="#0c0c09" font-weight="700">3 · HEADLESS BROWSER</text>
+    <text x="130" y="364" class="mono small">full render, from a warm in-process pool</text>
+  </g>
+
+  <!-- memory note -->
+  <g>
+    <rect x="678" y="112" width="166" height="264" rx="8" fill="#f3ecff" stroke="#cbb0f7"/>
+    <text x="698" y="140" class="mono eyebrow" fill="#523c79">PER-DOMAIN</text>
+    <text x="698" y="156" class="mono eyebrow" fill="#523c79">MEMORY</text>
+    <text x="698" y="186" class="mono" font-size="11.5" fill="#523c79">escalates when a</text>
+    <text x="698" y="202" class="mono" font-size="11.5" fill="#523c79">site fights back.</text>
+    <text x="698" y="230" class="mono" font-size="11.5" fill="#523c79">steps back down</text>
+    <text x="698" y="246" class="mono" font-size="11.5" fill="#523c79">when it stops.</text>
+    <text x="698" y="282" class="mono tiny" fill="#523c79">no domain lists.</text>
+    <text x="698" y="296" class="mono tiny" fill="#523c79">no guesses.</text>
+    <text x="698" y="310" class="mono tiny" fill="#523c79">observed signals</text>
+    <text x="698" y="324" class="mono tiny" fill="#523c79">only.</text>
+  </g>
+
+  <!-- footer -->
+  <line x1="36" y1="400" x2="844" y2="400" stroke="#dbdfe0"/>
+  <text x="36" y="422" class="mono small">Zero-key installs pay nothing for tiers they never use.</text>
+  <text x="844" y="422" text-anchor="end" class="mono tiny">wigolo — local-first web intelligence over MCP</text>
+</svg>

@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="668" viewBox="0 0 920 668" role="img" aria-label="Anatomy of a wigolo search result: explainable score decomposition, live engine telemetry, surfaced degradation, and self-flagged junk — from one real query">
+  <style>
+    .mono { font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace; }
+    .eyebrow { font-size: 11px; letter-spacing: 2.2px; fill: #595f60; font-weight: 500; }
+    .tiny { font-size: 10.5px; fill: #8b9092; }
+    .small { font-size: 12px; fill: #595f60; }
+    .body { font-size: 13px; fill: #0c0c09; }
+    .num { font-size: 13px; fill: #523c79; font-weight: 700; }
+    .ok { fill: #595f60; }
+    .err { fill: #b0532f; }
+  </style>
+
+  <!-- paper -->
+  <rect width="920" height="668" fill="#f4f4f0"/>
+  <rect x="1.5" y="1.5" width="917" height="665" fill="none" stroke="#dbdfe0" stroke-width="1"/>
+
+  <!-- header -->
+  <text x="36" y="46" class="mono eyebrow">WIGOLO · EVIDENCE</text>
+  <text x="36" y="74" class="mono" font-size="26" fill="#0c0c09" font-weight="700">ANATOMY OF A RESULT</text>
+  <text x="884" y="46" text-anchor="end" class="mono tiny">one real query · captured live · 2026-07-05</text>
+  <text x="884" y="62" text-anchor="end" class="mono tiny">"postgres logical vs streaming replication"</text>
+  <line x1="36" y1="92" x2="884" y2="92" stroke="#dbdfe0"/>
+
+  <!-- ============ result card (left) ============ -->
+  <g>
+    <rect x="36" y="116" width="428" height="196" rx="8" fill="#ffffff" stroke="#dbdfe0"/>
+    <text x="56" y="146" class="mono tiny" letter-spacing="1.5">RESULT #1 OF 5</text>
+    <!-- score chip -->
+    <rect x="368" y="130" width="76" height="26" rx="13" fill="#f3ecff"/>
+    <text x="406" y="147" text-anchor="middle" class="mono" font-size="13" fill="#523c79" font-weight="700">0.928</text>
+
+    <text x="56" y="176" class="mono body" font-weight="700">26.1. Comparison of Different Solutions</text>
+    <text x="56" y="196" class="mono" font-size="12" fill="#523c79">postgresql.org/docs/current/different-replication-solutions</text>
+    <text x="56" y="224" class="mono small">"PostgreSQL logical replication constructs a stream of</text>
+    <text x="56" y="241" class="mono small">logical data modifications from the WAL. Logical</text>
+    <text x="56" y="258" class="mono small">replication allows replication changes per-table…"</text>
+    <text x="56" y="290" class="mono tiny">citation [1] · full markdown cached under ~/.wigolo/</text>
+  </g>
+
+  <!-- connector: card -> score panel -->
+  <path d="M 464 180 H 500" stroke="#cbb0f7" stroke-width="1.5" fill="none"/>
+  <circle cx="464" cy="180" r="3" fill="#523c79"/>
+
+  <!-- ============ score decomposition (right top) ============ -->
+  <g>
+    <rect x="500" y="116" width="384" height="196" rx="8" fill="#ffffff" stroke="#dbdfe0"/>
+    <text x="520" y="146" class="mono eyebrow">THE SCORE, DECOMPOSED</text>
+
+    <!-- bars: label x=520, bar x=650 w up to 180 -->
+    <g class="mono small">
+      <text x="520" y="175">cross-encoder</text>
+      <rect x="650" y="165" width="180" height="10" rx="2" fill="#f3ecff"/>
+      <rect x="650" y="165" width="128" height="10" rx="2" fill="#523c79"/>
+      <text x="838" y="175" class="num">0.71</text>
+
+      <text x="520" y="199">domain quality</text>
+      <rect x="650" y="189" width="180" height="10" rx="2" fill="#f3ecff"/>
+      <rect x="650" y="189" width="180" height="10" rx="2" fill="#523c79"/>
+      <text x="838" y="199" class="num">1.00</text>
+
+      <text x="520" y="223">lexical alignment</text>
+      <rect x="650" y="213" width="180" height="10" rx="2" fill="#f3ecff"/>
+      <rect x="650" y="213" width="60" height="10" rx="2" fill="#523c79"/>
+      <text x="838" y="223" class="num">0.33</text>
+
+      <text x="520" y="247">engine consensus</text>
+      <rect x="650" y="237" width="180" height="10" rx="2" fill="#f3ecff"/>
+      <rect x="650" y="237" width="180" height="10" rx="2" fill="#523c79"/>
+      <text x="838" y="247" class="num">1.00</text>
+    </g>
+
+    <line x1="520" y1="264" x2="864" y2="264" stroke="#e6e6e0"/>
+    <text x="520" y="286" class="mono tiny">explanation, verbatim from the response:</text>
+    <text x="520" y="301" class="mono" font-size="11" fill="#523c79">"base=0.191, domain=1.00, lex=0.33, engines=1, xenc=0.71"</text>
+  </g>
+
+  <!-- ============ engine telemetry (left bottom) ============ -->
+  <g>
+    <rect x="36" y="336" width="428" height="182" rx="8" fill="#ffffff" stroke="#dbdfe0"/>
+    <text x="56" y="366" class="mono eyebrow">LIVE ENGINE TELEMETRY</text>
+    <g class="mono small">
+      <text x="56" y="396">bing</text>
+      <text x="220" y="396" class="ok">899 ms</text>
+      <text x="310" y="396" class="ok">14 results</text>
+      <text x="420" y="396" text-anchor="end" class="ok">ok</text>
+
+      <text x="56" y="422">duckduckgo</text>
+      <text x="220" y="422" class="ok">2,306 ms</text>
+      <text x="310" y="422" class="ok">14 results</text>
+      <text x="420" y="422" text-anchor="end" class="ok">ok</text>
+
+      <text x="56" y="448">wikipedia</text>
+      <text x="220" y="448" class="ok">1,258 ms</text>
+      <text x="310" y="448" class="ok">0 results</text>
+      <text x="420" y="448" text-anchor="end" class="ok">ok</text>
+
+      <text x="56" y="474">marginalia</text>
+      <text x="220" y="474" class="err">HTTP 429</text>
+      <text x="420" y="474" text-anchor="end" class="err">surfaced ↗</text>
+    </g>
+    <line x1="56" y1="488" x2="444" y2="488" stroke="#e6e6e0"/>
+    <text x="56" y="507" class="mono tiny">total 3,609 ms · 2 query variants fanned out in parallel</text>
+  </g>
+
+  <!-- ============ degraded surfaced (right bottom) ============ -->
+  <g>
+    <rect x="500" y="336" width="384" height="110" rx="8" fill="#f3ecff" stroke="#cbb0f7"/>
+    <text x="520" y="366" class="mono eyebrow" fill="#523c79">DEGRADED? IT SAYS SO.</text>
+    <text x="520" y="394" class="mono" font-size="12.5" fill="#523c79">engine_pool: { healthy: 3, total: 4,</text>
+    <text x="520" y="411" class="mono" font-size="12.5" fill="#523c79" font-weight="700">&#160;&#160;degraded: true }</text>
+    <text x="520" y="434" class="mono tiny" fill="#523c79">reported in the response — never disguised as success</text>
+  </g>
+
+  <!-- ============ junk self-flagged ============ -->
+  <g>
+    <rect x="500" y="460" width="384" height="58" rx="8" fill="#ffffff" stroke="#dbdfe0"/>
+    <text x="520" y="482" class="mono eyebrow">JUNK, SELF-FLAGGED</text>
+    <text x="520" y="500" class="mono tiny">result #5 (postgresql.org/download) scored 0.30 —</text>
+    <text x="520" y="513" class="mono tiny">downranked by its own cross-encoder (xenc 0.28)</text>
+  </g>
+
+  <!-- footer -->
+  <line x1="36" y1="560" x2="884" y2="560" stroke="#dbdfe0"/>
+  <text x="36" y="590" class="mono small">Every field above came back from one call. No staging, no cherry-picking —</text>
+  <text x="36" y="608" class="mono small">the weak result and the failed engine are part of the answer.</text>
+  <text x="884" y="590" text-anchor="end" class="mono" font-size="13" fill="#0c0c09" font-weight="700">$ npx wigolo init</text>
+  <text x="884" y="608" text-anchor="end" class="mono tiny">run your own query · github.com/KnockOutEZ/wigolo</text>
+
+  <!-- watermark icon square -->
+  <rect x="36" y="628" width="14" height="14" rx="3" fill="#0c0c09"/>
+  <text x="43" y="639" text-anchor="middle" class="mono" font-size="9" fill="#ffffff" font-weight="700">w</text>
+  <text x="58" y="639" class="mono tiny">wigolo — local-first web intelligence over MCP</text>
+</svg>

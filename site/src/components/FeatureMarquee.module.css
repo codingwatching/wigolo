@@ -1,0 +1,61 @@
+.bar {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-warm);
+  overflow: hidden;
+  padding-block: 20px;
+}
+.track {
+  display: flex;
+  width: max-content;
+  animation: scroll 38s linear infinite;
+}
+.track:hover {
+  animation-play-state: paused;
+}
+.row {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  padding-inline: 22px;
+}
+.dot {
+  color: var(--olive-400);
+  font-size: 14px;
+}
+.label {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+@keyframes scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-33.333%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .track {
+    animation: none;
+  }
+}

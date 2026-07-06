@@ -18,7 +18,7 @@ export interface InstallViaClaudeCliResult {
 }
 
 const SERVER_CMD = 'npx';
-const SERVER_ARGS = ['-y', '@staticn0va/wigolo'];
+const SERVER_ARGS = ['-y', 'wigolo'];
 
 function writeClaudeJsonFallback(): InstallViaClaudeCliResult {
   const fallbackPath = join(homedir(), '.claude.json');

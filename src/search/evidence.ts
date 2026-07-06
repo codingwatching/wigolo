@@ -19,9 +19,9 @@ const DEFAULT_MAX_TOKENS_OUT = 4000;
 const MAX_EVIDENCE_PASSAGES = 20;
 const TRUNCATION_MARKER = '[... content truncated]';
 
-// M18: drop passages that are too short to be useful evidence.
+// drop passages that are too short to be useful evidence.
 const MIN_EVIDENCE_EXCERPT_CHARS = 40;
-// M18: drop passages where markdown-link markup dominates the body.
+// drop passages where markdown-link markup dominates the body.
 const MAX_LINK_MARKUP_RATIO = 0.5;
 
 // Returns true when the excerpt is genuine prose worth surfacing as evidence.
@@ -111,13 +111,22 @@ export async function buildEvidenceFromMarkdown(
 // budget. Bodies past the budget are cleared (set to ''). Used by all
 // multi-item tools (search markdown_content, find_similar, crawl, research,
 // agent) so per-tool max_tokens_out is an aggregate cap, not per-item.
+//
+// `minTokensPerItem` (opt-in, default no-op) sets a per-item floor: once the
+// shared budget is exhausted, an item that HAS a body still emits at least the
+// floor's worth of tokens instead of being cleared to ''. Items with no body
+// stay empty — the floor never fabricates content. Callers that omit it keep
+// the exact clear-past-budget behavior. Multi-page tools (crawl) pass it so a
+// later page with real content is never emptied while an earlier page kept
+// content.
 export function applyAggregateMarkdownBudget<T>(
   items: T[],
   getBody: (item: T) => string,
   setBody: (item: T, body: string) => void,
-  opts: { maxTokensOut?: number; maxChars?: number },
+  opts: { maxTokensOut?: number; maxChars?: number; minTokensPerItem?: number },
 ): void {
   const budget = opts.maxTokensOut;
+  const floor = opts.minTokensPerItem ?? 0;
   let used = 0;
   for (const item of items) {
     const body = getBody(item);
@@ -125,10 +134,17 @@ export function applyAggregateMarkdownBudget<T>(
     if (budget !== undefined) {
       const remaining = budget - used;
       if (remaining <= 0) {
-        setBody(item, '');
+        if (floor > 0) {
+          const floored = applyOutputBudget(body, { maxTokensOut: floor, maxChars: opts.maxChars });
+          setBody(item, floored);
+          used += countTokens(floored);
+        } else {
+          setBody(item, '');
+        }
         continue;
       }
-      const trimmed = applyOutputBudget(body, { maxTokensOut: remaining, maxChars: opts.maxChars });
+      const effective = floor > 0 ? Math.max(remaining, floor) : remaining;
+      const trimmed = applyOutputBudget(body, { maxTokensOut: effective, maxChars: opts.maxChars });
       setBody(item, trimmed);
       used += countTokens(trimmed);
     } else {
@@ -222,7 +238,7 @@ export async function applyEvidenceDefault(
     evidenceBudget = Math.max(0, maxTokensOut - overhead);
   }
 
-  // H1: when the caller passes max_results, cap evidence at that count so the
+  // when the caller passes max_results, cap evidence at that count so the
   // response shape mirrors what they asked for. M18: drop short / link-heavy
   // excerpts BEFORE the cap so the budget reserves slots for genuine prose.
   const maxEvidence = input.max_results !== undefined

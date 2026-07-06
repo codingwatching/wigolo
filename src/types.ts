@@ -63,13 +63,13 @@ export interface FetchInput {
  * callers can audit and reason about which path served the bytes:
  *   - 'cache'             : served from the local cache (no tier touched)
  *   - 'http'              : vanilla HTTP tier
- *   - 'tls-impersonation' : Slice D2 TLS-fingerprinted HTTP tier (opt-in)
+ *   - 'tls-impersonation' : TLS-fingerprinted HTTP tier (opt-in)
  *   - 'playwright'        : full browser tier
  */
 export type FetchMethod = 'cache' | 'http' | 'tls-impersonation' | 'playwright';
 
 export interface FetchOutput {
-  /** Tavily-canonical alias of how long the request took, ms. */
+  /** Compatibility alias of how long the request took, ms. */
   response_time_ms?: number;
   url: string;
   title: string;
@@ -119,7 +119,7 @@ export interface FetchOutput {
    */
   http_status?: number;
   /**
-   * Slice S7 (C5): partial-success marker. The HTTP fetch returned bytes and
+   * Partial-success marker. The HTTP fetch returned bytes and
    * the page rendered, but a site-specific extractor (Reddit / Amazon) saw a
    * known anti-bot / not-found challenge body and refused to emit `site_data`.
    * `"blocked"` is the canonical value. Absent when the extractor either
@@ -139,7 +139,7 @@ export interface RawFetchResult {
   /**
    * Which fetch tier produced the bytes:
    *   - 'http'              : default httpFetch via node fetch
-   *   - 'tls-impersonation' : Slice D2 TLS-fingerprinted HTTP tier (opt-in)
+   *   - 'tls-impersonation' : TLS-fingerprinted HTTP tier (opt-in)
    *   - 'playwright'        : full browser fallback
    */
   method: 'http' | 'tls-impersonation' | 'playwright';
@@ -179,7 +179,7 @@ export interface ExtractionResult {
    */
   site_data?: Record<string, unknown>;
   /**
-   * Slice S7 (C5): when a site extractor's URL matched but the response body
+   * When a site extractor's URL matched but the response body
    * was a known anti-bot / not-found challenge (Reddit "blocked by network
    * security", Amazon "Page Not Found", etc.), the extractor sets this to the
    * short reason code (e.g. `"blocked"`) instead of producing fake `site_data`.
@@ -234,7 +234,13 @@ export interface Extractor {
 }
 
 // Provenance source for a single extracted field
-export type FieldProvenance = 'json-ld' | 'microdata' | 'rdfa' | 'heuristic' | 'llm';
+export type FieldProvenance =
+  | 'json-ld'
+  | 'microdata'
+  | 'rdfa'
+  | 'structured'
+  | 'heuristic'
+  | 'llm';
 
 // One block of structured data found in HTML
 export interface StructuredDataResult {
@@ -243,10 +249,23 @@ export interface StructuredDataResult {
   fields: Record<string, unknown>;
 }
 
+// Shape-completeness signal for an array-of-objects field matched from an
+// extracted grid. Lets callers judge whether the selected grid is the right one
+// (a shape-complete plan-tier grid) or a wrong-shape/absurd-cardinality dump
+// (name+price add-ons) that should be rejected in favour of prose synthesis.
+export interface GridConfidence {
+  score: number;
+  scalarMatches: number;
+  arrayFilled: boolean;
+  rowCount: number;
+}
+
 // Schema-mode extraction with provenance
 export interface SchemaExtractionResult {
   values: Record<string, unknown>;
   provenance: Record<string, FieldProvenance>;
+  // Present only for array-of-objects fields resolved from an extracted grid.
+  confidence?: Record<string, GridConfidence>;
 }
 
 // --- Search layer types ---
@@ -275,7 +294,7 @@ export interface SearchInput {
   time_range?: 'day' | 'week' | 'month' | 'year';
   search_engines?: string[];
   language?: string;
-  // v2 additions — Slice 7:
+  // v2 additions:
   include_domains?: string[];
   exclude_domains?: string[];
   from_date?: string;    // ISO date (YYYY-MM-DD)
@@ -332,7 +351,7 @@ export interface ImageItem {
 }
 
 /**
- * Slice S11a: shape for results returned by image-search engines (DDG Image,
+ * Shape for results returned by image-search engines (DDG Image,
  * Brave Image). Mirrors RawSearchResult on the orchestration plumbing but the
  * `url` field is the SOURCE page (caller can navigate); the `image_url` /
  * `thumbnail_url` fields carry the binary asset URLs.
@@ -366,14 +385,14 @@ export interface EngineTelemetry {
   dedup_kept: number;
   error?: string;
   /** Why the engine was skipped. Only emitted when the circuit breaker
-   * rejected dispatch (Slice 4, engine-pool recovery). */
+   * rejected dispatch. */
   reason?: 'breaker_open';
   /** Remaining breaker cooldown in ms when reason === 'breaker_open'. */
   cooldown_remaining_ms?: number;
 }
 
 /**
- * Slice S1 (M2): top-level engine failure surface. Engine errors used to
+ * Top-level engine failure surface. Engine errors used to
  * be visible only when callers opted into `include_engine_outcomes` — that
  * meant a 401 (missing token) or 400 (engine outage) only showed up in
  * debug-shaped telemetry. `engine_warnings` promotes the same information
@@ -412,9 +431,14 @@ export interface SearchResultItem {
   markdown_content?: string;
   fetch_failed?: string;
   content_truncated?: boolean;
+  /** True when `markdown_content` was populated from the result's own snippet
+   * because the content fetch timed out. The failure is still recorded in
+   * `fetch_failed`; this flag marks that the content is snippet-derived
+   * evidence, not extracted page content. */
+  content_from_snippet?: boolean;
   /** Legacy aggregate score in [0, 1]. Equals `evidence_score.final` when
    * the core path emits both; coexists for back-compat with callers that
-   * read this field directly. Slice 8 / M13: `relevance_score` and
+   * read this field directly. `relevance_score` and
    * `evidence_score.final` are intentionally NOT unified — `relevance_score`
    * is the flat field every caller has consumed since v0.0.x, while
    * `evidence_score` carries the explainable component breakdown (RRF
@@ -462,7 +486,7 @@ export interface SearchOutput {
    * returned nothing or got fully de-duped out. */
   engines_used: string[];
   total_time_ms: number;
-  /** Tavily-canonical alias of total_time_ms. Always emitted. */
+  /** Compatibility alias of total_time_ms. Always emitted. */
   response_time_ms?: number;
   search_time_ms?: number;
   fetch_time_ms?: number;
@@ -486,7 +510,7 @@ export interface SearchOutput {
    * Distinct from `engines_used`, which is the SEMANTIC view (contributors
    * only, derived from rows where `dedup_kept > 0`). */
   engine_telemetry?: EngineTelemetry[];
-  /** Slice S1 (M2): top-level failure surface, always emitted on the
+  /** Top-level failure surface, always emitted on the
    * engine-pool path (empty array when no engine errored). Promotes
    * `engine_telemetry.outcome === 'error'` entries into a flat list with a
    * stable failure code + optional env-var hint so callers branch on
@@ -523,6 +547,19 @@ export interface SearchOutput {
    * input.include_images is true. Empty array means the request asked for
    * images but no engine surfaced any. */
   images?: ImageItem[];
+  /** Health of the engine pool that produced this result. `total` = engines
+   * dispatched, `healthy` = engines that returned ≥1 result, `degraded` =
+   * healthy < total. `reasons` names the events that degraded the pool
+   * (e.g. `starvation_redispatch` when a thin vertical fell back to the
+   * general pool). Single surface for "pool degraded to N engines". */
+  engine_pool?: EnginePoolHealth;
+}
+
+export interface EnginePoolHealth {
+  healthy: number;
+  total: number;
+  degraded: boolean;
+  reasons?: string[];
 }
 
 export interface QueryUnderstanding {
@@ -660,9 +697,10 @@ export interface CrossReference {
 
 /** A source-quoted comparison tradeoff: the actual sentence from a source that
  * pairs a compared entity with a comparison term, plus the index of the source
- * it came from (0-based into the brief's `fetched` view). Captured instead of a
- * bare keyword so the template renderer can quote a real, cited tradeoff rather
- * than fabricate directionality. */
+ * it came from (0-based into the full output `sources` array, so a renderer can
+ * cite `[source_index + 1]` against the ### Sources list). Captured instead of
+ * a bare keyword so the template renderer can quote a real, cited tradeoff
+ * rather than fabricate directionality. */
 export interface ComparisonTradeoff {
   text: string;
   source_index: number;
@@ -679,6 +717,13 @@ export interface ResearchBrief {
   topics: string[];
   highlights: Highlight[];
   key_findings: string[];
+  /** Provenance for `key_findings`: 0-based indices into the full output
+   * `sources` array, index-aligned to `key_findings`. Lets a renderer cite
+   * each finding `[n]` per-claim. Optional and parallel so the public
+   * `key_findings: string[]` shape stays unchanged (mirrors `citation_graph`
+   * as an auxiliary provenance structure). An entry may be absent or out of
+   * range when a finding's origin is unknown — renderers must fail open. */
+  key_finding_sources?: number[];
   per_source_char_cap: number;
   total_sources_char_cap: number;
   sections: {
@@ -720,6 +765,13 @@ export interface AgentSource {
   markdown_content: string;
   fetched: boolean;
   fetch_error?: string;
+  /**
+   * Raw HTML of the fetched page. Carried so schema extraction can consume
+   * real <table>/<dl>/microdata structures the markdown flattens away; the
+   * agent tool otherwise saw only markdown and returned {} for table-backed
+   * schemas. Optional — sources without it fall back to the markdown body.
+   */
+  rawHtml?: string;
 }
 
 export interface AgentStep {
@@ -750,7 +802,7 @@ export interface ScoreBreakdown {
 
 export interface EvidenceScore {
   /** [0, 1] aggregate. Mirrors `SearchResultItem.relevance_score` so a
-   * caller can read either field for ranking. Slice 8 / M13: the two
+   * caller can read either field for ranking. The two
    * fields coexist (relevance_score = legacy flat aggregate;
    * evidence_score.final = same number alongside the component breakdown).
    * Do not unify — both surfaces are still on the API contract. */
@@ -760,9 +812,9 @@ export interface EvidenceScore {
     base_rrf: number;
     /** Sentence-embedding cosine vs query when context_rank was applied. */
     context_cosine: number;
-    /** Phase 2 #1 domain authority/quality multiplier. */
+    /** Domain authority/quality multiplier. */
     domain_quality: number;
-    /** Phase 2 #1 lexical alignment of query against title+snippet. */
+    /** Lexical alignment of query against title+snippet. */
     lexical_alignment: number;
     /** Recency multiplier applied when the query has temporal intent. */
     recency_boost: number;
@@ -812,7 +864,7 @@ export interface SearchEngineOptions {
   timeRange?: string;
   language?: string;
   timeoutMs?: number;
-  // v2 additions — Slice 7:
+  // v2 additions:
   includeDomains?: string[];
   excludeDomains?: string[];
   fromDate?: string;
@@ -866,7 +918,7 @@ export interface LinkEdge {
 }
 
 export interface CrawlOutput {
-  /** Tavily-canonical alias of how long the request took, ms. */
+  /** Compatibility alias of how long the request took, ms. */
   response_time_ms?: number;
   pages: CrawlResultItem[];
   total_found: number;
@@ -1021,14 +1073,13 @@ export interface ExtractOutput {
   mode: 'selector' | 'tables' | 'metadata' | 'schema' | 'structured' | 'brand';
   error?: string;
   warnings?: string[];
-  /** Tavily-canonical alias of how long the request took, ms. */
+  /** Compatibility alias of how long the request took, ms. */
   response_time_ms?: number;
-  /** Stub-only marker — present while a mode (currently `'brand'`) is still
-   * a slice A1 placeholder and the real extractor hasn't landed yet. */
+  /** Optional advisory message about a mode's current support level. */
   notice?: string;
-  /** Stub-only marker — names the slice that will complete the surface. */
+  /** Optional advisory marker paired with `notice`. */
   slice?: string;
-  /** H3: present (true) when the payload was clipped to fit a default cap
+  /** present (true) when the payload was clipped to fit a default cap
    * (e.g. mode='tables' default 30000-char ceiling). Callers can re-issue
    * the call with an explicit max_tokens_out to widen or narrow the cap. */
   truncated?: boolean;
@@ -1045,7 +1096,7 @@ import type {
 /**
  * Output shape for `extract mode: 'brand'`.
  *
- * Honesty contract (slice 4 / flaw M3):
+ * Honesty contract:
  *   - `name` is set ONLY when an explicit source emits it (JSON-LD,
  *     og:site_name, heuristic <img alt>). The page <title> tail is NEVER
  *     a name source — it's typically a tagline.
@@ -1053,7 +1104,7 @@ import type {
  *     logo, og:logo, heuristic DOM logo). Favicons NEVER promote to
  *     logo_url. The `favicon_url` and `logo_url` fields are independent.
  *
- * Provenance enums (slice 4 / flaw L3): the value space is single-sourced
+ * Provenance enums: the value space is single-sourced
  * from `src/extraction/brand-provenance.ts`. Add new values THERE first;
  * this type derives from those arrays.
  */
@@ -1084,7 +1135,7 @@ export interface BrandExtractionOutput {
   };
 }
 
-// --- Diff tool (slice A1 placeholder, full impl lands in B1) ---
+// --- Diff tool ---
 
 export type DiffOutputShape = 'unified' | 'hunks' | 'summary';
 export type DiffGranularity = 'line' | 'word' | 'section';
@@ -1103,7 +1154,7 @@ export interface DiffSummary {
   removed_lines: number;
   /** Number of paired delete+insert lines (git's "modified" semantics). */
   modified_lines: number;
-  /** Slice 8 / M12: sum of `added_line_chars + removed_line_chars` across
+  /** Sum of `added_line_chars + removed_line_chars` across
    * the LCS edit script (i.e. total character cost of the change before
    * pairing modified runs). Stays comparable across line / word / section
    * granularities so callers can rank diffs by size without re-parsing
@@ -1112,10 +1163,9 @@ export interface DiffSummary {
 }
 
 /**
- * Structural placeholder for the `diff` tool output. Slice A1 registers the
- * surface; slice B1 wires the real implementation against the existing LCS in
- * `src/cache/diff-summary.ts`. When the input exceeds the LCS size cap, B1
- * will set `truncated: true` and fall back to the existing diff-summary shape.
+ * Output shape for the `diff` tool. The implementation runs against the LCS
+ * in `src/cache/diff-summary.ts`. When the input exceeds the LCS size cap,
+ * `truncated: true` is set and it falls back to the diff-summary shape.
  */
 export interface DiffOutput {
   changed: boolean;
@@ -1123,13 +1173,13 @@ export interface DiffOutput {
   hunks?: DiffHunk[];
   summary?: DiffSummary;
   truncated?: boolean;
-  /** Stub-only marker — present while the slice is still a placeholder. */
+  /** Optional advisory message. */
   notice?: string;
-  /** Stub-only marker — names the slice that will complete this surface. */
+  /** Optional advisory marker paired with `notice`. */
   slice?: string;
 }
 
-// --- Watch tool (slice A1 placeholder, full impl lands in B3) ---
+// --- Watch tool ---
 
 export type WatchAction = 'create' | 'list' | 'check' | 'pause' | 'resume' | 'delete';
 export type WatchJobStatus = 'active' | 'paused' | 'errored';
@@ -1138,7 +1188,7 @@ export interface WatchJobInput {
   action: WatchAction;
   /** Single-URL create: use `url`. The handler returns `{ job }` (singular). */
   url?: string;
-  /** Slice 8 / M17: batch-create. Pass an array of URLs to register multiple
+  /** Batch-create. Pass an array of URLs to register multiple
    * jobs in a single call. The handler returns `{ jobs[] }`. Mutually
    * exclusive with `url` — passing both is rejected. */
   urls?: string[];
@@ -1164,7 +1214,7 @@ export interface WatchJob {
 }
 
 export interface WatchJobOutput {
-  /** Slice 8 / M17: emitted by `action:'create'` when exactly one URL was
+  /** Emitted by `action:'create'` when exactly one URL was
    * passed (the single-URL path). The handler also keeps `jobs[]` for
    * back-compat; new callers should prefer `job`. */
   job?: WatchJob;
@@ -1182,7 +1232,7 @@ export interface WatchJobOutput {
   slice?: string;
 }
 
-// --- Find Similar tool types (v3, Slice 23) ---
+// --- Find Similar tool types (v3) ---
 
 export interface MatchSignals {
   embedding_rank?: number;
@@ -1191,11 +1241,10 @@ export interface MatchSignals {
 }
 
 /**
- * Slice S7 (M10): opt-in per-result ranking debug. The audit observed that
- * `fts5_rank` and `embedding_rank` often disagree without any way to inspect
- * the disagreement; this surfaces the raw per-source ranks plus the fused
- * score so callers can audit the RRF behavior. Only emitted when
- * `FindSimilarInput.include_ranking_debug` is true.
+ * Opt-in per-result ranking debug. `fts5_rank` and `embedding_rank` often
+ * disagree without any way to inspect the disagreement; this surfaces the
+ * raw per-source ranks plus the fused score so callers can inspect the RRF
+ * behavior. Only emitted when `FindSimilarInput.include_ranking_debug` is true.
  */
 export interface RankingDebug {
   fts5_rank?: number;
@@ -1222,7 +1271,7 @@ export interface FindSimilarResult {
    */
   trusted: boolean;
   match_signals: MatchSignals;
-  /** Slice S7 (M10): opt-in via FindSimilarInput.include_ranking_debug. */
+  /** Opt-in via FindSimilarInput.include_ranking_debug. */
   ranking_debug?: RankingDebug;
 }
 
@@ -1246,11 +1295,11 @@ export interface FindSimilarInput {
    *
    * Note: this filters on the raw RRF/embedding fused score, NOT the
    * (normalized) `relevance_score` shown to callers — the raw signal is the
-   * one the audit's H8 case reports (`threshold: 0.95` vs `fused_score: 0.029`).
+   * one to compare (e.g. `threshold: 0.95` vs `fused_score: 0.029`).
    */
   threshold?: number;
   /**
-   * Slice S7 (M10): when true, every result includes a `ranking_debug` block
+   * When true, every result includes a `ranking_debug` block
    * with the raw fts5/embedding/web ranks and the raw RRF score so callers
    * can inspect rank disagreement. Off by default — the standard response
    * shape stays slim.

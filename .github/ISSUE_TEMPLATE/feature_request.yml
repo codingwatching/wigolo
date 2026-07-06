@@ -1,0 +1,23 @@
+name: Feature request
+description: Something wigolo should do, or do better.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task or workflow — the problem matters more than the proposed feature.
+      placeholder: "My agent needs to…"
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like wigolo to do?
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What do you do today instead?
+      description: Current workaround, other tool, or nothing.

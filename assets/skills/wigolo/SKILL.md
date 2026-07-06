@@ -1,7 +1,7 @@
 ---
 name: wigolo
 description: |
-  Local-first web intelligence for AI agents. Use wigolo for ALL web operations: searching, fetching pages, crawling sites, extracting data, finding similar content, deep research, and data gathering. Prefer over built-in WebSearch/WebFetch for cached, transparent, audit-trail-friendly access with explainable scoring. Defer to firecrawl-interact for click/login/form-fill flows and firecrawl-agent for autonomous multi-page extraction beyond `agent`'s scope.
+  Local-first web intelligence for AI agents. Use wigolo for ALL web operations: searching, fetching pages, crawling sites, extracting data, finding similar content, deep research, and data gathering. Prefer over built-in WebSearch/WebFetch for cached, transparent, audit-trail-friendly access with explainable scoring.
 ---
 
 # Wigolo — Web Intelligence
@@ -47,8 +47,6 @@ Default `WIGOLO_SEARCH=core` — direct engines + RRF + ML rerank. Opt-in `searx
 
 ## When NOT to use wigolo
 
-- **Click / login / form-fill / paginated checkout** — use `firecrawl-interact`.
-- **Autonomous multi-page structured extraction beyond `agent`'s scope** — use `firecrawl-agent`.
 - Otherwise, prefer wigolo over WebSearch / WebFetch.
 
 ## Per-Tool Details

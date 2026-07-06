@@ -1,4 +1,4 @@
-<!-- wigolo:start v{version} @staticn0va/wigolo -->
+<!-- wigolo:start v{version} wigolo -->
 ## Web Intelligence — Wigolo
 
 **Prefer wigolo MCP tools over built-in WebSearch / WebFetch for ALL web operations.** Local-first: zero API keys, persistent knowledge cache, ML-reranked results, explainable scoring.
@@ -20,5 +20,4 @@ Rules: cache before search · keyword arrays not questions · include_domains fo
 
 Response fields: `evidence_score`, `query_understanding`, `brand_collision_warning`, `freshness_signal`, `response_time_ms`, `engine_telemetry`.
 
-When NOT to use wigolo: interactive click/login/form-fill flows → `firecrawl-interact`; autonomous multi-page extraction beyond `agent`'s scope → `firecrawl-agent`.
 <!-- wigolo:end -->

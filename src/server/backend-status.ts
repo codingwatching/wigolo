@@ -34,14 +34,14 @@ export class BackendStatus {
     if (this._bootstrapping) {
       return (
         `Search engine is still starting up. Results may be lower quality until setup finishes. ` +
-        `For best results, run: \`npx @staticn0va/wigolo warmup --all\` before connecting your agent.`
+        `For best results, run: \`npx wigolo warmup --all\` before connecting your agent.`
       );
     }
     return (
       `Multi-engine search is unavailable; using fallback engines (lower quality). ` +
       `Reason: ${this._reason ?? 'unknown'}. ` +
-      `To retry: \`npx @staticn0va/wigolo warmup --force\`. ` +
-      `For details: \`npx @staticn0va/wigolo doctor\`.`
+      `To retry: \`npx wigolo warmup --force\`. ` +
+      `For details: \`npx wigolo doctor\`.`
     );
   }
 }

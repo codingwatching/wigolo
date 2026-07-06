@@ -51,7 +51,7 @@ describe('vscodeHandler.installMcp — platform config path', () => {
     const xdg = join(tmpHome, 'xdg-config');
     process.env.XDG_CONFIG_HOME = xdg;
     const { vscodeHandler } = await import('../../../../src/cli/agents/vscode.js');
-    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', 'wigolo'] });
     const cfgPath = join(xdg, 'Code', 'User', 'mcp.json');
     expect(existsSync(cfgPath)).toBe(true);
     // The legacy wrong path must NOT be written.
@@ -64,7 +64,7 @@ describe('vscodeHandler.installMcp — platform config path', () => {
   it('Linux: falls back to ~/.config/Code/User/mcp.json when XDG_CONFIG_HOME is unset', async () => {
     vi.mocked(execSync).mockReturnValue(Buffer.from(''));
     const { vscodeHandler } = await import('../../../../src/cli/agents/vscode.js');
-    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', 'wigolo'] });
     const cfgPath = join(tmpHome, '.config', 'Code', 'User', 'mcp.json');
     expect(existsSync(cfgPath)).toBe(true);
     const parsed = JSON.parse(readFileSync(cfgPath, 'utf-8'));
@@ -75,7 +75,7 @@ describe('vscodeHandler.installMcp — platform config path', () => {
     vi.mocked(execSync).mockReturnValue(Buffer.from(''));
     process.env.XDG_CONFIG_HOME = '';
     const { vscodeHandler } = await import('../../../../src/cli/agents/vscode.js');
-    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', 'wigolo'] });
     const cfgPath = join(tmpHome, '.config', 'Code', 'User', 'mcp.json');
     expect(existsSync(cfgPath)).toBe(true);
   });
@@ -84,7 +84,7 @@ describe('vscodeHandler.installMcp — platform config path', () => {
     vi.mocked(execSync).mockReturnValue(Buffer.from(''));
     vi.mocked(platform).mockReturnValue('darwin');
     const { vscodeHandler } = await import('../../../../src/cli/agents/vscode.js');
-    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', 'wigolo'] });
     const cfgPath = join(tmpHome, 'Library', 'Application Support', 'Code', 'User', 'mcp.json');
     expect(existsSync(cfgPath)).toBe(true);
     const parsed = JSON.parse(readFileSync(cfgPath, 'utf-8'));
@@ -97,7 +97,7 @@ describe('vscodeHandler.installMcp — platform config path', () => {
     const appData = join(tmpHome, 'AppData', 'Roaming');
     process.env.APPDATA = appData;
     const { vscodeHandler } = await import('../../../../src/cli/agents/vscode.js');
-    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', 'wigolo'] });
     const cfgPath = join(appData, 'Code', 'User', 'mcp.json');
     expect(existsSync(cfgPath)).toBe(true);
     const parsed = JSON.parse(readFileSync(cfgPath, 'utf-8'));
@@ -111,7 +111,7 @@ describe('vscodeHandler.installMcp — Flatpak/Snap detection (Linux)', () => {
     const flatpakDir = join(tmpHome, '.var', 'app', 'com.visualstudio.code', 'config', 'Code', 'User');
     mkdirSync(flatpakDir, { recursive: true });
     const { vscodeHandler } = await import('../../../../src/cli/agents/vscode.js');
-    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', 'wigolo'] });
     expect(existsSync(join(flatpakDir, 'mcp.json'))).toBe(true);
     // Standard path must not be created when Flatpak install is present.
     expect(existsSync(join(tmpHome, '.config', 'Code', 'User', 'mcp.json'))).toBe(false);
@@ -122,7 +122,7 @@ describe('vscodeHandler.installMcp — Flatpak/Snap detection (Linux)', () => {
     const snapDir = join(tmpHome, 'snap', 'code', 'current', '.config', 'Code', 'User');
     mkdirSync(snapDir, { recursive: true });
     const { vscodeHandler } = await import('../../../../src/cli/agents/vscode.js');
-    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', 'wigolo'] });
     expect(existsSync(join(snapDir, 'mcp.json'))).toBe(true);
     expect(existsSync(join(tmpHome, '.config', 'Code', 'User', 'mcp.json'))).toBe(false);
   });
@@ -132,7 +132,7 @@ describe('vscodeHandler.uninstall', () => {
   it('removes the wigolo entry from the platform config path', async () => {
     vi.mocked(execSync).mockReturnValue(Buffer.from(''));
     const { vscodeHandler } = await import('../../../../src/cli/agents/vscode.js');
-    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', '@staticn0va/wigolo'] });
+    await vscodeHandler.installMcp({ command: 'npx', args: ['-y', 'wigolo'] });
     const cfgPath = join(tmpHome, '.config', 'Code', 'User', 'mcp.json');
     expect(existsSync(cfgPath)).toBe(true);
     const result = await vscodeHandler.uninstall();
@@ -148,5 +148,20 @@ describe('vscodeHandler metadata', () => {
     expect(vscodeHandler.id).toBe('vscode');
     expect(vscodeHandler.supportsSkills).toBe(false);
     expect(vscodeHandler.supportsCommands).toBe(false);
+  });
+});
+
+// The TUI install path resolves the VS Code config dir from a caller-supplied
+// home rather than homedir(), so the exported helper must honor that argument.
+describe('vscodeUserDir — explicit home argument', () => {
+  it('uses the passed home over homedir() (Linux, XDG unset)', async () => {
+    const { vscodeUserDir } = await import('../../../../src/cli/agents/vscode.js');
+    const explicit = join(tmpdir(), 'wigolo-explicit-home');
+    expect(vscodeUserDir(explicit)).toBe(join(explicit, '.config', 'Code', 'User'));
+  });
+
+  it('falls back to homedir() when no home is passed', async () => {
+    const { vscodeUserDir } = await import('../../../../src/cli/agents/vscode.js');
+    expect(vscodeUserDir()).toBe(join(tmpHome, '.config', 'Code', 'User'));
   });
 });

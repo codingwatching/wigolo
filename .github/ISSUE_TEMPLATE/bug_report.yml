@@ -1,0 +1,47 @@
+name: Bug report
+description: Something broke, misbehaved, or surprised you. Beta means we want these — thank you.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        wigolo is in public beta — every report is read. Two minutes of detail here usually saves a day of back-and-forth.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what did you get instead?
+      placeholder: "Ran a search through Claude Code and…"
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command / tool call
+      description: The CLI command or MCP tool call that triggered it, if known.
+      placeholder: "npx wigolo init --non-interactive --agents=claude-code"
+  - type: input
+    id: version
+    attributes:
+      label: wigolo version
+      placeholder: "npx wigolo --version  →  0.1.40-beta.1"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS + Node version
+      placeholder: "macOS 15.5 · Node 22.14"
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `npx wigolo doctor` (if relevant)
+      render: shell
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error output
+      description: Anything from stderr. Redact anything private.
+      render: shell

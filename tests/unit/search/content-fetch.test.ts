@@ -93,10 +93,10 @@ describe('fetchContentForResults — max_fetches cap', () => {
   });
 });
 
-// --- Slice S1 (M16): backup-fetch behavior ---
+// --- backup-fetch behavior ---
 //
 // WHY: when the top-N parallel fetches lose one to a transient timeout,
-// the audit complained that callers got fewer pages than they asked for.
+// callers could get fewer pages than they asked for.
 // The fix: try `results[maxFetches..]` sequentially as backups when there's
 // remaining budget. `max_fetches: 1` is exempt — a literal cap of 1 must
 // not silently fetch a second URL.
@@ -230,12 +230,12 @@ describe('fetchContentForResults — M16 backup behavior', () => {
     expect(callCount).toBeLessThanOrEqual(2);
   });
 
-  // --- Slice S1 (M16) follow-up: backup fetches must run in PARALLEL waves,
+  // --- backup fetches must run in PARALLEL waves,
   // not slot-by-slot. The original loop awaited each backup sequentially,
   // which on the very requests that already had a bad day (all top fetches
   // failed) inflated wall-clock to N × fetchTimeoutMs. This test pins the
   // contract: backups for independent failed slots fire concurrently.
-  it('fires backup-fetch wave in parallel, not slot-by-slot (M16 perf fix)', async () => {
+  it('fires backup-fetch wave in parallel, not slot-by-slot', async () => {
     const fetchEntries: number[] = [];
     const router = {
       fetch: vi.fn(async (url: string) => {
@@ -444,18 +444,18 @@ describe('fetchContentForResults — stage budget abort orchestration', () => {
   });
 });
 
-// --- Slice C/3 (FIX2): dedicated per-URL budget for anti-bot/TLS-first domains
+// --- Dedicated per-URL budget for anti-bot/TLS-first domains
 //
-// WHY: W4 routes anti-bot/timeout-prone domains (stackoverflow.com et al.)
-// through the TLS-impersonation tier FIRST on the search-hydration path. A
+// WHY: the router routes anti-bot/timeout-prone domains (stackoverflow.com et
+// al.) through the TLS-impersonation tier FIRST on the search-hydration path. A
 // working TLS attempt takes ~1-5s, but the shared balanced per-URL budget
 // (searchFetchTimeoutBalancedMs ~= 3000ms) starves it under parallel fetch —
 // the tier is selected but never gets enough time, producing fetch_failed:
 // timeout. The fix gives anti-bot/TLS-first domains a LARGER per-URL budget
-// (capped by the stage budget so the overall stage stays bounded — no attack-4
+// (capped by the stage budget so the overall stage stays bounded — no runaway
 // blowup), while non-anti-bot domains keep the small budget.
 
-describe('fetchContentForResults — anti-bot/TLS-first per-URL budget (Slice C/3 FIX2)', () => {
+describe('fetchContentForResults — anti-bot/TLS-first per-URL budget', () => {
   afterEach(() => vi.useRealTimers());
 
   function mockRouter(impl: (url: string, opts: { signal?: AbortSignal; [k: string]: unknown }) => Promise<unknown>) {
@@ -528,7 +528,7 @@ describe('fetchContentForResults — anti-bot/TLS-first per-URL budget (Slice C/
     expect(results[0].markdown_content).toBeUndefined();
   });
 
-  it('keeps the OVERALL stage bounded — anti-bot per-URL budget never exceeds the stage budget (attack-4 ceiling)', async () => {
+  it('keeps the OVERALL stage bounded — anti-bot per-URL budget never exceeds the stage budget (latency ceiling)', async () => {
     vi.useFakeTimers();
     const url = 'https://stackoverflow.com/questions/456/y';
     // Attempt would take 9s — longer than the 6000ms stage budget. The stage
@@ -544,5 +544,306 @@ describe('fetchContentForResults — anti-bot/TLS-first per-URL budget (Slice C/
     // Bounded by the stage budget, not the 9s attempt.
     expect(elapsed).toBeLessThanOrEqual(6500);
     expect(results[0].fetch_failed).toBe('stage_timeout');
+  });
+});
+
+// --- Narrow-set per-URL budget scaling
+//
+// WHY: with a WIDE candidate set the small balanced per-URL budget spread over
+// many URLs keeps overall latency bounded. But with a NARROW set (2-3 results)
+// each URL deserves proportionally more time — the stage budget would otherwise
+// be left mostly unspent while a single slow page times out at the small
+// default. The scaling keys on candidateCount (a STRUCTURAL signal), never a
+// domain allowlist, and is always clamped to the stage budget so latency stays
+// bounded. A WIDE set falls back to today's small budget (scaled < base).
+
+describe('fetchContentForResults — narrow-set budget scaling', () => {
+  afterEach(() => vi.useRealTimers());
+
+  function mockRouter(impl: (url: string, opts: { signal?: AbortSignal; [k: string]: unknown }) => Promise<unknown>) {
+    return { fetch: vi.fn(impl) } as unknown as SmartRouter;
+  }
+  const item = (url: string): SearchResultItem => ({ title: url, url, snippet: 's', relevance_score: 1 });
+
+  // Resolves after delayMs unless the abort fires first — models a
+  // slow-but-eventually-OK non-anti-bot page.
+  function slowFetch(delayMs: number, url: string) {
+    return (_u: string, opts: { signal?: AbortSignal }) =>
+      new Promise((resolve, reject) => {
+        const t = setTimeout(
+          () => resolve({ html: `<html><body>${url}</body></html>`, finalUrl: url, contentType: 'text/html', statusCode: 200, method: 'http', headers: {} }),
+          delayMs,
+        );
+        opts.signal?.addEventListener('abort', () => { clearTimeout(t); reject(opts.signal!.reason); });
+      });
+  }
+
+  const ctx = (over: Partial<Parameters<typeof fetchContentForResults>[2]> = {}): Parameters<typeof fetchContentForResults>[2] => ({
+    contentMaxChars: 30000,
+    maxTotalChars: 50000,
+    fetchTimeoutMs: 2000, // small base per-URL budget
+    totalDeadline: Date.now() + 30000,
+    forceRefresh: false,
+    stageBudgetMs: 8000,
+    narrowSetBudgetMs: 6000,
+    ...over,
+  });
+
+  it('gives a NARROW candidate set (2 results) a LARGER per-URL budget than the small base — a ~2.5s non-anti-bot fetch completes', async () => {
+    vi.useFakeTimers();
+    // Two candidates; each page takes 2500ms. Under the OLD 2000ms base they
+    // would time out; with narrowSetBudgetMs=6000 / 2 candidates = 3000ms each,
+    // the 2500ms fetch completes comfortably within the scaled budget.
+    const urls = ['https://example.com/a', 'https://example.com/b'];
+    const router = mockRouter((u, opts) => slowFetch(2500, u)(u, opts));
+    const results = urls.map(item);
+    const p = fetchContentForResults(results, router, ctx({ candidateCount: 2 }));
+    await vi.advanceTimersByTimeAsync(2500);
+    await p;
+    expect(results[0].fetch_failed).toBeUndefined();
+    expect(results[0].markdown_content).toBeDefined();
+    expect(results[1].fetch_failed).toBeUndefined();
+    expect(results[1].markdown_content).toBeDefined();
+  });
+
+  it('keeps a WIDE candidate set on the small base budget — the scaled slice is below the base, so today\'s budget wins', async () => {
+    vi.useFakeTimers();
+    // Six candidates: 6000 / 6 = 1000ms scaled slice < 2000ms base, so the base
+    // budget (today's behavior) is used — a 3000ms fetch times out.
+    const url = 'https://example.com/wide';
+    const router = mockRouter(slowFetch(3000, url));
+    const results = [item(url)];
+    const p = fetchContentForResults(results, router, ctx({ candidateCount: 6 }));
+    await vi.advanceTimersByTimeAsync(3000);
+    await p;
+    expect(results[0].fetch_failed).toBe('timeout');
+    expect(results[0].markdown_content).toBeUndefined();
+  });
+
+  it('never exceeds the stage budget even for a single candidate (latency ceiling)', async () => {
+    vi.useFakeTimers();
+    // narrowSetBudgetMs=6000 / 1 = 6000ms scaled, but the stage budget is 4000ms
+    // — the scaled per-URL budget MUST be clamped to the stage ceiling so the
+    // stage timer (not the per-URL timer) caps wall-clock.
+    const url = 'https://example.com/single';
+    const router = mockRouter(slowFetch(9000, url));
+    const results = [item(url)];
+    const start = Date.now();
+    const p = fetchContentForResults(results, router, ctx({ candidateCount: 1, stageBudgetMs: 4000 }));
+    await vi.advanceTimersByTimeAsync(4000);
+    await p;
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThanOrEqual(4500);
+    expect(results[0].fetch_failed).toBe('stage_timeout');
+  });
+
+  it('back-compat: no narrowSetBudgetMs => small base budget regardless of candidate count', async () => {
+    vi.useFakeTimers();
+    const url = 'https://example.com/legacy';
+    const router = mockRouter(slowFetch(3000, url));
+    const results = [item(url)];
+    // narrowSetBudgetMs undefined: legacy path, base 2000ms fires before 3000ms.
+    const p = fetchContentForResults(results, router, ctx({ candidateCount: 1, narrowSetBudgetMs: undefined }));
+    await vi.advanceTimersByTimeAsync(3000);
+    await p;
+    expect(results[0].fetch_failed).toBe('timeout');
+  });
+});
+
+// --- Snippet fallback on timeout
+//
+// WHY: an empty markdown_content with only fetch_failed is worse for the host
+// LLM than the result's own snippet. On a per-URL/stage timeout, fall back to
+// the result's existing snippet as markdown_content (flagged content_from_snippet)
+// so callers get evidence text. The failure is still recorded (fetch_failed
+// stays set). Never fabricate — only the result's real snippet is used, and
+// only when snippetFallback is enabled (legacy default is off: empty content).
+
+describe('fetchContentForResults — snippet fallback on timeout', () => {
+  afterEach(() => vi.useRealTimers());
+
+  function mockRouter(impl: (url: string, opts: { signal?: AbortSignal; [k: string]: unknown }) => Promise<unknown>) {
+    return { fetch: vi.fn(impl) } as unknown as SmartRouter;
+  }
+  const item = (url: string, snippet: string): SearchResultItem => ({ title: url, url, snippet, relevance_score: 1 });
+
+  const ctx = (over: Partial<Parameters<typeof fetchContentForResults>[2]> = {}): Parameters<typeof fetchContentForResults>[2] => ({
+    contentMaxChars: 30000,
+    maxTotalChars: 50000,
+    fetchTimeoutMs: 2000,
+    totalDeadline: Date.now() + 30000,
+    forceRefresh: false,
+    stageBudgetMs: 6000,
+    snippetFallback: true,
+    ...over,
+  });
+
+  it('on a per-URL timeout, keeps the snippet as markdown_content (content_from_snippet) instead of empty content', async () => {
+    vi.useFakeTimers();
+    const router = mockRouter((_u, opts) =>
+      new Promise((_, rej) => opts.signal?.addEventListener('abort', () => rej(opts.signal!.reason))),
+    );
+    const results = [item('https://example.com/slow', 'This snippet is real evidence text.')];
+    const p = fetchContentForResults(results, router, ctx());
+    await vi.advanceTimersByTimeAsync(2000);
+    await p;
+    // Failure still recorded AND snippet promoted into content.
+    expect(results[0].fetch_failed).toBe('timeout');
+    expect(results[0].markdown_content).toBe('This snippet is real evidence text.');
+    expect(results[0].content_from_snippet).toBe(true);
+  });
+
+  it('on a stage timeout, promotes the snippet for the slow result while fast results keep their fetched content', async () => {
+    vi.useFakeTimers();
+    const results = [item('a', 'snip-a'), item('slow', 'slow snippet fallback')];
+    const router = mockRouter((url, opts) => {
+      if (url === 'slow') {
+        return new Promise((_, rej) => opts.signal?.addEventListener('abort', () => rej(opts.signal!.reason)));
+      }
+      return Promise.resolve({ html: `<html><body>${url}</body></html>`, finalUrl: url, contentType: 'text/html', statusCode: 200, method: 'http', headers: {} });
+    });
+    // fetchTimeoutMs > stageBudgetMs so the stage timer wins for the slow one.
+    const p = fetchContentForResults(results, router, ctx({ fetchTimeoutMs: 10000, stageBudgetMs: 3000 }));
+    await vi.advanceTimersByTimeAsync(3000);
+    await p;
+    expect(results[0].markdown_content).toContain('a');
+    expect(results[0].content_from_snippet).toBeUndefined();
+    expect(results[1].fetch_failed).toBe('stage_timeout');
+    expect(results[1].markdown_content).toBe('slow snippet fallback');
+    expect(results[1].content_from_snippet).toBe(true);
+  });
+
+  it('does NOT promote a snippet when snippetFallback is disabled (legacy path: empty content, fetch_failed only)', async () => {
+    vi.useFakeTimers();
+    const router = mockRouter((_u, opts) =>
+      new Promise((_, rej) => opts.signal?.addEventListener('abort', () => rej(opts.signal!.reason))),
+    );
+    const results = [item('https://example.com/slow', 'unused snippet')];
+    const p = fetchContentForResults(results, router, ctx({ snippetFallback: undefined }));
+    await vi.advanceTimersByTimeAsync(2000);
+    await p;
+    expect(results[0].fetch_failed).toBe('timeout');
+    expect(results[0].markdown_content).toBeUndefined();
+    expect(results[0].content_from_snippet).toBeUndefined();
+  });
+
+  it('does NOT promote a snippet on a non-timeout failure (only timeouts fall back)', async () => {
+    const router = mockRouter(async () => { throw new Error('403 blocked'); });
+    const results = [item('https://example.com/blocked', 'should not be used')];
+    await fetchContentForResults(results, router, ctx());
+    expect(results[0].fetch_failed).toBe('403 blocked');
+    expect(results[0].markdown_content).toBeUndefined();
+    expect(results[0].content_from_snippet).toBeUndefined();
+  });
+
+  it('does NOT promote an empty snippet (no fabrication — nothing to fall back to)', async () => {
+    vi.useFakeTimers();
+    const router = mockRouter((_u, opts) =>
+      new Promise((_, rej) => opts.signal?.addEventListener('abort', () => rej(opts.signal!.reason))),
+    );
+    const results = [item('https://example.com/slow', '')];
+    const p = fetchContentForResults(results, router, ctx());
+    await vi.advanceTimersByTimeAsync(2000);
+    await p;
+    expect(results[0].fetch_failed).toBe('timeout');
+    expect(results[0].markdown_content).toBeUndefined();
+    expect(results[0].content_from_snippet).toBeUndefined();
+  });
+});
+
+// --- Narrow-set browser-render escalation
+//
+// WHY: JS-heavy documentation SPAs (react.dev-class) served over the HTTP tier
+// return an empty JS shell — extraction "succeeds" with near-empty content, so
+// the snippet fallback never fires and callers get a content-poor result. When
+// include_domains narrows the enrichment set to a FEW URLs (bounded cost), the
+// fetch should force the browser engine (renderJs:'always') so the SPA is
+// actually rendered and real content recovered. Broad (many-URL) searches must
+// stay on today's fast auto path (no browser cold-start on every result). Keys
+// on candidateCount — a STRUCTURAL signal — never a domain allowlist. The
+// snippet-fallback safety net is preserved when even the render fetch fails.
+
+describe('fetchContentForResults — narrow-set browser-render escalation', () => {
+  afterEach(() => vi.useRealTimers());
+
+  function captureRouter() {
+    const renderModes: Array<'auto' | 'always' | 'never' | undefined> = [];
+    const router = {
+      fetch: vi.fn(async (url: string, opts: { renderJs?: 'auto' | 'always' | 'never' }) => {
+        renderModes.push(opts?.renderJs);
+        return makeRaw(url);
+      }),
+    } as unknown as SmartRouter;
+    return { router, renderModes };
+  }
+
+  const item = (url: string): SearchResultItem => ({ title: url, url, snippet: 's', relevance_score: 1 });
+
+  const baseCtx = (over: Partial<Parameters<typeof fetchContentForResults>[2]> = {}): Parameters<typeof fetchContentForResults>[2] => ({
+    contentMaxChars: 30000,
+    maxTotalChars: 50000,
+    fetchTimeoutMs: 5000,
+    totalDeadline: Date.now() + 30000,
+    forceRefresh: false,
+    stageBudgetMs: 8000,
+    ...over,
+  });
+
+  it('forces renderJs:always for a NARROW set (candidateCount <= maxCandidates) so the SPA is rendered', async () => {
+    const { router, renderModes } = captureRouter();
+    const results = [item('https://docs.example.com/a'), item('https://docs.example.com/b')];
+    await fetchContentForResults(results, router, baseCtx({
+      candidateCount: 2,
+      renderNarrowSet: { maxCandidates: 3 },
+    }));
+    // Every hydration fetch used the browser-render path.
+    expect(renderModes.length).toBe(2);
+    expect(renderModes.every((m) => m === 'always')).toBe(true);
+  });
+
+  it('keeps renderJs:auto for a WIDE set (candidateCount > maxCandidates) — fast path unchanged', async () => {
+    const { router, renderModes } = captureRouter();
+    const results = Array.from({ length: 5 }, (_, i) => item(`https://docs.example.com/${i}`));
+    await fetchContentForResults(results, router, baseCtx({
+      candidateCount: 5,
+      renderNarrowSet: { maxCandidates: 3 },
+    }));
+    expect(renderModes.length).toBe(5);
+    expect(renderModes.every((m) => m === 'auto')).toBe(true);
+  });
+
+  it('keeps renderJs:auto when renderNarrowSet is absent regardless of candidate count (legacy path)', async () => {
+    const { router, renderModes } = captureRouter();
+    const results = [item('https://docs.example.com/a'), item('https://docs.example.com/b')];
+    await fetchContentForResults(results, router, baseCtx({ candidateCount: 2 }));
+    expect(renderModes.every((m) => m === 'auto')).toBe(true);
+  });
+
+  it('preserves the snippet-fallback safety net when the render fetch still times out', async () => {
+    vi.useFakeTimers();
+    const renderModes: Array<string | undefined> = [];
+    const router = {
+      fetch: vi.fn((url: string, opts: { renderJs?: string; signal?: AbortSignal }) => {
+        renderModes.push(opts?.renderJs);
+        return new Promise((_, rej) => opts.signal?.addEventListener('abort', () => rej(opts.signal!.reason)));
+      }),
+    } as unknown as SmartRouter;
+    const results: SearchResultItem[] = [
+      { title: 't', url: 'https://docs.example.com/slow', snippet: 'real snippet evidence', relevance_score: 1 },
+    ];
+    const p = fetchContentForResults(results, router, baseCtx({
+      candidateCount: 1,
+      renderNarrowSet: { maxCandidates: 3 },
+      fetchTimeoutMs: 2000,
+      snippetFallback: true,
+    }));
+    await vi.advanceTimersByTimeAsync(2000);
+    await p;
+    // Render path was chosen...
+    expect(renderModes[0]).toBe('always');
+    // ...and when it still fails on timeout, the snippet is preserved.
+    expect(results[0].fetch_failed).toBe('timeout');
+    expect(results[0].markdown_content).toBe('real snippet evidence');
+    expect(results[0].content_from_snippet).toBe(true);
   });
 });

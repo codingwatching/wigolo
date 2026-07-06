@@ -3,8 +3,8 @@ import {
   type DateHint,
   type Vertical,
 } from './intent-router.js';
-import { COMMON_NOUNS } from '../hybrid/common-nouns.js';
 import { detectRareTerms } from './rare-terms.js';
+import { isBrandCollisionProne } from './brand-collision.js';
 
 export interface QueryUnderstanding {
   intent: Vertical;
@@ -23,17 +23,7 @@ export interface BuildQUOptions {
   now?: Date;
 }
 
-function tokenize(query: string): string[] {
-  return query.trim().split(/\s+/).filter((t) => t.length > 0);
-}
-
-function isBrandCollisionProne(query: string): boolean {
-  const tokens = tokenize(query);
-  if (tokens.length === 0 || tokens.length > 2) return false;
-  return tokens.every((t) => COMMON_NOUNS.has(t.toLowerCase()));
-}
-
-// Slice 8 / M6: lowercase lexicon for queries that arrive downcased.
+// Lowercase lexicon for queries that arrive downcased.
 // Lowercase queries are common (many agents normalize input) and the
 // casing-only extractor below returns [] for them. The lexicon recovers
 // the high-value named entities (companies, products, frameworks, AI
@@ -60,11 +50,11 @@ const LOWERCASE_ENTITY_LEXICON = new Set([
   // Cloud / infra
   'kubernetes', 'docker', 'terraform', 'ansible', 'pulumi',
   'aws', 'gcp', 'azure', 'vercel', 'fly', 'render', 'heroku',
-  // Roles / common-prose entities the audit's test names
+  // Roles / common-prose entities
   'ceo', 'cto', 'cfo', 'coo', 'cmo',
 ]);
 
-function extractEntities(query: string): string[] {
+export function extractEntities(query: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   // Acronyms / mixed-case tokens (HNSW, Next.js, pgvector with dot, React)
@@ -83,7 +73,7 @@ function extractEntities(query: string): string[] {
       }
       continue;
     }
-    // Slice 8 / M6: fall-through path for all-lowercase tokens against a
+    // Fall-through path for all-lowercase tokens against a
     // known-entity lexicon. Keeps the case-sensitive path authoritative
     // (preserves original casing) while still recovering entities from
     // downcased queries.

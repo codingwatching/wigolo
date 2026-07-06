@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   buildOllamaDoctorLines,
+  buildLocalTierDoctorLines,
   resolveOllamaModelBounded,
   sanitizeForTerminal,
 } from '../../../src/cli/doctor.js';
@@ -127,5 +128,48 @@ describe('buildOllamaDoctorLines', () => {
       baseUrl: 'http://localhost:11434',
     });
     expect(lines.join('\n')).toMatch(/ollama/i);
+  });
+});
+
+describe('buildLocalTierDoctorLines', () => {
+  it("shows flag=off and NO probe result when the auto tier is disabled", () => {
+    // WHY: OFF is the default; doctor must state the flag is off (so the lever is
+    // discoverable) without implying any endpoint was contacted.
+    const lines = buildLocalTierDoctorLines({ localLlm: 'off', tier: null });
+    const joined = lines.join('\n');
+    expect(joined).toMatch(/local language model|local model/i);
+    expect(joined).toMatch(/off/i);
+    // Component name is allowed in doctor output.
+    expect(joined).toMatch(/WIGOLO_LOCAL_LLM/);
+  });
+
+  it("shows the resolved endpoint + model when auto and a server is reachable", () => {
+    const lines = buildLocalTierDoctorLines({
+      localLlm: 'auto',
+      tier: { available: true, endpoint: 'http://localhost:11434', model: 'qwen2.5:7b-instruct', source: 'auto' },
+    });
+    const joined = lines.join('\n');
+    expect(joined).toMatch(/auto/);
+    expect(joined).toContain('http://localhost:11434');
+    expect(joined).toContain('qwen2.5:7b-instruct');
+    expect(joined).toMatch(/reachable/i);
+  });
+
+  it("reports auto + unreachable gracefully (no model, not-reachable note)", () => {
+    // WHY: an enabled-but-absent server must be shown as configured-yet-down so
+    // the user knows the flag is on but nothing answered — not hidden.
+    const lines = buildLocalTierDoctorLines({ localLlm: 'auto', tier: null });
+    const joined = lines.join('\n');
+    expect(joined).toMatch(/auto/);
+    expect(joined).toMatch(/not reachable|unreachable|no local model|not detected/i);
+  });
+
+  it("sanitizes an untrusted model name from a compromised server", () => {
+    const lines = buildLocalTierDoctorLines({
+      localLlm: 'auto',
+      tier: { available: true, endpoint: 'http://localhost:11434', model: 'm\x1b[2Jx', source: 'auto' },
+    });
+    expect(lines.join('\n')).not.toMatch(/\x1b/);
+    expect(lines.join('\n')).toContain('m[2Jx');
   });
 });

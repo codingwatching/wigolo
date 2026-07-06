@@ -10,7 +10,7 @@ npm install wigolo-ai-sdk ai zod
 
 Requires wigolo to be available via npx:
 ```bash
-npm install -g @staticn0va/wigolo
+npm install -g wigolo
 ```
 
 ## Quick Start
@@ -78,7 +78,7 @@ const client = new WigoloMcpClient({
 ```typescript
 const client = new WigoloMcpClient({
   command: 'npx',           // default
-  args: ['@staticn0va/wigolo'], // default
+  args: ['wigolo'], // default
   timeoutMs: 30000,         // default
 });
 

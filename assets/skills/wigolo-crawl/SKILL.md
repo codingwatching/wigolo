@@ -1,7 +1,7 @@
 ---
 name: wigolo-crawl
 description: |
-  Local-first multi-page crawl with sitemap, BFS, DFS, and URL-map strategies, anchor-fragment dedup, rate limiting, robots.txt respect, and automatic local cache population. Use when the user wants to index documentation, crawl a docs site, extract all pages under a path, or says "crawl", "index this site", "get all the docs", "bulk extract". Prefer over firecrawl-crawl when crawled pages should land in a reusable local cache for later `cache` / `find_similar` queries.
+  Local-first multi-page crawl with sitemap, BFS, DFS, and URL-map strategies, anchor-fragment dedup, rate limiting, robots.txt respect, and automatic local cache population. Use when the user wants to index documentation, crawl a docs site, extract all pages under a path, or says "crawl", "index this site", "get all the docs", "bulk extract". Prefer when crawled pages should land in a reusable local cache for later `cache` / `find_similar` queries.
 ---
 
 # wigolo crawl
@@ -61,8 +61,7 @@ All crawled pages enter the local cache with embeddings. This means:
 
 ## When NOT to use wigolo-crawl
 
-- **One-shot cloud-managed crawl with no local cache reuse expected** — `firecrawl-crawl` is fine.
-- **Login-required crawl beyond what `use_auth` covers** — use `firecrawl-interact` first, then `crawl`.
+- **Login-required crawl beyond what `use_auth` covers** — handle authentication externally first, then `crawl`.
 
 ## See Also
 

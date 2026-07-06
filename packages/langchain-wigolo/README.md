@@ -10,7 +10,7 @@ pip install langchain-wigolo
 
 Requires wigolo to be available via npx:
 ```bash
-npm install -g @staticn0va/wigolo
+npm install -g wigolo
 # or use npx (default, no install needed)
 ```
 
@@ -61,7 +61,7 @@ client = WigoloMcpClient(command="node", args=["./dist/index.js"])
 Async MCP client that communicates with wigolo via subprocess.
 
 - `command` — executable to run (default: `"npx"`)
-- `args` — arguments (default: `["@staticn0va/wigolo"]`)
+- `args` — arguments (default: `["wigolo"]`)
 - `timeout` — request timeout in seconds (default: `30.0`)
 - `connect()` / `disconnect()` — lifecycle management
 - `call_tool(name, arguments)` — invoke any wigolo MCP tool

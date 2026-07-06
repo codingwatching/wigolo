@@ -14,7 +14,7 @@ function makeMockClient(response: Record<string, unknown> = {}): WigoloMcpClient
   return {
     isConnected: true,
     command: 'npx',
-    args: ['@staticn0va/wigolo'],
+    args: ['wigolo'],
     timeoutMs: 30000,
     connect: vi.fn(),
     disconnect: vi.fn(),
