@@ -5,11 +5,14 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { initSubsystems, createMcpServer, type Subsystems } from '../server.js';
+// `../server.js` and `../cache/db.js` pull the full subsystem graph incl. the native cache DB
+// (better-sqlite3). They are imported DYNAMICALLY inside start()/the health path (full-daemon mode
+// only) so that a studio-only gateway (mcpServerFactory set) — which runs in the Electron main where
+// better-sqlite3 cannot load (spec §13.7) — never triggers that load. Type-only imports are erased.
+import type { Subsystems } from '../server.js';
 import type { StudioHostHandlers } from './studio-dispatch.js';
 import type { StudioSessionsAccessor } from '../studio/session-drive.js';
 import { probeHealth } from './health-check.js';
-import { probeCacheDb } from '../cache/db.js';
 import { checkAuth, checkAuthSubprotocol, checkOriginHost } from '../studio/auth.js';
 import { serveStaticAsset } from './static-assets.js';
 import type { NonceStore } from '../studio/nonce.js';
@@ -51,6 +54,13 @@ export interface DaemonOptions {
    * Origin/Host-guarded and single-use/TTL-bounded by the nonce store. Host path only.
    */
   nonceStore?: NonceStore;
+  /**
+   * STUDIO-ONLY MODE: when set, start() SKIPS `initSubsystems()` (and never imports `../server.js` /
+   * the native cache DB) and every MCP session is served by this factory instead of `createMcpServer`.
+   * The Electron app passes a factory that hosts only the `studio_*` surface (spec §13.7). Full-daemon
+   * behavior is unchanged when this is absent.
+   */
+  mcpServerFactory?: () => Server;
 }
 
 export class DaemonHttpServer {
@@ -67,6 +77,9 @@ export class DaemonHttpServer {
   private readonly onUpgrade: UpgradeHandler | null;
   private readonly webappRoot: string | null;
   private readonly nonceStore: NonceStore | null;
+  private readonly mcpServerFactory: (() => Server) | null;
+  /** Set by start() in full-daemon mode from the dynamically-imported `../server.js`; null in studio-only mode. */
+  private createMcpServerFn: ((subsystems: Subsystems) => Server) | null = null;
   private mcpRequestCount = 0;
   private studioHost: StudioHostHandlers | null = null;
   private studioSessions: StudioSessionsAccessor | null = null;
@@ -82,6 +95,7 @@ export class DaemonHttpServer {
     this.onUpgrade = options.onUpgrade ?? null;
     this.webappRoot = options.webappRoot ?? null;
     this.nonceStore = options.nonceStore ?? null;
+    this.mcpServerFactory = options.mcpServerFactory ?? null;
   }
 
   /**
@@ -116,18 +130,26 @@ export class DaemonHttpServer {
     this.startedAt = Date.now();
     this.stopped = false;
 
-    try {
-      this.subsystems = await initSubsystems();
-      if (this.studioHost) this.subsystems.studioHost = this.studioHost; // apply if set before start()
-      if (this.studioSessions) this.subsystems.studioSessions = this.studioSessions; // D19: same apply-if-pre-start
-    } catch (err) {
-      log.error('Failed to initialize subsystems', { error: String(err) });
-      throw err;
+    if (this.mcpServerFactory) {
+      // STUDIO-ONLY: no subsystems, and crucially no `../server.js` import → the native cache DB is
+      // never loaded, so this gateway boots in the Electron main (spec §13.7). Sessions are served by
+      // the injected factory below.
+      log.info('Daemon HTTP server starting in studio-only mode (no core subsystems)');
+    } else {
+      try {
+        const mod = await import('../server.js');
+        this.createMcpServerFn = mod.createMcpServer;
+        this.subsystems = await mod.initSubsystems();
+        if (this.studioHost) this.subsystems.studioHost = this.studioHost; // apply if set before start()
+        if (this.studioSessions) this.subsystems.studioSessions = this.studioSessions; // D19: same apply-if-pre-start
+      } catch (err) {
+        log.error('Failed to initialize subsystems', { error: String(err) });
+        throw err;
+      }
+      this.subsystems.bootstrapSearxng().catch((err) => {
+        log.warn('SearXNG bootstrap failed in daemon mode', { error: String(err) });
+      });
     }
-
-    this.subsystems.bootstrapSearxng().catch((err) => {
-      log.warn('SearXNG bootstrap failed in daemon mode', { error: String(err) });
-    });
 
     this.httpServer = createServer((req, res) => {
       this.handleRequest(req, res).catch((err) => {
@@ -158,6 +180,12 @@ export class DaemonHttpServer {
         resolve(url);
       });
     });
+  }
+
+  /** One fresh MCP server per transport session — the injected studio-only factory, or the full server. */
+  private newMcpServer(): Server {
+    if (this.mcpServerFactory) return this.mcpServerFactory();
+    return this.createMcpServerFn!(this.subsystems!);
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -286,8 +314,15 @@ export class DaemonHttpServer {
     }
   }
 
-  private handleHealthRequest(res: ServerResponse): void {
+  private async handleHealthRequest(res: ServerResponse): Promise<void> {
     try {
+      // STUDIO-ONLY: no cache subsystem to probe (better-sqlite3 is never loaded here) — report liveness only.
+      if (this.mcpServerFactory) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ok', mode: 'studio', uptimeMs: Date.now() - this.startedAt }));
+        return;
+      }
+      const { probeCacheDb } = await import('../cache/db.js');
       const report = probeHealth({
         backendStatus: this.subsystems?.backendStatus ?? null,
         browserPool: this.subsystems?.browserPool ?? null,
@@ -329,7 +364,7 @@ export class DaemonHttpServer {
 
   private async handleStreamableHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     this.mcpRequestCount++;
-    if (!this.subsystems) {
+    if (!this.subsystems && !this.mcpServerFactory) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Server not ready' }));
       return;
@@ -362,7 +397,7 @@ export class DaemonHttpServer {
           }
         };
 
-        const server = createMcpServer(this.subsystems);
+        const server = this.newMcpServer();
         await server.connect(transport);
         await transport.handleRequest(req, res, body);
         return;
@@ -406,7 +441,7 @@ export class DaemonHttpServer {
   }
 
   private async handleSseRequest(_req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!this.subsystems) {
+    if (!this.subsystems && !this.mcpServerFactory) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Server not ready' }));
       return;
@@ -414,7 +449,7 @@ export class DaemonHttpServer {
 
     try {
       const transport = new SSEServerTransport('/messages', res);
-      const server = createMcpServer(this.subsystems);
+      const server = this.newMcpServer();
 
       await server.connect(transport);
 

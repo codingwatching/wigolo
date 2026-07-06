@@ -6,13 +6,11 @@ import { tmpdir } from 'node:os';
 import { launchStudio } from './launch';
 import { readHandle, DaemonProxy } from 'wigolo/studio';
 
-// GATED (RUN_STUDIO_E2E). The embedded gateway boots the full wigolo subsystems, which load native
-// modules (better-sqlite3, onnxruntime-node). In the Electron main these must be built for Electron's
-// ABI (NODE_MODULE_VERSION), NOT Node's — so this lane requires `npx @electron/rebuild` first (the CI
-// studio-e2e job / packaging step does this; the shared node_modules ships Node-ABI natives for the
-// core test suites). Same env-gating discipline as studio-bridge's RUN_STUDIO_HEADED. The agent-line
-// LOGIC (drive engine, host, preemption FSM, approval store, dispatch) is covered by the unit/property
-// suites; this proves the running gateway end-to-end once natives are rebuilt for Electron.
+// GATED (RUN_STUDIO_E2E) — launches the real Electron app, so it runs on the ubuntu CI lane under xvfb
+// (same env-gating discipline as studio-bridge's RUN_STUDIO_HEADED). The embedded gateway is
+// studio-only (createStudioMcpServer), so it is better-sqlite3-free and boots in the Electron main with
+// NO electron-rebuild (spec §13.7). This proves the running gateway end-to-end: handle discovery,
+// bearer auth, and the open/observe/act/list/close loop.
 const RUN = !!process.env.RUN_STUDIO_E2E;
 
 const APP_MAIN = join(import.meta.dirname, '../../out/main/index.js');

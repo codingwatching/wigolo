@@ -83,11 +83,10 @@ export type {
   GatedNavResult,
 } from './session-drive.js';
 
-// Capture pipeline (P3 wires studio_capture; the seam + trusted-0 insert are salvaged now)
-export { createCaptureHandler } from './capture/handler.js';
-export type { CaptureHandlerDeps } from './capture/handler.js';
-export { captureFromPage, CaptureRefusedError } from './capture/artifacts.js';
-export type { CaptureResult } from './capture/artifacts.js';
+// Capture pipeline: NOT re-exported here — capture/artifacts → cache/db → better-sqlite3, which cannot
+// load in the Electron main (spec §13.7). studio_capture is P3 and reaches the cache via a decoupled
+// path decided then. The barrel is deliberately kept better-sqlite3-free so `wigolo/studio` loads in
+// the Electron main. CaptureResult flows through SessionDriveDeps as a type-only reference (erased).
 
 // ── Cross-package surface the Electron host + gateway need through the one `wigolo/studio` subpath ──
 
@@ -122,6 +121,11 @@ export type { DaemonOptions, DaemonAuthConfig, UpgradeHandler } from '../daemon/
 
 // The bearer-authed MCP client for the gateway (the same client the stdio proxy uses; the e2e drives with it).
 export { DaemonProxy } from '../daemon/proxy.js';
+
+// Studio-only MCP server (hosts just studio_* — better-sqlite3-free, boots in the Electron main). The
+// gateway passes `mcpServerFactory: () => createStudioMcpServer(...)` to the embedded DaemonHttpServer.
+export { createStudioMcpServer } from '../daemon/studio-mcp-server.js';
+export type { StudioMcpServerDeps } from '../daemon/studio-mcp-server.js';
 
 // Per-launch bearer + Origin/Host guard for the gateway.
 export { mintHostToken, resolveHostToken, checkOriginHost, checkAuth, checkAuthSubprotocol } from './auth.js';

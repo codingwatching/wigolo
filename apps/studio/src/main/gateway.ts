@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   DaemonHttpServer,
+  createStudioMcpServer,
   resolveHostToken,
   writeHandle,
   removeHandle,
@@ -58,7 +59,14 @@ export async function startGateway(deps: GatewayDeps): Promise<Gateway> {
   const instanceId = randomUUID();
   setMyInstanceId(instanceId);
 
-  const opts: DaemonOptions = { port, host, auth: { token, host } };
+  // STUDIO-ONLY gateway: the embedded server hosts just the studio_* surface via this factory, so it
+  // never loads the core subsystems' native cache DB (which can't run in the Electron main — spec §13.7).
+  const opts: DaemonOptions = {
+    port,
+    host,
+    auth: { token, host },
+    mcpServerFactory: () => createStudioMcpServer({ studioHost: deps.host, sessions: deps.sessions, dataDir: deps.dataDir }),
+  };
   const daemon: GatewayDaemon = deps.makeDaemon ? deps.makeDaemon(opts) : new DaemonHttpServer(opts);
 
   const endpoint = await daemon.start();

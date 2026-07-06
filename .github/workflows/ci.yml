@@ -141,5 +141,9 @@ jobs:
       - name: Install Linux GUI libs for Electron
         run: npx playwright install-deps
 
+      # RUN_STUDIO_E2E enables the agent-line spec (real gateway: open/observe/act/list/close over the
+      # bearer). The studio-only gateway is better-sqlite3-free, so NO electron-rebuild is needed here.
       - name: E2E (virtual display)
         run: xvfb-run -a npm run test:e2e -w apps/studio
+        env:
+          RUN_STUDIO_E2E: '1'
