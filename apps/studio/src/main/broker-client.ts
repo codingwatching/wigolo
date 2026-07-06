@@ -41,7 +41,19 @@ export function resolveNodePath(): string {
 export function createBrokerClient(opts: BrokerClientOptions = {}): BrokerClient {
   const spawnFn = opts.spawnFn ?? (nodeSpawn as unknown as SpawnFn);
   const nodePath = opts.nodePath ?? resolveNodePath();
-  const brokerPath = opts.brokerPath ?? resolveBrokerPath();
+  // Resolving the broker entry must NEVER crash app boot — a failure here degrades captures to
+  // `capture_unavailable` (§11), it does not take down the human UI or the P1/P2 agent line.
+  let brokerPath: string;
+  try {
+    brokerPath = opts.brokerPath ?? resolveBrokerPath();
+  } catch {
+    return {
+      ready: () => Promise.reject(new Error('studio background service unavailable')),
+      call: () => Promise.reject(new Error('studio background service unavailable')),
+      onArtifact: () => { /* never fires */ },
+      stop: async () => { /* nothing to stop */ },
+    };
+  }
   const callTimeoutMs = opts.callTimeoutMs ?? 15_000;
   const bootTimeoutMs = opts.bootTimeoutMs ?? 20_000;
 
@@ -77,10 +89,17 @@ export function createBrokerClient(opts: BrokerClientOptions = {}): BrokerClient
   };
 
   const start = (): void => {
-    child = spawnFn(nodePath, [brokerPath], {
-      stdio: ['pipe', 'pipe', 'inherit'],
-      env: { ...process.env, WIGOLO_STUDIO_BROKER_MAIN: '1', ...(opts.dataDir ? { WIGOLO_DATA_DIR: opts.dataDir } : {}) },
-    });
+    try {
+      child = spawnFn(nodePath, [brokerPath], {
+        stdio: ['pipe', 'pipe', 'inherit'],
+        env: { ...process.env, WIGOLO_STUDIO_BROKER_MAIN: '1', ...(opts.dataDir ? { WIGOLO_DATA_DIR: opts.dataDir } : {}) },
+      });
+    } catch {
+      // spawn failed (e.g. no node on PATH) — schedule a backoff retry; call()/ready() reject meanwhile.
+      child = null;
+      if (!stopped) { setTimeout(() => { if (!stopped) start(); }, backoff); backoff = Math.min(backoff * 2, 5_000); }
+      return;
+    }
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
       buf += chunk;
