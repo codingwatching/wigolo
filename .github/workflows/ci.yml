@@ -97,6 +97,12 @@ jobs:
         shell: bash
         run: npm ci
 
+      # The app imports the built core via the `wigolo/studio` exports subpath,
+      # so core dist must exist before the app's tsc lint + unit tests resolve it.
+      - name: Build core (for wigolo/studio types)
+        shell: bash
+        run: npm run build
+
       - name: Lint studio (tsc --noEmit)
         shell: bash
         run: npm run lint -w apps/studio

@@ -13,6 +13,10 @@
     "./types": {
       "import": "./dist/types.js",
       "types": "./dist/types.d.ts"
+    },
+    "./studio": {
+      "import": "./dist/studio/index.js",
+      "types": "./dist/studio/index.d.ts"
     }
   },
   "types": "dist/types.d.ts",

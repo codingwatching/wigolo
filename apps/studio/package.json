@@ -5,8 +5,9 @@
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
+    "build:core": "npm run build --prefix ../..",
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "npm run build:core && electron-vite build",
     "start": "electron-vite preview",
     "test": "vitest run",
     "test:e2e": "npm run build && vitest run --config vitest.e2e.config.ts",
@@ -14,7 +15,8 @@
   },
   "dependencies": {
     "react": "19.2.7",
-    "react-dom": "19.2.7"
+    "react-dom": "19.2.7",
+    "wigolo": "file:../.."
   },
   "devDependencies": {
     "@types/node": "26.1.0",
