@@ -43,6 +43,8 @@ import {
   type StudioGeneralizeOutput,
   type StudioCaptureInput,
   type StudioCaptureOutput,
+  type StudioSayInput,
+  type StudioSayOutput,
   type CaptureResult,
   type FieldSemantics,
   type MarkPayload,
@@ -112,6 +114,8 @@ export interface StudioHostDeps {
   closeTab: (tabId: string) => void;
   /** Surface a parked risky act to the human approval card (never auto-allowed). */
   onParked: (notice: ParkedApprovalNotice) => void;
+  /** P4: the agent posted a chat message (studio_say) → push it to the human's chat rail. */
+  onSay?: (msg: { text: string; markId?: string; ts: number; sessionId: string }) => void;
   /**
    * The DB broker RPC seam (P3, spec §13.9). Persistence + find_similar run in a plain-Node child so the
    * Electron main never loads a native module; the host supplies the security-gate inputs per call. Only
@@ -139,6 +143,12 @@ export interface StudioHost {
   sessions: StudioSessionsAccessor;
   /** Native human input landed on a tab → preempt the agent instantly (fsm → paused). */
   onHumanInput(tabId: string): void;
+  /**
+   * P4: the human typed in the chat rail composer → a trusted `chat` human event on the active session
+   * (the agent drains it in studio_observe). Credential-gated at source (dropped on a login page, like a
+   * comment). Human-only (Electron-IPC seam) — NOT on StudioHostHandlers (PIN-SPLIT(b)).
+   */
+  postHumanChat(text: string): Promise<void>;
   /** The human's Allow/Deny from the approval card. Allow adds the matching pre-grant; both drain in the next observe. */
   resolveApproval(approvalId: string, decision: 'allow' | 'deny'): void;
   /**
@@ -598,6 +608,18 @@ export function createStudioHost(deps: StudioHostDeps): StudioHost {
         lastActiveAt: c.lastActiveAt,
       })),
     }),
+    // P4: agent→human chat post. Agent-authored text only; the renderer renders it as an inert text node
+    // (no page content, no control/approval power — a legitimate 8th agent verb, PIN-SPLIT(b) intact).
+    say: async (input: StudioSayInput): Promise<StudioSayOutput | StudioToolError> => {
+      const ctx = targetContext();
+      if (!ctx) return noActive();
+      const text = typeof input.text === 'string' ? input.text : '';
+      if (!text.trim()) return { error_reason: 'empty_message', hint: 'studio_say needs a non-empty text.' };
+      ctx.lastActiveAt = Date.now();
+      const ts = Date.now();
+      deps.onSay?.({ text, ...(typeof input.markId === 'string' ? { markId: input.markId } : {}), ts, sessionId: ctx.sessionId });
+      return { posted: true, posted_at: ts };
+    },
   };
 
   const sessions: StudioSessionsAccessor = {
@@ -659,6 +681,16 @@ export function createStudioHost(deps: StudioHostDeps): StudioHost {
         } catch { /* persist miss ≠ mark failure */ }
       })();
       return { markId: mark.markId, role, name };
+    },
+    async postHumanChat(text: string): Promise<void> {
+      const ctx = targetContext();
+      if (!ctx) return;
+      const t = typeof text === 'string' ? text.trim() : '';
+      if (!t) return;
+      // Credential-gated at source (mirrors addComment): a chat message typed on a login page could quote a
+      // secret. Dropped, not buffered. Human chat is a trusted human→agent instruction (trusted:true).
+      if (await ctx.isCredentialPage()) return;
+      ctx.eventQueue.enqueue({ type: 'chat', tab_id: ctx.tab.tabId, text: t, author: 'human', trusted: true });
     },
     async addComment({ markId, text }): Promise<{ ok: true } | StudioToolError> {
       const ctx = targetContext();

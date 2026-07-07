@@ -93,12 +93,14 @@ function markDebugger(opts: { hostileName?: boolean; overlay?: boolean; credRef?
 function makeHost(config?: { sessionCap?: number }, dbg: () => DebuggerLike = fakeDebugger, broker = makeFakeBroker()) {
   const engine = createDriveEngine();
   const parked: ParkedApprovalNotice[] = [];
+  const said: Array<{ text: string; markId?: string; ts: number; sessionId: string }> = [];
   const tabs = new Map<string, { navigate: ReturnType<typeof vi.fn>; closed: boolean; url: string }>();
   let n = 0;
   const host = createStudioHost({
     config,
     broker,
     onParked: (notice) => parked.push(notice),
+    onSay: (m) => said.push(m),
     createTab: async ({ initialHolder, grant }) => {
       const tabId = `t${++n}`;
       // attachTab is async + fail-closed: it resolves only once the SSRF fence is armed.
@@ -116,7 +118,7 @@ function makeHost(config?: { sessionCap?: number }, dbg: () => DebuggerLike = fa
     },
     closeTab: (tabId) => { const t = tabs.get(tabId); if (t) t.closed = true; void engine.detachTab(tabId); },
   });
-  return { host, parked, tabs, broker };
+  return { host, parked, said, tabs, broker };
 }
 
 describe('createStudioHost — session lifecycle', () => {
@@ -394,9 +396,9 @@ describe('createStudioHost — marking (P2)', () => {
     expect((r as { error_reason?: string }).error_reason).toBe('mark_unresolved');
   });
 
-  it('PIN-SPLIT(a): mark creation is NOT on the agent surface — handler keys stay the 7-set', async () => {
+  it('PIN-SPLIT(a): mark creation is NOT on the agent surface — handler keys stay the sealed set (+say, the P4 8th agent verb)', async () => {
     const { host } = makeHost(undefined, () => markDebugger());
-    expect(Object.keys(host.handlers).sort()).toEqual(['act', 'capture', 'close', 'list', 'marks', 'observe', 'spawn']);
+    expect(Object.keys(host.handlers).sort()).toEqual(['act', 'capture', 'close', 'list', 'marks', 'observe', 'say', 'spawn']);
     expect('markElement' in host.handlers).toBe(false);
     expect(typeof host.markElement).toBe('function'); // on the StudioHost object, not the agent handlers
   });
@@ -485,5 +487,44 @@ describe('createStudioHost — marking (P2)', () => {
     // active session is t2; a comment on t1's mark id resolves to nothing in t2 → clean refusal (not a wrong-write)
     const r = await host.addComment({ markId: a.markId, text: 'x' });
     expect((r as { error_reason?: string }).error_reason).toBe('no_such_mark');
+  });
+});
+
+describe('createStudioHost — studio_say + human chat (P4)', () => {
+  it('say posts to the human (onSay) and returns posted + posted_at; an unknown markId still posts', async () => {
+    const { host, said } = makeHost(undefined, () => markDebugger());
+    await host.handlers.spawn({});
+    const r = await host.handlers.say({ text: 'found the pricing table', markId: 'no-such-mark' });
+    expect(r).toMatchObject({ posted: true });
+    expect(typeof (r as { posted_at: number }).posted_at).toBe('number');
+    expect(said).toHaveLength(1);
+    expect(said[0]).toMatchObject({ text: 'found the pricing table', markId: 'no-such-mark' });
+  });
+
+  it('say refuses an empty message (never posts a blank)', async () => {
+    const { host, said } = makeHost(undefined, () => markDebugger());
+    await host.handlers.spawn({});
+    const r = await host.handlers.say({ text: '   ' });
+    expect((r as { error_reason?: string }).error_reason).toBe('empty_message');
+    expect(said).toHaveLength(0);
+  });
+
+  it('postHumanChat enqueues a trusted `chat` event studio_observe drains (human→agent)', async () => {
+    const { host } = makeHost(undefined, () => markDebugger());
+    await host.handlers.spawn({});
+    await host.postHumanChat('please click the Buy button');
+    const obs = await host.handlers.observe({ since: 0 });
+    const events = ('events' in obs ? obs.events : []) as Array<Record<string, unknown>>;
+    const chat = events.find((e) => e.type === 'chat');
+    expect(chat).toMatchObject({ type: 'chat', text: 'please click the Buy button', author: 'human', trusted: true });
+  });
+
+  it('NEGATIVE: postHumanChat is dropped at source on a credential page (never drains a secret)', async () => {
+    const { host } = makeHost(undefined, () => markDebugger({ credRef: { v: true } }));
+    await host.handlers.spawn({});
+    await host.postHumanChat('my 2FA code is 123456');
+    const obs = await host.handlers.observe({ since: 0 });
+    const events = ('events' in obs ? obs.events : []) as Array<Record<string, unknown>>;
+    expect(events.some((e) => e.type === 'chat')).toBe(false);
   });
 });

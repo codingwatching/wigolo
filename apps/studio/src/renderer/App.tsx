@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './studio.css';
 import type { StudioState } from '../shared/ipc';
 import type { StudioApi } from '../preload/index';
@@ -9,13 +9,15 @@ import { DriveBanner } from './DriveBanner';
 import { ApprovalCards } from './ApprovalCard';
 import { MarksPanel } from './MarksPanel';
 import { CapturesPanel } from './CapturesPanel';
+import { ChatPanel } from './ChatPanel';
 import { KnowledgeRail } from './KnowledgeRail';
 import { IconSpark, IconSend } from './icons';
 import { createApprovalStore, type PendingApproval, type ApprovalVerdict } from './approval-store';
 import { createMarksStore, type Mark } from './marks-store';
 import { createCapturesStore } from './captures-store';
 import { createControlStore } from './control-store';
-import type { CaptureDto, KnowledgeHit } from '../shared/ipc';
+import { createChatStore } from './chat-store';
+import type { CaptureDto, KnowledgeHit, ChatMsgDto } from '../shared/ipc';
 
 declare global {
   interface Window { studio: StudioApi }
@@ -25,6 +27,7 @@ const approvalStore = createApprovalStore();
 const marksStore = createMarksStore();
 const capturesStore = createCapturesStore();
 const controlStore = createControlStore();
+const chatStore = createChatStore();
 type RailTab = 'agent' | 'marks' | 'captures';
 
 export function App() {
@@ -37,6 +40,8 @@ export function App() {
   const [railTab, setRailTab] = useState<RailTab>('agent');
   const [railOpen, setRailOpen] = useState(true);
   const [, setControlTick] = useState(0); // re-render on any per-tab control change (provenance dots / banner)
+  const [chat, setChat] = useState<ChatMsgDto[]>([]);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     window.studio.onState(setState);
@@ -56,12 +61,28 @@ export function App() {
       if (e.t === 'control' && e.holder) controlStore.applyControl(e.tabId, e.holder, e.epoch ?? 0);
       else if (e.t === 'act') controlStore.applyAct(e.tabId, e.action ?? '', e.narration, Date.now());
     });
+    // P4 chat rail: agent messages (studio_say) arrive live; the composer posts human messages.
+    const unsubChat = chatStore.subscribe(() => setChat(chatStore.list()));
+    window.studio.onChatMessage((m) => chatStore.add(m));
+    // ⌘J focuses the chat composer (spec §3).
+    const onKey = (ev: KeyboardEvent) => { if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'j') { ev.preventDefault(); setRailTab('agent'); composerRef.current?.focus(); } };
+    window.addEventListener('keydown', onKey);
     // Mount-time backfill of already-captured items (empty on a fresh run; live captures then arrive via
     // the onCaptureAdded delta). Degrades to [] when the library is down. Per-session re-backfill (reading
     // a resumed session's prior captures) lands with session restore (P4+).
     void window.studio.listCaptures().then((c) => capturesStore.set(c));
-    return () => { unsubControl(); };
+    return () => { unsubControl(); unsubChat(); window.removeEventListener('keydown', onKey); };
   }, []);
+
+  // Post the chat composer's text to the agent (optimistic local echo + deliver via the observe drain).
+  const sendChat = (): void => {
+    const el = composerRef.current;
+    const text = el?.value.trim() ?? '';
+    if (!text) return;
+    chatStore.add({ author: 'human', text, ts: Date.now() });
+    window.studio.sendChat(text);
+    if (el) el.value = '';
+  };
 
   const comment = (markId: string, text: string) => {
     marksStore.appendComment(markId, text); // optimistic local render
@@ -150,18 +171,27 @@ export function App() {
               <>
                 <div className="rail__body">
                   <ApprovalCards pending={pending} onDecide={decide} />
-                  {pending.length === 0 && (
+                  {chat.length > 0 ? (
+                    <ChatPanel messages={chat} />
+                  ) : pending.length === 0 ? (
                     <p className="rail__empty">
-                      The agent co-drives this browser. Approvals for <b>money</b>, <b>credential</b>, and
-                      <b> destructive</b> actions surface here — nothing risky runs without your say-so.
+                      The agent co-drives this browser. It talks to you here — and approvals for <b>money</b>,
+                      <b> credential</b>, and <b>destructive</b> actions surface here too; nothing risky runs
+                      without your say-so.
                     </p>
-                  )}
+                  ) : null}
                 </div>
                 <div className="composer">
-                  <textarea className="composer__input" rows={1} placeholder="Ask the agent…" />
+                  <textarea
+                    ref={composerRef}
+                    className="composer__input"
+                    rows={1}
+                    placeholder="Message the agent…  (⌘J)"
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
+                  />
                   <div className="composer__row">
                     <span className="composer__hint">⏎ send · page context attached</span>
-                    <button className="composer__send" title="Send"><IconSend /></button>
+                    <button className="composer__send" title="Send" onClick={sendChat}><IconSend /></button>
                   </div>
                 </div>
               </>

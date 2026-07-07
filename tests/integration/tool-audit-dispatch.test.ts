@@ -46,6 +46,7 @@ const STUDIO_HOST: StudioHostHandlers = {
   spawn: async () => ({ session_id: 'bg' }),
   close: async (input) => ({ closed: true as const, session_id: input.session_id ?? '' }),
   list: async () => ({ sessions: [] }),
+  say: async () => ({ posted: true, posted_at: 0 }),
 };
 
 function stubSubsystems(toolAuditDb: Database.Database | undefined, studioHost?: StudioHostHandlers): Subsystems {

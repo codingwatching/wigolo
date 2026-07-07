@@ -13,6 +13,7 @@ const hostHandlers = (): StudioHostHandlers => ({
   spawn: async () => ({ session_id: 's1' }),
   close: async (i) => ({ closed: true as const, session_id: i.session_id ?? '' }),
   list: async () => ({ sessions: [] }),
+  say: async () => ({ posted: true, posted_at: 0 }),
 });
 const sessionsAccessor: StudioSessionsAccessor = { getSessionDrive: () => undefined };
 

@@ -22,12 +22,12 @@ describe('knowledge layer integration', () => {
     }
   });
 
-  it('ToolName type includes all 18 tools (8 v3 + diff/watch + the 8 studio tools)', () => {
+  it('ToolName type includes all 19 tools (8 v3 + diff/watch + the 9 studio tools)', () => {
     const allTools: ToolName[] = [
       'fetch', 'search', 'crawl', 'cache', 'extract',
       'find_similar', 'research', 'agent', 'diff', 'watch',
       'studio_open', 'studio_observe', 'studio_act', 'studio_marks', 'studio_capture',
-      'studio_spawn', 'studio_close', 'studio_list',
+      'studio_say', 'studio_spawn', 'studio_close', 'studio_list',
     ];
     for (const tool of allTools) {
       expect(TOOL_DESCRIPTIONS[tool]).toBeDefined();
@@ -42,7 +42,7 @@ describe('knowledge layer integration', () => {
       inputSchema: { type: 'object' as const, properties: {} },
     }));
 
-    expect(tools.length).toBe(18);
+    expect(tools.length).toBe(19);
     for (const tool of tools) {
       expect(tool.name).toBeTruthy();
       expect(tool.description).toBeTruthy();

@@ -124,6 +124,8 @@ export type {
   MarkPayload,
   StudioCaptureInput,
   StudioCaptureOutput,
+  StudioSayInput,
+  StudioSayOutput,
   StudioSpawnInput,
   StudioSpawnOutput,
   StudioCloseInput,

@@ -8,7 +8,7 @@ import { createStudioHost, type HostTab } from './studio-host';
 import { createBrokerClient } from './broker-client';
 import { startGateway, type Gateway } from './gateway';
 import type { DebuggerLike } from './cdp-transport';
-import { IPC, type PendingApprovalDto, type CaptureDto } from '../shared/ipc';
+import { IPC, type PendingApprovalDto, type CaptureDto, type ChatMsgDto } from '../shared/ipc';
 import type { ControlParty, NavGrant } from 'wigolo/studio';
 
 const CHROME_HEIGHT = 88; // titlebar (40) + toolbar (48)
@@ -104,6 +104,12 @@ async function createWindow(): Promise<void> {
     onParked: (notice) => {
       const dto: PendingApprovalDto = { id: notice.approval_id, action: notice.action, risk: notice.risk };
       win.webContents.send(IPC.approvalParked, dto);
+    },
+    // P4: the agent posted a chat message (studio_say) → the chat rail. Agent-authored text; the renderer
+    // renders it as an inert text node.
+    onSay: (m) => {
+      const dto: ChatMsgDto = { author: 'agent', text: m.text, ...(m.markId ? { markId: m.markId } : {}), ts: m.ts };
+      win.webContents.send(IPC.chatMessage, dto);
     },
     createTab: async ({ initialHolder, grant }: { initialHolder: ControlParty; grant: NavGrant }): Promise<HostTab> => {
       const view = new WebContentsView({
@@ -232,6 +238,8 @@ async function createWindow(): Promise<void> {
     bannerOpen = !!open;
     tabs.relayout(); // reflow the WebContentsView stage to make room for / reclaim the banner
   });
+  // P4: the human's chat composer → a trusted `chat` event on the active session (agent drains it in observe).
+  ipcMain.on(IPC.chatSend, (_e, text: string) => { void studioHost.postHumanChat(String(text ?? '')); });
 
   let gateway: Gateway | null = null;
   try {

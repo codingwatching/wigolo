@@ -96,6 +96,7 @@ describe('SECURITY-REGRESSION: studio controls', () => {
         spawn: async () => ({ session_id: 'bg' }),
         close: async (input) => ({ closed: true as const, session_id: input.session_id ?? '' }),
         list: async () => ({ sessions: [] }),
+        say: async () => ({ posted: true, posted_at: 0 }),
       };
       const res = await dispatchStudioTool('studio_capture', {
         type: 'clip',

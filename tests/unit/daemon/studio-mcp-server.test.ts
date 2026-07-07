@@ -13,6 +13,7 @@ const hostHandlers = (): StudioHostHandlers => ({
   spawn: async () => { spawnCalls++; return { session_id: 'sess-1' }; },
   close: async (i) => ({ closed: true as const, session_id: i.session_id ?? '' }),
   list: async () => ({ sessions: [] }),
+  say: async () => ({ posted: true, posted_at: 0 }),
 });
 
 async function connect() {
@@ -25,11 +26,11 @@ async function connect() {
 }
 
 describe('createStudioMcpServer — studio-only gateway MCP surface', () => {
-  it('exposes EXACTLY the 8 studio_* tools (the gateway hosts no core tools)', async () => {
+  it('exposes EXACTLY the 9 studio_* tools (the gateway hosts no core tools)', async () => {
     const { client } = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
-      ['studio_act', 'studio_capture', 'studio_close', 'studio_list', 'studio_marks', 'studio_observe', 'studio_open', 'studio_spawn'],
+      ['studio_act', 'studio_capture', 'studio_close', 'studio_list', 'studio_marks', 'studio_observe', 'studio_open', 'studio_say', 'studio_spawn'],
     );
     // every tool carries a description + object input schema (capability-language descriptions, no core tools leaked)
     for (const t of tools) {

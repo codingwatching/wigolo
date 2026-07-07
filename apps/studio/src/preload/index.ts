@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC, type StudioState, type PendingApprovalDto, type MarkDto, type CaptureDto, type KnowledgeHit, type DriveEventDto } from '../shared/ipc';
+import { IPC, type StudioState, type PendingApprovalDto, type MarkDto, type CaptureDto, type KnowledgeHit, type DriveEventDto, type ChatMsgDto } from '../shared/ipc';
 import type { StudioGeneralizeOutput } from 'wigolo/studio';
 
 const studio = {
@@ -53,6 +53,12 @@ const studio = {
   armClip: (): void => { ipcRenderer.send(IPC.armClip); },
   /** Tell main the drive banner is shown/hidden so it insets the WebContentsView stage (like the rail). */
   setBannerOpen: (open: boolean): Promise<void> => ipcRenderer.invoke(IPC.setBannerOpen, open),
+  /** A chat message from the agent (studio_say) arriving live for the chat rail. */
+  onChatMessage: (cb: (m: ChatMsgDto) => void): void => {
+    ipcRenderer.on(IPC.chatMessage, (_e, m: ChatMsgDto) => cb(m));
+  },
+  /** The human typed in the chat composer → deliver it to the agent (drained in its next studio_observe). */
+  sendChat: (text: string): void => { ipcRenderer.send(IPC.chatSend, text); },
 };
 
 export type StudioApi = typeof studio;

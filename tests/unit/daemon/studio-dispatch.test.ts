@@ -26,6 +26,7 @@ const hostHandlers = (): StudioHostHandlers => ({
   spawn: async () => ({ session_id: 'bg-1' }),
   close: async (input) => ({ closed: true as const, session_id: input.session_id ?? '' }),
   list: async () => ({ sessions: [] }),
+  say: async () => ({ posted: true, posted_at: 0 }),
 });
 const reason = (r: McpToolResult) => JSON.parse(r.content[0].text).error_reason as string;
 
@@ -115,8 +116,8 @@ describe('dispatchStudioTool — L3-1 surface: the bounded inversion (S6) admits
   // lifecycle verbs spawn/close/list to the prior observe/act/marks/capture set. dispatchStudioTool routes
   // ONLY to these handler keys; that set IS the agent's reachable surface. Mutation: drop a lifecycle verb
   // here and this RED-flags the inversion regressing.
-  it('PIN-SPLIT(a): the agent-reachable host surface is EXACTLY observe/act/marks/capture/spawn/close/list', () => {
-    expect(Object.keys(hostHandlers()).sort()).toEqual(['act', 'capture', 'close', 'list', 'marks', 'observe', 'spawn']);
+  it('PIN-SPLIT(a): the agent-reachable host surface is EXACTLY observe/act/marks/capture/say/spawn/close/list', () => {
+    expect(Object.keys(hostHandlers()).sort()).toEqual(['act', 'capture', 'close', 'list', 'marks', 'observe', 'say', 'spawn']);
   });
 
   // PIN-SPLIT (b) — the LOAD-BEARING structural half that MUST stay: control/grant/reclaim/approve are NOT in
@@ -155,8 +156,8 @@ describe('dispatchStudioTool — L3-1 surface: the bounded inversion (S6) admits
     expect(r.isError).toBe(false);
     expect(JSON.parse(r.content[0].text)).toMatchObject({ session_id: 'bg-1' });
     expect(proxyCalls).toEqual([]);
-    // still exactly the 7 handler keys — studio_open reused `spawn`, it is NOT a new key
-    expect(Object.keys(hostHandlers()).sort()).toEqual(['act', 'capture', 'close', 'list', 'marks', 'observe', 'spawn']);
+    // still exactly the 8 handler keys — studio_open reused `spawn`, it is NOT a new key (say is the 8th, added by P4)
+    expect(Object.keys(hostHandlers()).sort()).toEqual(['act', 'capture', 'close', 'list', 'marks', 'observe', 'say', 'spawn']);
   });
 });
 

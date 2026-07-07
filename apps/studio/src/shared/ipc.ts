@@ -83,6 +83,9 @@ export interface DriveEventDto {
 /** main → overlay(tab): move/show the ghost cursor at a viewport point with a caption (agent driving). */
 export interface OverlayCursorMsg { x: number; y: number; caption: string }
 
+/** A chat rail message — the agent via studio_say, or the human's composer. Agent text renders inert. */
+export interface ChatMsgDto { author: 'agent' | 'human'; text: string; markId?: string; ts: number }
+
 // renderer → main
 export const IPC = {
   tabCreate: 'studio:tab-create',
@@ -96,6 +99,7 @@ export const IPC = {
   driveReclaim: 'studio:drive-reclaim',
   armClip: 'studio:arm-clip',
   setBannerOpen: 'studio:set-banner-open',
+  chatSend: 'studio:chat-send',
   // overlay(tab) → main
   overlayMark: 'studio:overlay-mark',
   overlayGeneralize: 'studio:overlay-generalize',
@@ -119,4 +123,5 @@ export const IPC = {
   generalizePreview: 'studio:generalize-preview',
   captureAdded: 'studio:capture-added',
   driveEvent: 'studio:drive-event',
+  chatMessage: 'studio:chat-message',
 } as const;

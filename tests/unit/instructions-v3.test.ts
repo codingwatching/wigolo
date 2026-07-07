@@ -139,11 +139,13 @@ describe('TOOL_DESCRIPTIONS v3 entries', () => {
     expect(keys).toContain('studio_marks');
     // Phase 4c: the agent persists a capture (clip) to the cache as a session artifact.
     expect(keys).toContain('studio_capture');
+    // P4 co-drive: the agent posts to the human chat rail.
+    expect(keys).toContain('studio_say');
     // S6 (the bounded inversion): the agent's own background-session lifecycle verbs.
     expect(keys).toContain('studio_spawn');
     expect(keys).toContain('studio_close');
     expect(keys).toContain('studio_list');
-    expect(keys.length).toBe(18);
+    expect(keys.length).toBe(19);
   });
 
   it('studio_act description covers navigation, the control token, and the private/metadata block', () => {

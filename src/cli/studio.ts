@@ -989,6 +989,15 @@ export async function startStudioHost(opts: StudioHostOptions): Promise<StudioHo
       return { closed: true as const, session_id: id };
     },
     list: async () => ({ sessions: registry.list().map(sessionMeta) }),
+    // P4 — agent→human chat. Broadcasts to the attended client(s) as {t:'say'} (like narration; a clientless
+    // headless host is a harmless no-op). Agent-authored text, rendered inert on the human surface
+    // (trusted:false — the agent can never author trusted=1). Confers no control/approval (PIN-SPLIT(b)).
+    say: async (input) => {
+      const text = typeof input.text === 'string' ? input.text : '';
+      if (!text.trim()) return { error_reason: 'empty_message', hint: 'studio_say needs a non-empty text.' };
+      hub.broadcast(session.id, { t: 'say', text, ...(typeof input.markId === 'string' ? { markId: input.markId } : {}), trusted: false });
+      return { posted: true as const, posted_at: Date.now() };
+    },
   };
   daemon.setStudioHost(studioHandlers);
   daemon.setStudioSessions(studioSessions);

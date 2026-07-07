@@ -184,6 +184,17 @@ button { font-family: inherit; }
 .msg { font-family: var(--serif); font-size: 15px; line-height: 1.62; color: var(--text); margin: 0 0 14px; }
 .msg--dim { color: var(--text-dim); }
 
+/* ── P4 chat rail ── */
+.chat { display: flex; flex-direction: column; gap: 12px; }
+.chat__msg { display: flex; flex-direction: column; gap: 3px; }
+.chat__author { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-faint); }
+.chat__msg--agent .chat__author { color: var(--agent); }
+.chat__msg--human .chat__author { color: var(--human); }
+.chat__text { font-family: var(--serif); font-size: 14.5px; line-height: 1.55; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.chat__msg--human .chat__text { color: var(--text-dim); }
+.chat__onmark { font-size: 11px; color: var(--text-faint); }
+.chat__msg--agent .chat__onmark { color: var(--agent); }
+
 .composer {
   margin: 8px 12px 14px; padding: 10px 12px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-lg);

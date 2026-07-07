@@ -698,6 +698,22 @@ export const STUDIO_CAPTURE_TOOL_SCHEMA = {
   additionalProperties: false,
 };
 
+export const STUDIO_SAY_TOOL_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    text: {
+      type: 'string',
+      description: 'The message to post to the human in the session chat rail.',
+    },
+    markId: {
+      type: 'string',
+      description: 'Optional mark id (from studio_marks) to thread the reply under.',
+    },
+  },
+  required: ['text'],
+  additionalProperties: false,
+};
+
 export const STUDIO_SPAWN_TOOL_SCHEMA = {
   type: 'object' as const,
   properties: {
@@ -761,6 +777,7 @@ export const TOOL_SCHEMAS: Record<ToolName, ToolSchema> = {
   studio_act: STUDIO_ACT_TOOL_SCHEMA,
   studio_marks: STUDIO_MARKS_TOOL_SCHEMA,
   studio_capture: STUDIO_CAPTURE_TOOL_SCHEMA,
+  studio_say: STUDIO_SAY_TOOL_SCHEMA,
   studio_spawn: STUDIO_SPAWN_TOOL_SCHEMA,
   studio_close: STUDIO_CLOSE_TOOL_SCHEMA,
   studio_list: STUDIO_LIST_TOOL_SCHEMA,

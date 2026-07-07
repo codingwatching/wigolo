@@ -227,6 +227,20 @@ export interface StudioCaptureOutput {
   content_hash: string;
 }
 
+// P4 co-drive: the agent posts a message to the human's chat rail (optionally threaded on a mark). This is
+// agent→human communication — it confers NO control/approval/grant power, so it is a legitimate agent verb.
+export interface StudioSayInput {
+  /** The message to post to the human in the session chat rail. */
+  text: string;
+  /** Optional mark id (from studio_marks) to thread the reply under. */
+  markId?: string;
+}
+
+export interface StudioSayOutput {
+  posted: true;
+  posted_at: number;
+}
+
 // ── S6: the bounded-inversion lifecycle verbs (studio_spawn / studio_close / studio_list) ──
 // The agent may now SPAWN its own (background) sessions, bounded by the host cap. This inversion is
 // SCOPED: it must NOT spill into self-approve, self-grant-control, or nav-fence. Types kept local so the
@@ -268,7 +282,7 @@ export interface StudioListOutput {
 }
 
 export function isStudioToolError(
-  x: StudioObserveOutput | StudioActOutput | StudioMarksOutput | StudioGeneralizeOutput | StudioCaptureOutput | StudioSpawnOutput | StudioCloseOutput | StudioListOutput | StudioToolError,
+  x: StudioObserveOutput | StudioActOutput | StudioMarksOutput | StudioGeneralizeOutput | StudioCaptureOutput | StudioSayOutput | StudioSpawnOutput | StudioCloseOutput | StudioListOutput | StudioToolError,
 ): x is StudioToolError {
   return typeof (x as StudioToolError).error_reason === 'string';
 }
@@ -283,6 +297,8 @@ export interface StudioHostHandlers {
   spawn(input: StudioSpawnInput): Promise<StudioSpawnOutput | StudioToolError>;
   close(input: StudioCloseInput): Promise<StudioCloseOutput | StudioToolError>;
   list(): Promise<StudioListOutput | StudioToolError>;
+  // P4: agent→human chat post. New agent-reachable verb (8th key); confers no control/approval (PIN-SPLIT(b)).
+  say(input: StudioSayInput): Promise<StudioSayOutput | StudioToolError>;
 }
 
 export interface McpToolResult {
@@ -351,6 +367,11 @@ export async function dispatchStudioTool(
     }
     if (name === 'studio_list') {
       const data = await studioHost.list();
+      if (isStudioToolError(data)) return refusal(data.error_reason, data.hint);
+      return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }], isError: false };
+    }
+    if (name === 'studio_say') {
+      const data = await studioHost.say(args as unknown as StudioSayInput);
       if (isStudioToolError(data)) return refusal(data.error_reason, data.hint);
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }], isError: false };
     }
