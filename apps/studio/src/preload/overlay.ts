@@ -11,7 +11,7 @@
  * (kept in sync with shared/ipc.ts's IPC.overlay* entries — the e2e exercises the real wire).
  */
 import { ipcRenderer } from 'electron';
-import { elementPath, serializePayload, whiskerLabel, ancestorWalk, serializeQuote, rectFromPoints, type MarkPayload } from './overlay-core';
+import { elementPath, serializePayload, whiskerLabel, ancestorWalk, serializeQuote, rectFromPoints, ghostCursorPlacement, type MarkPayload } from './overlay-core';
 
 // Channel strings — MUST equal shared/ipc.ts IPC.overlay* (not imported to keep this bundle self-contained).
 const CH = {
@@ -21,6 +21,7 @@ const CH = {
   region: 'studio:overlay-region',
   arm: 'studio:overlay-arm',
   assigned: 'studio:overlay-mark-assigned',
+  cursor: 'studio:overlay-cursor',
 } as const;
 
 interface OverlayMarkMsg { nonce: string; path: number[]; payload: MarkPayload }
@@ -65,11 +66,18 @@ function installOverlay(): void {
       .bar button { all: unset; cursor: pointer; font: 13px ui-sans-serif, system-ui; color: #e9e3f7; padding: 3px 7px; border-radius: 5px; }
       .bar button:hover { background: #2a2140; }
       .bar button[disabled] { opacity: .4; cursor: default; }
+      .ghost { position: fixed; pointer-events: none; width: 18px; height: 18px; margin: -2px 0 0 -2px;
+        transition: left .18s cubic-bezier(.2,.8,.2,1), top .18s cubic-bezier(.2,.8,.2,1); display: none; z-index: 3; }
+      .ghost svg { filter: drop-shadow(0 0 6px rgba(160,107,255,.7)); }
+      .ghostcap { position: fixed; pointer-events: none; font: 12px ui-sans-serif, system-ui; color: #f4f0ff;
+        background: rgba(111,74,209,.92); border-radius: 6px; padding: 3px 9px; white-space: nowrap; display: none; z-index: 3; }
     </style>
     <div class="outline"></div>
     <div class="whisker"></div>
     <div class="cliprect"></div>
     <div class="cliphint">Drag to clip a region · Esc to cancel</div>
+    <div class="ghost"><svg viewBox="0 0 18 18" width="18" height="18"><path d="M2 2l14 6-6 2-2 6z" fill="#a06bff"/></svg></div>
+    <div class="ghostcap"></div>
     <div class="chips"></div>
     <div class="bar">
       <button data-act="comment" title="Comment (type in the Marks panel →)">💬</button>
@@ -83,6 +91,9 @@ function installOverlay(): void {
   const bar = root.querySelector('.bar') as HTMLElement;
   const cliprect = root.querySelector('.cliprect') as HTMLElement;
   const cliphint = root.querySelector('.cliphint') as HTMLElement;
+  const ghost = root.querySelector('.ghost') as HTMLElement;
+  const ghostcap = root.querySelector('.ghostcap') as HTMLElement;
+  let ghostTimer = 0; // the ghost cursor fades a short while after the agent's last act
   let activeMarkId: string | null = null; // the mark the action bar currently targets
   // ── Region clip (⌘⇧X arms; drag a rectangle; Esc cancels) ──
   let clipMode = false;
@@ -232,6 +243,18 @@ function installOverlay(): void {
     document.addEventListener(t, swallowPress, true);
   }
   document.addEventListener('click', commit, true);
+
+  // P4 ghost cursor: the agent's act broadcasts its resolved target point + narration caption here. Renders
+  // the violet cursor + caption in this isolated-world overlay (renderer chrome DOM sits behind the page),
+  // and fades after the act settles. Caption is agent-authored narration — never page-derived content.
+  ipcRenderer.on(CH.cursor, (_e, m: { x: number; y: number; caption: string }) => {
+    const p = ghostCursorPlacement(m, { w: window.innerWidth, h: window.innerHeight });
+    ghost.style.left = `${p.cursor.left}px`; ghost.style.top = `${p.cursor.top}px`; ghost.style.display = 'block';
+    if (m.caption) { ghostcap.textContent = m.caption; ghostcap.style.left = `${p.caption.left}px`; ghostcap.style.top = `${p.caption.top}px`; ghostcap.style.display = 'block'; }
+    else ghostcap.style.display = 'none';
+    window.clearTimeout(ghostTimer);
+    ghostTimer = window.setTimeout(() => { ghost.style.display = 'none'; ghostcap.style.display = 'none'; }, 1800);
+  });
 
   ipcRenderer.on(CH.arm, () => arm());
   ipcRenderer.on(CH.assigned, (_e, data: { nonce: string; markId: string; number: number }) => {

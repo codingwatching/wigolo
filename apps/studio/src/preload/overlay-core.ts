@@ -107,6 +107,24 @@ export function rectFromPoints(a: { x: number; y: number }, b: { x: number; y: n
   return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(a.x - b.x), height: Math.abs(a.y - b.y) };
 }
 
+/**
+ * P4 ghost cursor: place the rendered agent cursor at a viewport point and lay its caption to the
+ * lower-right, flipping left near the right edge so it never overflows. Pure (viewport-relative CSS px)
+ * so it is testable without the DOM. `at.{x,y}` is the agent's resolved click centre (same viewport space
+ * the overlay draws in); coords are clamped onto the viewport in case a stale/off-screen point arrives.
+ */
+export function ghostCursorPlacement(
+  at: { x: number; y: number; caption: string },
+  viewport: { w: number; h: number },
+): { cursor: { left: number; top: number }; caption: { left: number; top: number } } {
+  const cursor = { left: Math.max(0, Math.min(at.x, viewport.w)), top: Math.max(0, Math.min(at.y, viewport.h)) };
+  const estWidth = Math.min(260, 8 + at.caption.length * 6.5);
+  const flip = cursor.left + 16 + estWidth > viewport.w;
+  const left = flip ? Math.max(0, cursor.left - 12 - estWidth) : cursor.left + 16;
+  const top = Math.min(viewport.h - 24, cursor.top + 14);
+  return { cursor, caption: { left, top } };
+}
+
 export function serializePayload(el: Element): MarkPayload {
   const attrs: Record<string, string> = {};
   for (const a of Array.from(el.attributes)) attrs[a.name] = a.value;

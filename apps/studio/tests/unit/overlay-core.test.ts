@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
-import { elementPath, serializePayload, whiskerLabel, ancestorWalk } from '../../src/preload/overlay-core';
+import { elementPath, serializePayload, whiskerLabel, ancestorWalk, ghostCursorPlacement } from '../../src/preload/overlay-core';
 
 describe('elementPath — element-child indices from documentElement', () => {
   it('encodes a nested element as a path (text nodes ignored)', () => {
@@ -58,5 +58,24 @@ describe('serializePayload — best-effort rich element payload', () => {
     expect(p.text).toBe('Buy');
     expect(p.component).toBeNull(); // no React fiber in jsdom → graceful degrade
     expect(p.source).toBeNull();
+  });
+});
+
+describe('ghostCursorPlacement — ghost cursor + caption placement (P4)', () => {
+  it('places the cursor at the point and clamps inside the viewport', () => {
+    const p = ghostCursorPlacement({ x: 5, y: 5, caption: 'opening FAQ' }, { w: 1000, h: 800 });
+    expect(p.cursor).toEqual({ left: 5, top: 5 });
+    expect(p.caption.left).toBeGreaterThanOrEqual(0);
+    expect(p.caption.top).toBeLessThanOrEqual(800 - 24);
+  });
+  it('flips the caption left near the right edge so it never overflows', () => {
+    const q = ghostCursorPlacement({ x: 990, y: 400, caption: 'a very long caption that would overflow the right edge' }, { w: 1000, h: 800 });
+    expect(q.caption.left).toBeLessThan(990);
+    expect(q.caption.left).toBeGreaterThanOrEqual(0);
+  });
+  it('clamps an out-of-bounds point back onto the viewport', () => {
+    const p = ghostCursorPlacement({ x: 5000, y: -20, caption: 'x' }, { w: 800, h: 600 });
+    expect(p.cursor.left).toBe(800);
+    expect(p.cursor.top).toBe(0);
   });
 });

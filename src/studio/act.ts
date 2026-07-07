@@ -58,6 +58,12 @@ export interface AgentInputChannel {
   dispatchAgentUnit(epoch: number, events: AgentInputEvent[]): Promise<boolean>;
   /** Page-CSS-px viewport centre — where an agent scroll aims its wheel. */
   viewportCenter(): { x: number; y: number };
+  /**
+   * P4 co-drive: fan an out-of-band UI event to the human surface (drive banner narration + ghost cursor).
+   * Optional so the minimal test mocks + a clientless background session need not provide it. The payload
+   * is ALWAYS agent-authored (narration) or viewport coords — NEVER page-derived content.
+   */
+  announce?(msg: Record<string, unknown>): void;
 }
 
 export interface ActHandlerDeps {
@@ -306,6 +312,8 @@ export function createActHandler(
   const clickAct = async (input: StudioActInput): Promise<ActResolution> => {
     const g = await gateAndResolve(input);
     if ('error_reason' in g) return { result: g };
+    // P4: the ghost cursor rides the resolved LIVE centre (viewport CSS px — same space the overlay draws in).
+    channel.announce?.({ t: 'point', center: g.center, caption: input.narration ?? '' });
     const gate = await applyRiskGate(input, g.gateEpoch, g.role, g.name);
     if ('blocked' in gate) return { result: gate.blocked, risk: gate.risk, approval: gate.approval };
     const landed = await channel.dispatchAgentUnit(g.gateEpoch, clickUnit(g.center));
@@ -316,6 +324,9 @@ export function createActHandler(
   const typeAct = async (input: StudioActInput): Promise<ActResolution> => {
     const g = await gateAndResolve(input);
     if ('error_reason' in g) return { result: g };
+    // P4: ghost cursor at the resolved centre (the point payload carries only coords + agent caption — a
+    // credential-page type is still refused below, and no page-derived field ever rides this event).
+    channel.announce?.({ t: 'point', center: g.center, caption: input.narration ?? '' });
     // Slice 5a — the HARD credential-input refusal, BEFORE the approval gate and before focus.
     // Fail-closed, NOT approval-gated (HANDOFF §2/§4: login is human-only). Decides on the resolved
     // element's TRUE pierced-DOM semantics (never the spoofable a11y name), so a password field with a
@@ -350,6 +361,7 @@ export function createActHandler(
       typeof input.amount === 'number' && Number.isFinite(input.amount) ? Math.abs(input.amount) : DEFAULT_SCROLL_PX;
     const deltaY = (input.direction === 'up' ? -1 : 1) * amount;
     const c = channel.viewportCenter();
+    channel.announce?.({ t: 'point', center: c, caption: input.narration ?? '' }); // P4 ghost cursor at the scroll aim
     // A single wheel event — inherently one atomic unit. (A future multi-step scroll loop
     // would re-check the fence per step, like type.)
     const landed = await channel.dispatchAgentUnit(gateEpoch, [
@@ -389,6 +401,10 @@ export function createActHandler(
   // decision is logged from commit one. The optional-chain leaves the args unevaluated when no
   // log is wired (the unit tests that omit it).
   return async (input: StudioActInput): Promise<StudioActOutput | StudioToolError> => {
+    // P4: narrate the agent's intent to the human UNCONDITIONALLY, before the act runs — matching the
+    // salvaged narration contract (broadcast regardless of the verdict, so a refused/preempted act still
+    // names its step in the drive banner). Agent-authored text only; never page-derived.
+    channel.announce?.({ t: 'act', action: typeof input.action === 'string' ? input.action : String((input as { action?: unknown }).action), ...(input.narration ? { narration: input.narration } : {}) });
     const { result, risk, approval } = await dispatch(input);
     audit?.record({
       action: typeof input.action === 'string' ? input.action : String((input as { action?: unknown }).action),

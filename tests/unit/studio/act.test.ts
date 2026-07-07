@@ -58,6 +58,7 @@ const fixedResolve = (r: ResolveResult) => async () => r;
  *  and lets a test decide per-call whether the unit "lands" (the epoch fence's verdict). */
 function recordingChannel(lands: (callIndex: number) => boolean = () => true) {
   const calls: Array<{ epoch: number; events: AgentInputEvent[]; landed: boolean }> = [];
+  const announces: Array<Record<string, unknown>> = [];
   let n = 0;
   return {
     channel: {
@@ -67,8 +68,10 @@ function recordingChannel(lands: (callIndex: number) => boolean = () => true) {
         return landed;
       },
       viewportCenter: () => ({ x: 400, y: 300 }),
+      announce: (msg: Record<string, unknown>) => { announces.push(msg); },
     },
     calls,
+    announces,
   };
 }
 
@@ -747,5 +750,44 @@ describe('audit persistence — guard pins through the act choke (P6-b)', () => 
     const rawRows = db.prepare('SELECT * FROM studio_audit WHERE session_id = ?').all('sess-R');
     expect(JSON.stringify(rawRows)).not.toContain(SECRET);
     db.close();
+  });
+});
+
+describe('createActHandler — co-drive announce (P4 ghost cursor + narration)', () => {
+  it('click emits an unconditional {t:act} banner event AND a {t:point} ghost-cursor event at the resolved centre', async () => {
+    const ch = recordingChannel();
+    const act = createActHandler({
+      ...base, browser: makeFakeBrowser().browser, controlToken: makeFakeToken('agent', [3]), grant: denyGrant,
+      resolve: fixedResolve({ backendNodeId: 7, center: { x: 42, y: 84 } }), channel: ch.channel,
+    });
+    await act({ action: 'click', ref: 'e1', narration: 'opening FAQ' });
+    // banner event fires FIRST (wrapper top), regardless of verdict; then the ghost-cursor point after resolve.
+    expect(ch.announces[0]).toEqual({ t: 'act', action: 'click', narration: 'opening FAQ' });
+    expect(ch.announces).toContainEqual({ t: 'point', center: { x: 42, y: 84 }, caption: 'opening FAQ' });
+  });
+
+  it('a GATE-refused act (human holds) still emits the {t:act} banner event but NO {t:point} (no cursor move, matches the salvaged unconditional-narration contract)', async () => {
+    const ch = recordingChannel();
+    const act = createActHandler({
+      ...base, browser: makeFakeBrowser().browser, controlToken: makeFakeToken('human', [9]), grant: denyGrant,
+      resolve: fixedResolve({ backendNodeId: 7, center: { x: 1, y: 2 } }), channel: ch.channel,
+    });
+    const r = await act({ action: 'click', ref: 'e1', narration: 'trying to click' });
+    expect((r as StudioToolError).error_reason).toBe('not_holder');
+    expect(ch.announces).toContainEqual({ t: 'act', action: 'click', narration: 'trying to click' });
+    expect(ch.announces.some((a) => a.t === 'point')).toBe(false); // never resolved → no ghost point
+  });
+
+  it('NEGATIVE: on a credential-page type refusal, NO page-derived field ever rides the announce (only {t,action,narration}/{t,center,caption})', async () => {
+    const { result, ch } = await typeAtTarget({
+      specs: [{ be: 100, role: 'textbox', name: 'Password', attrs: { type: 'password' } }],
+      targetBe: 100, url: 'https://acme.example/login', text: 'hunter2',
+    });
+    expectCredentialRefused(result); // the type itself is refused…
+    // …but the announce still fired (unconditional banner + post-resolve point). Lock that it carries no secret.
+    const allowed = new Set(['t', 'action', 'narration', 'center', 'caption']);
+    for (const a of ch.announces) {
+      for (const k of Object.keys(a)) expect(allowed.has(k), `announce key '${k}' must not carry page-derived content`).toBe(true);
+    }
   });
 });
