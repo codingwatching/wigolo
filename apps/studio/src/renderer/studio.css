@@ -213,8 +213,16 @@ button { font-family: inherit; }
   color: var(--working); margin-bottom: 6px; display: flex; align-items: center; gap: 6px;
 }
 .approval__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--working); box-shadow: 0 0 6px var(--working); }
+.approval__glyph { font-size: 11px; }
 .approval__body { font-family: var(--serif); font-size: 14.5px; line-height: 1.5; margin-bottom: 12px; }
 .approval__body b { font-weight: 600; }
+/* Per-risk accent (spec §4): money=amber (base), credential=violet, destructive=red. */
+.approval--credential { border-color: rgba(139, 124, 246, .4); background: var(--agent-dim); }
+.approval--credential .approval__label, .approval--credential .approval__dot { color: var(--agent); }
+.approval--credential .approval__dot { background: var(--agent); box-shadow: 0 0 6px var(--agent); }
+.approval--destructive { border-color: rgba(248, 113, 113, .4); background: rgba(248, 113, 113, .07); }
+.approval--destructive .approval__label { color: var(--blocked); }
+.approval--destructive .approval__dot { background: var(--blocked); box-shadow: 0 0 6px var(--blocked); }
 .approval__actions { display: flex; gap: 8px; }
 .btn {
   flex: 1; height: 30px; border-radius: 8px; border: 1px solid var(--border); cursor: default;
