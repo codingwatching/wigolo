@@ -85,21 +85,23 @@ describe.skipIf(!RUN)('studio co-drive polish (e2e, real gateway)', () => {
     return ref;
   }
 
-  it('agent click narrates → ghost-cursor IPC fires at the resolved centre + the chrome renderer gets the driveEvent', async () => {
+  it('agent click narrates → ghost-cursor IPC fires + the chrome renderer gets the initial agent-hold AND the act driveEvent', async () => {
     const proxy = new DaemonProxy(endpoint, token);
     await resetSessions(proxy);
+    // Attach the renderer driveEvent spy BEFORE studio_open — the initial {t:control,holder:agent} is emitted
+    // during attachTab (the agent holds from open and never flips), so the spy must be listening first.
+    const win = await app.firstWindow();
+    await win.evaluate(() => { (window as unknown as { __drive: unknown[] }).__drive = []; (window as unknown as { studio: { onDriveEvent(cb: (e: unknown) => void): void } }).studio.onDriveEvent((e) => (window as unknown as { __drive: unknown[] }).__drive.push(e)); });
     await proxy.callTool('studio_open', {});
     const ref = await markFaq(proxy);
 
-    // Spy the session-tab overlayCursor sends (main) + the chrome renderer driveEvents (renderer).
+    // Spy the session-tab overlayCursor sends (main process).
     await app.evaluate(({ webContents }, ch) => {
       const g = globalThis as unknown as { __cursor: Array<{ x: number; y: number; caption: string }> };
       g.__cursor = [];
       const wc = webContents.getAllWebContents().find((w) => { const u = w.getURL(); return u === '' || u === 'about:blank'; });
       if (wc) { const orig = wc.send.bind(wc); wc.send = (channel: string, ...a: unknown[]) => { if (channel === ch) g.__cursor.push(a[0] as { x: number; y: number; caption: string }); return orig(channel, ...a); }; }
     }, IPC.overlayCursor);
-    const win = await app.firstWindow();
-    await win.evaluate(() => { (window as unknown as { __drive: unknown[] }).__drive = []; (window as unknown as { studio: { onDriveEvent(cb: (e: unknown) => void): void } }).studio.onDriveEvent((e) => (window as unknown as { __drive: unknown[] }).__drive.push(e)); });
 
     body(await proxy.callTool('studio_act', { action: 'click', ref, narration: 'opening FAQ' }));
 
@@ -107,7 +109,10 @@ describe.skipIf(!RUN)('studio co-drive polish (e2e, real gateway)', () => {
     for (let i = 0; i < 40 && cursor.length === 0; i++) { await sleep(150); cursor = await app.evaluate(() => (globalThis as unknown as { __cursor: Array<{ caption: string }> }).__cursor); }
     expect(cursor.some((c) => c.caption === 'opening FAQ')).toBe(true); // ghost cursor drew at the resolved point
 
-    const drive = await win.evaluate(() => (window as unknown as { __drive: Array<{ t: string; narration?: string; action?: string }> }).__drive);
+    const drive = await win.evaluate(() => (window as unknown as { __drive: Array<{ t: string; holder?: string; narration?: string; action?: string }> }).__drive);
+    // The initial agent-hold seeded the drive banner + provenance dot WITHOUT a human reclaim (the confirmed
+    // adversarial finding); and the act narration rides through for the banner step / ghost caption.
+    expect(drive.some((e) => e.t === 'control' && e.holder === 'agent')).toBe(true);
     expect(drive.some((e) => e.t === 'act' && e.action === 'click' && e.narration === 'opening FAQ')).toBe(true);
   });
 

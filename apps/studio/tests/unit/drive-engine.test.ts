@@ -69,6 +69,20 @@ describe('createDriveEngine.attachTab', () => {
     expect(engine.getDrive('bg')!.fsm.state()).toBe('agent');
   });
 
+  it('P4: broadcasts the INITIAL control state on attach (agent-held-from-open never flips → the banner/dot would be inert without a seed)', async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const engine = createDriveEngine();
+    await engine.attachTab('bg', {
+      debugger: fakeDebugger(),
+      viewport,
+      grant: { humanAllowPrivate: true, agentAllowPrivate: false },
+      initialHolder: 'agent',
+      broadcast: (m) => events.push(m),
+    });
+    // Without waiting for a flip, the renderer learns the tab is agent-held (drives the banner + provenance dot).
+    expect(events).toContainEqual({ t: 'control', holder: 'agent', epoch: 0 });
+  });
+
   it('allowed Document hop is continued AND bumps the nav epoch; blocked cloud-metadata hop is failed and does NOT bump', async () => {
     const dbg = fakeDebugger();
     const engine = createDriveEngine();

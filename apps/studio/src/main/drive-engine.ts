@@ -86,6 +86,11 @@ export function createDriveEngine(): DriveEngine {
 
       const drive: TabDrive = { transport, controlToken, fsm, navEpoch, navInterceptor, channel, grant: deps.grant };
       tabs.set(tabId, drive);
+      // P4: seed the renderer with the INITIAL control state. The token starts already held (agent, for an
+      // agent-opened session) and may NEVER flip, so SessionController.onChange (which only fires on a flip)
+      // would never emit — leaving the drive banner + provenance dot inert in the primary agent-drives case.
+      // Emit the snapshot once on attach so the renderer knows the holder without waiting for a flip.
+      deps.broadcast?.({ t: 'control', holder: controlToken.holder, epoch: controlToken.epoch });
       return drive;
     },
 
