@@ -50,6 +50,16 @@ describe('SessionController', () => {
     expect(token.epoch).toBe(2);
   });
 
+  it('announce() forwards an arbitrary UI event through the same broadcast sink the flips use', () => {
+    const token = new ControlToken();
+    const sent: Array<Record<string, unknown>> = [];
+    const ctl = new SessionController(token, makeFakeInput().input, (m) => sent.push(m));
+    ctl.announce({ t: 'act', action: 'click', narration: 'opening FAQ' });
+    expect(sent).toContainEqual({ t: 'act', action: 'click', narration: 'opening FAQ' });
+    ctl.announce({ t: 'point', center: { x: 12, y: 34 }, caption: 'opening FAQ' });
+    expect(sent).toContainEqual({ t: 'point', center: { x: 12, y: 34 }, caption: 'opening FAQ' });
+  });
+
 });
 
 describe('SessionController — agent input dispatch (2J.2, the abort layer)', () => {

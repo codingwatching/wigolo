@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC, type StudioState, type PendingApprovalDto, type MarkDto, type CaptureDto, type KnowledgeHit } from '../shared/ipc';
+import { IPC, type StudioState, type PendingApprovalDto, type MarkDto, type CaptureDto, type KnowledgeHit, type DriveEventDto } from '../shared/ipc';
 import type { StudioGeneralizeOutput } from 'wigolo/studio';
 
 const studio = {
@@ -42,6 +42,11 @@ const studio = {
   },
   /** find_similar on the current page against the local studio corpus (knowledge rail). */
   knowledgeSimilar: (concept: string): Promise<KnowledgeHit[]> => ipcRenderer.invoke(IPC.knowledgeSimilar, concept),
+  // ── P4 co-drive ──
+  /** Per-tab drive events (control flips + agent acts) for the drive banner, provenance dots, and narration. */
+  onDriveEvent: (cb: (e: DriveEventDto) => void): void => {
+    ipcRenderer.on(IPC.driveEvent, (_e, d: DriveEventDto) => cb(d));
+  },
 };
 
 export type StudioApi = typeof studio;

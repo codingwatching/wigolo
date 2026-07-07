@@ -13,6 +13,7 @@ import { IconSpark, IconSend } from './icons';
 import { createApprovalStore, type PendingApproval, type ApprovalVerdict } from './approval-store';
 import { createMarksStore, type Mark } from './marks-store';
 import { createCapturesStore } from './captures-store';
+import { createControlStore } from './control-store';
 import type { CaptureDto, KnowledgeHit } from '../shared/ipc';
 
 declare global {
@@ -22,6 +23,7 @@ declare global {
 const approvalStore = createApprovalStore();
 const marksStore = createMarksStore();
 const capturesStore = createCapturesStore();
+const controlStore = createControlStore();
 type RailTab = 'agent' | 'marks' | 'captures';
 
 export function App() {
@@ -33,6 +35,7 @@ export function App() {
   const [preview, setPreview] = useState<StudioGeneralizeOutput | null>(null);
   const [railTab, setRailTab] = useState<RailTab>('agent');
   const [railOpen, setRailOpen] = useState(true);
+  const [, setControlTick] = useState(0); // re-render on any per-tab control change (provenance dots / banner)
 
   useEffect(() => {
     window.studio.onState(setState);
@@ -46,10 +49,17 @@ export function App() {
     window.studio.onGeneralizePreview((p) => setPreview(p));
     capturesStore.subscribe(() => setCaptures(capturesStore.list()));
     window.studio.onCaptureAdded((c) => capturesStore.add(c));
+    // P4 co-drive: per-tab control flips + agent acts drive the provenance dots + the drive banner.
+    const unsubControl = controlStore.subscribe(() => setControlTick((n) => n + 1));
+    window.studio.onDriveEvent((e) => {
+      if (e.t === 'control' && e.holder) controlStore.applyControl(e.tabId, e.holder, e.epoch ?? 0);
+      else if (e.t === 'act') controlStore.applyAct(e.tabId, e.action ?? '', e.narration, Date.now());
+    });
     // Mount-time backfill of already-captured items (empty on a fresh run; live captures then arrive via
     // the onCaptureAdded delta). Degrades to [] when the library is down. Per-session re-backfill (reading
     // a resumed session's prior captures) lands with session restore (P4+).
     void window.studio.listCaptures().then((c) => capturesStore.set(c));
+    return () => { unsubControl(); };
   }, []);
 
   const comment = (markId: string, text: string) => {
@@ -95,6 +105,7 @@ export function App() {
         onFocus={(id) => void window.studio.focusTab(id)}
         onClose={(id) => void window.studio.closeTab(id)}
         onNew={() => void window.studio.createTab('about:blank')}
+        provenance={(id) => controlStore.provenance(id, state.tabs.find((t) => t.id === id)?.active ?? false, Date.now())}
       />
       <Toolbar
         currentUrl={active?.url ?? ''}

@@ -54,3 +54,9 @@ competitive-blueprint.md
 
 # local demo tooling (VHS tapes + build scripts), not shipped
 .demo/
+
+# Superpowers scratch (brainstorm server, transient)
+.superpowers/
+
+# Test-generated SQLite fixtures (runtime shm/wal/db)
+tests/fixtures/repl-test-data/

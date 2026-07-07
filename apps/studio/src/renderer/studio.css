@@ -80,6 +80,8 @@ button { font-family: inherit; }
 .tab__dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .tab__dot--agent { background: var(--agent); box-shadow: 0 0 6px var(--agent); }
 .tab__dot--human { background: var(--human); }
+.tab__dot--working { background: var(--working); box-shadow: 0 0 6px var(--working); animation: dot-pulse 1.2s ease-in-out infinite; }
+@keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 .tab__fav { width: 14px; height: 14px; flex: none; border-radius: 3px; opacity: .8; }
 .tab__title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
 .tab__close {

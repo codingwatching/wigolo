@@ -16,6 +16,8 @@ export function TabStrip(props: {
   onFocus: (id: string) => void;
   onClose: (id: string) => void;
   onNew: () => void;
+  /** Per-tab co-drive provenance (spec §4): human=green, agent-foreground=violet, agent-bg=amber pulse. */
+  provenance?: (id: string) => 'human' | 'agent' | 'working' | 'none';
 }) {
   return (
     <div className="titlebar">
@@ -27,13 +29,22 @@ export function TabStrip(props: {
           onClick={() => props.onFocus(t.id)}
           title={t.title || t.url}
         >
-          {/* provenance dot slot — violet=agent-driven (spec §4); defaults to a neutral favicon chip */}
-          <span
-            className="tab__fav"
-            style={{ display: 'grid', placeItems: 'center', fontSize: 9, fontWeight: 700, background: 'var(--surface-hover)', color: 'var(--text-dim)' }}
-          >
-            {faviconInitial(t)}
-          </span>
+          {/* provenance dot (spec §4) when the agent/human has driven this tab; else the neutral favicon chip */}
+          {(() => {
+            const p = props.provenance?.(t.id) ?? 'none';
+            if (p === 'none') {
+              return (
+                <span
+                  className="tab__fav"
+                  style={{ display: 'grid', placeItems: 'center', fontSize: 9, fontWeight: 700, background: 'var(--surface-hover)', color: 'var(--text-dim)' }}
+                >
+                  {faviconInitial(t)}
+                </span>
+              );
+            }
+            const title = p === 'working' ? 'agent working in background' : p === 'agent' ? 'agent drove last' : 'you drove last';
+            return <span className={`tab__dot tab__dot--${p}`} title={title} />;
+          })()}
           <span className="tab__title">{t.title || t.url || 'New tab'}</span>
           <span
             data-testid={`close-${t.id}`}

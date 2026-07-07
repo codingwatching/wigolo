@@ -47,6 +47,12 @@ export class SessionController {
     });
   }
 
+  /** Fan an out-of-band UI event (an agent act / narration / ghost-cursor point) through the SAME per-tab
+   * broadcast the control flips use — the co-drive banner, provenance dots, and ghost cursor ride it. */
+  announce(msg: Record<string, unknown>): void {
+    this.broadcast(msg);
+  }
+
   /** Current control state — sent to a client on connect (in `hello`) so it knows the epoch to stamp on input. */
   controlSnapshot(): { holder: ControlParty; epoch: number } {
     return { holder: this.token.holder, epoch: this.token.epoch };

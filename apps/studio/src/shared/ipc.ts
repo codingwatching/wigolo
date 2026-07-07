@@ -69,6 +69,20 @@ export interface PendingApprovalDto {
   risk: 'money' | 'credential' | 'destructive';
 }
 
+/** main → renderer(chrome): a per-tab drive event for the drive banner / provenance dots / narration. */
+export interface DriveEventDto {
+  tabId: string;
+  t: 'control' | 'act';
+  holder?: 'human' | 'agent';
+  epoch?: number;
+  action?: string;
+  /** Agent-authored per-act intent (spec §5 "note"). Page-independent, agent-trusted — never page-derived. */
+  narration?: string;
+}
+
+/** main → overlay(tab): move/show the ghost cursor at a viewport point with a caption (agent driving). */
+export interface OverlayCursorMsg { x: number; y: number; caption: string }
+
 // renderer → main
 export const IPC = {
   tabCreate: 'studio:tab-create',
@@ -86,6 +100,7 @@ export const IPC = {
   // main → overlay(tab)
   overlayArm: 'studio:overlay-arm',
   overlayMarkAssigned: 'studio:overlay-mark-assigned',
+  overlayCursor: 'studio:overlay-cursor',
   // renderer(chrome) → main
   armMarkMode: 'studio:arm-mark-mode',
   markComment: 'studio:mark-comment',
@@ -98,4 +113,5 @@ export const IPC = {
   marksChanged: 'studio:marks-changed',
   generalizePreview: 'studio:generalize-preview',
   captureAdded: 'studio:capture-added',
+  driveEvent: 'studio:drive-event',
 } as const;

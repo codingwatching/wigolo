@@ -135,6 +135,24 @@ async function createWindow(): Promise<void> {
         viewport: () => { const b = bounds(); return { width: b.width, height: b.height }; },
         grant,
         initialHolder,
+        // P4 co-drive: fan control flips + agent acts to the chrome renderer (drive banner / provenance dots /
+        // narration) and, for acts that resolved a target point, the session-tab overlay (ghost cursor). The
+        // ghost cursor MUST render in the isolated-world overlay — renderer DOM sits behind the WebContentsView.
+        broadcast: (msg) => {
+          if (msg.t === 'control') {
+            win.webContents.send(IPC.driveEvent, { tabId, t: 'control', holder: msg.holder as 'human' | 'agent', epoch: msg.epoch as number });
+          } else if (msg.t === 'act') {
+            win.webContents.send(IPC.driveEvent, {
+              tabId, t: 'act',
+              action: typeof msg.action === 'string' ? msg.action : undefined,
+              narration: typeof msg.narration === 'string' ? msg.narration : undefined,
+            });
+          } else if (msg.t === 'point') {
+            // act.ts emits the coords under `center` (NOT top-level x/y) — read them there.
+            const c = msg.center as { x: number; y: number } | undefined;
+            if (c) wc.send(IPC.overlayCursor, { x: c.x, y: c.y, caption: typeof msg.caption === 'string' ? msg.caption : '' });
+          }
+        },
       });
       // Only THEN load — and only the safe blank page. The agent's startUrl is navigated by studio_open
       // through the GATED path (guardNavigation), never a raw ungated load. NOTE: native-OS-input
