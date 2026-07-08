@@ -9,6 +9,7 @@ import { DriveBanner } from './DriveBanner';
 import { ApprovalCards } from './ApprovalCard';
 import { MarksPanel } from './MarksPanel';
 import { CapturesPanel } from './CapturesPanel';
+import { TimelinePanel } from './TimelinePanel';
 import { ChatPanel } from './ChatPanel';
 import { GrantCard } from './GrantCard';
 import { LoginCard } from './LoginCard';
@@ -17,10 +18,11 @@ import { IconSpark, IconSend } from './icons';
 import { createApprovalStore, type PendingApproval, type ApprovalVerdict } from './approval-store';
 import { createMarksStore, type Mark } from './marks-store';
 import { createCapturesStore } from './captures-store';
+import { createTimelineStore } from './timeline-store';
 import { createControlStore } from './control-store';
 import { createChatStore } from './chat-store';
 import { createLoginStore, type LoginHandoffState } from './login-store';
-import type { CaptureDto, KnowledgeHit, ChatMsgDto } from '../shared/ipc';
+import type { CaptureDto, KnowledgeHit, ChatMsgDto, AuditDto } from '../shared/ipc';
 
 declare global {
   interface Window { studio: StudioApi }
@@ -29,16 +31,18 @@ declare global {
 const approvalStore = createApprovalStore();
 const marksStore = createMarksStore();
 const capturesStore = createCapturesStore();
+const timelineStore = createTimelineStore();
 const controlStore = createControlStore();
 const chatStore = createChatStore();
 const loginStore = createLoginStore();
-type RailTab = 'agent' | 'marks' | 'captures';
+type RailTab = 'agent' | 'marks' | 'captures' | 'timeline';
 
 export function App() {
   const [state, setState] = useState<StudioState>({ sessionName: '', tabs: [] });
   const [pending, setPending] = useState<PendingApproval[]>([]);
   const [marks, setMarks] = useState<Mark[]>([]);
   const [captures, setCaptures] = useState<CaptureDto[]>([]);
+  const [timeline, setTimeline] = useState<AuditDto[]>([]);
   const [knowledge, setKnowledge] = useState<KnowledgeHit[]>([]);
   const [preview, setPreview] = useState<StudioGeneralizeOutput | null>(null);
   const [railTab, setRailTab] = useState<RailTab>('agent');
@@ -61,6 +65,8 @@ export function App() {
     window.studio.onGeneralizePreview((p) => setPreview(p));
     capturesStore.subscribe(() => setCaptures(capturesStore.list()));
     window.studio.onCaptureAdded((c) => capturesStore.add(c));
+    // P6 F4 timeline: subscribe now; the backfill (listAudit) + live delta (onAuditEntry) wire in F4.5.
+    timelineStore.subscribe(() => setTimeline(timelineStore.list()));
     // P4 co-drive: per-tab control flips + agent acts drive the provenance dots + the drive banner.
     const unsubControl = controlStore.subscribe(() => setControlTick((n) => n + 1));
     window.studio.onDriveEvent((e) => {
@@ -182,6 +188,9 @@ export function App() {
                 <button className={`rail__tab ${railTab === 'captures' ? 'is-active' : ''}`} onClick={() => setRailTab('captures')}>
                   Captures{captures.length ? ` · ${captures.length}` : ''}
                 </button>
+                <button className={`rail__tab ${railTab === 'timeline' ? 'is-active' : ''}`} onClick={() => setRailTab('timeline')}>
+                  Timeline{timeline.length ? ` · ${timeline.length}` : ''}
+                </button>
               </span>
               <span className="rail__badge">{state.sessionName || 'session'}</span>
               <span className="rail__spacer" />
@@ -230,9 +239,13 @@ export function App() {
                   onGeneralize={generalize}
                 />
               </div>
-            ) : (
+            ) : railTab === 'captures' ? (
               <div className="rail__body">
                 <CapturesPanel captures={captures} />
+              </div>
+            ) : (
+              <div className="rail__body">
+                <TimelinePanel entries={timeline} />
               </div>
             )}
             <KnowledgeRail hits={knowledge} />

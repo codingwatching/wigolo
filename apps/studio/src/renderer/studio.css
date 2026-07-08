@@ -346,6 +346,31 @@ button { font-family: inherit; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* ── P6 F4 timeline rail ── */
+.tl { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.tl__item { background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: var(--r-sm); }
+.tl__item--refused { border-left: 2px solid var(--danger, #f87171); }
+.tl__row {
+  all: unset; cursor: pointer; box-sizing: border-box; width: 100%;
+  display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 6px; padding: 7px 10px;
+}
+.tl__row:hover { background: var(--surface-3, var(--surface-2)); }
+.tl__glyph { color: var(--agent); font: 13px var(--chrome-font); width: 14px; text-align: center; }
+.tl__summary { color: var(--text); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl__risk {
+  font: 10px var(--chrome-font); text-transform: uppercase; letter-spacing: .04em;
+  border-radius: var(--r-pill); padding: 1px 6px; color: var(--text-dim); background: var(--surface-3, var(--surface-2));
+}
+.tl__risk--money { color: #fbbf24; background: color-mix(in srgb, #fbbf24 16%, transparent); }
+.tl__risk--credential { color: var(--agent); background: var(--agent-dim); }
+.tl__risk--destructive { color: var(--danger, #f87171); background: color-mix(in srgb, var(--danger, #f87171) 16%, transparent); }
+.tl__outcome { font: 10px var(--chrome-font); }
+.tl__outcome.is-ok { color: var(--ok, #6ee7b7); }
+.tl__outcome.is-refused { color: var(--danger, #f87171); }
+.tl__detail { padding: 0 10px 8px 30px; display: flex; flex-direction: column; gap: 2px; }
+.tl__meta { color: var(--text-faint); font-size: 11px; }
+.tl__meta--ts { color: var(--text-dim); }
+
 /* ── P3 ambient knowledge rail (rail foot) ── */
 .knowledge { margin-top: auto; border-top: 1px solid var(--border-soft); padding: 6px 12px; }
 .knowledge__line {

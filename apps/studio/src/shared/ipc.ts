@@ -53,6 +53,28 @@ export interface CaptureDto {
   createdAt: string;
 }
 
+/**
+ * main → renderer: one agent action for the Timeline rail pane (P6 F4). Metadata + a host-derived summary
+ * ONLY — page-text-free by construction (M3): the agent's verb, the host-assigned ref/direction/amount, the
+ * origin-only url, the risk tier + resolved outcome + approval. `screenshotId` links a step to its captured
+ * screenshot when one exists (F4.6). This is the shape the host's auditToWire emits + listAudit returns.
+ */
+export interface AuditDto {
+  seq: number;
+  action: string;
+  url?: string;
+  ref?: string;
+  direction?: 'up' | 'down';
+  amount?: number;
+  risk?: string;
+  ok: boolean;
+  error_reason?: string;
+  charsLanded?: number;
+  approval?: string;
+  ts: number;
+  screenshotId?: number;
+}
+
 /** A knowledge-rail hit: a related item from the local studio corpus (find_similar on the current page). */
 export interface KnowledgeHit {
   url: string;
