@@ -69,6 +69,7 @@ export type { GeneralizeResult, GeneralizeMatch, GeneralizeStructural, GenBox, G
 // P6 F1 grab-all — the pure column-inference + extract orchestrator (no native, no Electron).
 export { inferRows, extractSet } from './extract-set.js';
 export type { MatchSubtree, InferredRows, ExtractSetInput, ExtractSetDeps, ExtractSetResult, ClusterOk, ClusterErr, FollowResult, PersistArgs, PersistResult } from './extract-set.js';
+// P6 F4 note: SessionAuditLog + audit types are already barrel-exported above (line ~31) — no re-export needed.
 export { MarkStore } from './mark/store.js';
 export type { StudioMark } from './mark/store.js';
 export { resolveNodePath } from './mark/pick.js';

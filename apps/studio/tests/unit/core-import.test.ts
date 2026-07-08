@@ -23,4 +23,15 @@ describe('wigolo/studio subpath resolves the built core', () => {
     expect(typeof studio.isCredentialContext).toBe('function');
     expect(typeof studio.neutralizeMarkers).toBe('function');
   });
+
+  it('exposes the P6 F1 grab-all + F4 audit symbols (all leaf/pure — no native pulled into the app)', () => {
+    expect(typeof studio.extractSet).toBe('function');
+    expect(typeof studio.inferRows).toBe('function');
+    expect(typeof studio.SessionAuditLog).toBe('function');
+    // constructing the audit log WITHOUT a db is in-memory-only and must not throw / pull native
+    const log = new studio.SessionAuditLog({});
+    const e = log.record({ action: 'navigate', epoch: 1, outcome: { ok: true } });
+    expect(typeof e.seq).toBe('number');
+    expect(log.replay()).toHaveLength(1);
+  });
 });
