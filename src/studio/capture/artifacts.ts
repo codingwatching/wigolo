@@ -458,6 +458,53 @@ export function listSessionArtifacts(db: Database.Database, sessionId: string, l
   }));
 }
 
+/** One artifact WITH its body — the synthesis read (F3). The metadata-only `listSessionArtifacts` (above)
+ *  drives the rail; this drives brief-shaping, so it carries `markdown`. `content_trusted` rides through so
+ *  the adapter can tag each source's `trusted` flag (page-derived bodies stay untrusted-as-instructions). */
+export interface ArtifactFullRow {
+  id: number;
+  type: string;
+  url: string | null;
+  title: string | null;
+  markdown: string;
+  contentTrusted: number;
+  createdAt: string;
+}
+
+/**
+ * P6 F3 — the session's captured bodies for cross-tab synthesis. Returns the artifact BODY (unlike the
+ * metadata-only `listSessionArtifacts`), restricted to real content types with a non-null body: clip +
+ * extraction. Excludes note/mark (structural), screenshot (no text), AND qa (a prior synthesis — never
+ * recursively feed one synthesis into the next). Ordered by id (capture order) for stable source indices.
+ */
+export function listSessionArtifactsFull(db: Database.Database, sessionId: string): ArtifactFullRow[] {
+  const rows = db
+    .prepare(
+      `SELECT id, artifact_type, url, title, markdown, content_trusted, created_at
+       FROM studio_artifacts
+       WHERE session_id = ? AND artifact_type NOT IN ('note', 'mark', 'qa', 'screenshot') AND markdown IS NOT NULL
+       ORDER BY id ASC`,
+    )
+    .all(sessionId) as Array<{
+      id: number;
+      artifact_type: string;
+      url: string | null;
+      title: string | null;
+      markdown: string;
+      content_trusted: number;
+      created_at: string;
+    }>;
+  return rows.map((r) => ({
+    id: r.id,
+    type: r.artifact_type,
+    url: r.url,
+    title: r.title,
+    markdown: r.markdown,
+    contentTrusted: r.content_trusted,
+    createdAt: r.created_at,
+  }));
+}
+
 /**
  * Mark an existing artifact as human-curated. Keyed by row id; sets ONLY
  * curated_by_human and never names content_trusted — page-derived content stays
