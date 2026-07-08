@@ -115,6 +115,10 @@ function cookieUrl(c: PwCookie): string {
  */
 export async function applyStorageState(cookies: CookieJar, state: StorageStateOut): Promise<void> {
   for (const c of state.cookies ?? []) {
+    // A domain-less cookie has no valid target URL to reconstruct — skip it explicitly (an empty host would
+    // build an invalid `http:///` and Electron's cookies.set would throw; make the drop deliberate, not a
+    // silent catch). Such cookies can't be restored anyway; the human re-logs in if one mattered.
+    if (!(c.domain ?? '').replace(/^\./, '')) continue;
     try {
       await cookies.set({
         url: cookieUrl(c),

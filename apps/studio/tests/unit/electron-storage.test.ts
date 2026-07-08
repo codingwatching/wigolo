@@ -77,6 +77,20 @@ describe('electron-storage adapter', () => {
     expect(cookies.store).toHaveLength(2);
   });
 
+  it('skips a domain-less cookie on apply (no invalid-URL throw, no silent loss of a valid one)', async () => {
+    const cookies = jar();
+    await applyStorageState(cookies, {
+      cookies: [
+        { name: 'nodomain', value: 'x', domain: '', path: '/', expires: -1, httpOnly: false, secure: false, sameSite: 'Lax' },
+        { name: 'ok', value: 'y', domain: 'example.com', path: '/', expires: -1, httpOnly: false, secure: true, sameSite: 'Lax' },
+      ],
+      origins: [],
+    });
+    // The domain-less cookie is skipped (never reaches cookies.set → no `http:///` throw); the valid one lands.
+    expect(cookies.store).toHaveLength(1);
+    expect(cookies.store[0]).toEqual(expect.objectContaining({ name: 'ok', url: 'https://example.com/' }));
+  });
+
   it('a cookie set failure never rejects the whole apply (best-effort restore)', async () => {
     const cookies: CookieJar = { get: async () => [], set: async () => { throw new Error('boom'); } };
     await expect(

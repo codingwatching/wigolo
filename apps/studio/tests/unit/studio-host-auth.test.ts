@@ -219,6 +219,26 @@ describe('studio host login-handoff wiring (P5)', () => {
     expect(applied[0]).toEqual({ cookies: [SID], origins: [] });
   });
 
+  it('NEGATIVE: a profile whose bound origin differs from the session origin is REFUSED at load (confused-deputy)', async () => {
+    const profileStore = fakeProfileStore();
+    const { createHash } = await import('node:crypto');
+    // Store a blob under the sha256(example.com) key but with a DIFFERENT boundOrigin inside the envelope.
+    const id = createHash('sha256').update('https://example.com').digest('hex');
+    await profileStore.set(id, 'https://evil.com', JSON.stringify({ cookies: [SID], origins: [] }));
+
+    const { host, applied } = makeAuthHost({
+      credRef: { v: false },
+      urlRef: { v: 'https://example.com/app' },
+      storage: { cookies: [] },
+      profileStore,
+    });
+    await host.handlers.spawn({ startUrl: 'https://example.com/app' });
+
+    // loadProfile matched the id but r.boundOrigin ('https://evil.com') !== profileOrigin ('https://example.com')
+    // → refuse to apply (defense-in-depth on top of the sha256(origin) key).
+    expect(applied).toHaveLength(0);
+  });
+
   it('close() during an active handoff LOCKs it — no re-grant, no completed even if a delta later appears', async () => {
     const credRef = { v: true };
     const urlRef = { v: 'https://example.com/login' };
