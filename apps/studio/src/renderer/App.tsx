@@ -65,8 +65,9 @@ export function App() {
     window.studio.onGeneralizePreview((p) => setPreview(p));
     capturesStore.subscribe(() => setCaptures(capturesStore.list()));
     window.studio.onCaptureAdded((c) => capturesStore.add(c));
-    // P6 F4 timeline: subscribe now; the backfill (listAudit) + live delta (onAuditEntry) wire in F4.5.
+    // P6 F4 timeline: mount backfill + live per-act delta (dedup by seq in the store).
     timelineStore.subscribe(() => setTimeline(timelineStore.list()));
+    window.studio.onAuditEntry((e) => timelineStore.add(e));
     // P4 co-drive: per-tab control flips + agent acts drive the provenance dots + the drive banner.
     const unsubControl = controlStore.subscribe(() => setControlTick((n) => n + 1));
     window.studio.onDriveEvent((e) => {
@@ -88,6 +89,7 @@ export function App() {
       chatStore.clear();
       loginStore.reset();
       void window.studio.listCaptures().then((c) => capturesStore.set(c));
+      void window.studio.listAudit().then((a) => timelineStore.set(a));
     });
     // ⌘J focuses the chat composer (spec §3).
     const onKey = (ev: KeyboardEvent) => { if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'j') { ev.preventDefault(); setRailTab('agent'); composerRef.current?.focus(); } };
@@ -96,6 +98,7 @@ export function App() {
     // the onCaptureAdded delta). Degrades to [] when the library is down. Per-session re-backfill (reading
     // a resumed session's prior captures) lands with session restore (P4+).
     void window.studio.listCaptures().then((c) => capturesStore.set(c));
+    void window.studio.listAudit().then((a) => timelineStore.set(a));
     return () => { unsubControl(); unsubChat(); unsubLogin(); window.removeEventListener('keydown', onKey); };
   }, []);
 

@@ -32,8 +32,8 @@ function fakeDbg(): DebuggerLike {
   };
 }
 
-function makeHost(broadcasts: Record<string, unknown>[]) {
-  const broker = makeFakeBroker();
+function makeHost(broadcasts: Record<string, unknown>[], brokerOver: Record<string, (p: unknown) => unknown> = {}) {
+  const broker = makeFakeBroker(brokerOver);
   const engine = createDriveEngine();
   let n = 0;
   const host = createStudioHost({
@@ -95,6 +95,26 @@ describe('studio-host — P6 F4 audit → broker persist + live broadcast', () =
     // the live broadcast is likewise origin-only (never the token) — no raw page text on the wire
     const navWire = broadcasts.find((b) => b.t === 'audit' && b.action === 'navigate') as { url?: string } | undefined;
     expect(navWire?.url).toBe('https://accounts.example.com');
+  });
+
+  it('listAudit maps broker rows to renderer AuditDto — origin-only url + host-derived outcome (F4.5)', async () => {
+    const rows = [
+      { seq: 2, action: 'navigate', epoch: 1, target: { url: 'https://ex.com/a?tok=SECRET' }, outcome: { ok: true }, ts: 2000 },
+      { seq: 1, action: 'click', epoch: 1, target: { ref: 'e1' }, outcome: { ok: false, error_reason: 'not_holder' }, ts: 1000 },
+    ];
+    const { host } = makeHost([], { listAudit: () => rows });
+    await host.handlers.spawn({ startUrl: 'https://ex.com/page' });
+    const out = await host.listAudit();
+    const nav = out.find((e) => e.seq === 2)!;
+    expect(nav).toMatchObject({ action: 'navigate', url: 'https://ex.com', ok: true });
+    expect(nav.url).not.toContain('SECRET');
+    expect(out.find((e) => e.seq === 1)).toMatchObject({ action: 'click', ref: 'e1', ok: false, error_reason: 'not_holder' });
+  });
+
+  it('listAudit degrades to [] when the broker is down (never errors the UI)', async () => {
+    const { host } = makeHost([], { listAudit: () => { throw new Error('broker down'); } });
+    await host.handlers.spawn({ startUrl: 'https://ex.com/page' });
+    expect(await host.listAudit()).toEqual([]);
   });
 
   it('a non-credential navigate keeps the full url in the persisted row (forensic value)', async () => {

@@ -177,6 +177,11 @@ async function createWindow(): Promise<void> {
             // act.ts emits the coords under `center` (NOT top-level x/y) — read them there.
             const c = msg.center as { x: number; y: number } | undefined;
             if (c) wc.send(IPC.overlayCursor, { x: c.x, y: c.y, caption: typeof msg.caption === 'string' ? msg.caption : '' });
+          } else if (msg.t === 'audit') {
+            // P6 F4: a recorded agent action → the live Timeline. The host already shaped it page-text-free
+            // (auditToWire); forward the whole summary minus the routing tag.
+            const { t: _t, ...dto } = msg;
+            win.webContents.send(IPC.auditEntry, dto);
           }
         },
       });
@@ -236,6 +241,7 @@ async function createWindow(): Promise<void> {
     win.webContents.send(IPC.captureAdded, dto);
   });
   ipcMain.handle(IPC.listCaptures, () => studioHost.listCaptures());
+  ipcMain.handle(IPC.listAudit, () => studioHost.listAudit());
   ipcMain.handle(IPC.knowledgeSimilar, (_e, concept: string) => studioHost.knowledgeSimilar(String(concept ?? '')));
 
   ipcMain.handle(IPC.approvalDecide, (_e, id: string, decision: 'allow' | 'deny') => {

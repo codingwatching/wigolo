@@ -146,6 +146,7 @@ export const IPC = {
   markGeneralize: 'studio:mark-generalize',
   extractSet: 'studio:extract-set',
   listCaptures: 'studio:list-captures',
+  listAudit: 'studio:list-audit',
   knowledgeSimilar: 'studio:knowledge-similar',
   // main → renderer
   stateChanged: 'studio:state-changed',
@@ -153,6 +154,7 @@ export const IPC = {
   marksChanged: 'studio:marks-changed',
   generalizePreview: 'studio:generalize-preview',
   captureAdded: 'studio:capture-added',
+  auditEntry: 'studio:audit-entry',
   driveEvent: 'studio:drive-event',
   chatMessage: 'studio:chat-message',
   grantState: 'studio:grant-state',

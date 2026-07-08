@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC, type StudioState, type PendingApprovalDto, type MarkDto, type CaptureDto, type KnowledgeHit, type DriveEventDto, type ChatMsgDto, type GrantStateDto, type SessionChangedDto } from '../shared/ipc';
+import { IPC, type StudioState, type PendingApprovalDto, type MarkDto, type CaptureDto, type KnowledgeHit, type DriveEventDto, type ChatMsgDto, type GrantStateDto, type SessionChangedDto, type AuditDto } from '../shared/ipc';
 import type { StudioGeneralizeOutput } from 'wigolo/studio';
 
 const studio = {
@@ -44,6 +44,13 @@ const studio = {
   },
   /** find_similar on the current page against the local studio corpus (knowledge rail). */
   knowledgeSimilar: (concept: string): Promise<KnowledgeHit[]> => ipcRenderer.invoke(IPC.knowledgeSimilar, concept),
+  // ── P6 F4 timeline ──
+  /** The active session's audit trail (Timeline rail; on session open + per-session reset). */
+  listAudit: (): Promise<AuditDto[]> => ipcRenderer.invoke(IPC.listAudit),
+  /** A newly recorded agent action pushed live (page-text-free summary). */
+  onAuditEntry: (cb: (e: AuditDto) => void): void => {
+    ipcRenderer.on(IPC.auditEntry, (_e, dto: AuditDto) => cb(dto));
+  },
   // ── P4 co-drive ──
   /** Per-tab drive events (control flips + agent acts) for the drive banner, provenance dots, and narration. */
   onDriveEvent: (cb: (e: DriveEventDto) => void): void => {

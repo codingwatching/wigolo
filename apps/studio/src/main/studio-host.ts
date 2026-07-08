@@ -73,7 +73,7 @@ import {
 } from 'wigolo/studio';
 import type { TabDrive } from './drive-engine';
 import type { BrokerClient } from './broker-client';
-import type { QuoteMsg, RegionMsg, CaptureDto, KnowledgeHit } from '../shared/ipc';
+import type { QuoteMsg, RegionMsg, CaptureDto, KnowledgeHit, AuditDto } from '../shared/ipc';
 
 // The Electron main process IS the studio session host (spec §2). This module composes
 // the salvaged domain layer (perception → observe, act, session-drive) over the per-tab
@@ -98,7 +98,7 @@ function originOnly(url: string): string {
  * Carries the structured columns only — the agent's verb, the host-assigned ref/direction/amount, the
  * origin-only url, the risk tier + resolved outcome + approval — NEVER raw typed text or page content.
  */
-function auditToWire(e: AuditEntry): Record<string, unknown> {
+function auditToWire(e: AuditEntry): AuditDto {
   return {
     seq: e.seq,
     action: e.action,
@@ -244,6 +244,8 @@ export interface StudioHost {
   listMarks(): Promise<StudioMarksOutput | StudioGeneralizeOutput | StudioToolError>;
   /** The active session's captured items for the Captures rail (broker down → [] — the panel degrades quietly). */
   listCaptures(): Promise<CaptureDto[]>;
+  /** P6 F4: the active session's audit trail (timeline backfill), reverse-chronological, host-summarized. */
+  listAudit(): Promise<AuditDto[]>;
   /** find_similar on the current page against the LOCAL studio corpus (knowledge rail; broker down → []). */
   knowledgeSimilar(concept: string): Promise<KnowledgeHit[]>;
   /** Cleanly detach every session's tab (app quit). */
@@ -1132,6 +1134,14 @@ export function createStudioHost(deps: StudioHostDeps): StudioHost {
         );
         return rows.map((r) => ({ id: r.id, type: r.type, title: r.title, url: r.url, trusted: r.trusted, createdAt: r.created_at }));
       } catch { return []; } // broker down → the panel shows nothing rather than erroring
+    },
+    async listAudit(): Promise<AuditDto[]> {
+      const ctx = targetContext();
+      if (!ctx) return [];
+      try {
+        const rows = await deps.broker.call<AuditEntry[]>('listAudit', { sessionId: ctx.sessionId, limit: 200 });
+        return rows.map(auditToWire);
+      } catch { return []; } // broker down → the timeline degrades to empty, never errors the UI
     },
     async knowledgeSimilar(concept: string): Promise<KnowledgeHit[]> {
       if (!concept.trim()) return [];
