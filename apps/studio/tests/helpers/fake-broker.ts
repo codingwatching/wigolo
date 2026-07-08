@@ -14,6 +14,7 @@ export function makeFakeBroker(
     capture: () => ({ artifact_id: 1, inserted: true, content_hash: 'h' }),
     persistSessionFetch: () => ({ id: 1, inserted: true, contentHash: 'h' }),
     persistMark: () => ({ id: 1, inserted: true, contentHash: 'h' }),
+    persistExtraction: () => ({ id: 1, inserted: true, contentHash: 'h' }),
     persistComment: () => ({ id: 1, inserted: true, contentHash: 'h' }),
     persistScreenshot: () => ({ id: 1, inserted: true, contentHash: 'h' }),
     listArtifacts: () => [],

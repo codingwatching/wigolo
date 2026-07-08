@@ -74,6 +74,13 @@ export function createBrokerHandlers(deps: BrokerHandlerDeps) {
         { type: 'mark', sessionId: p.sessionId, url: p.url, target: p.target },
         { db: deps.db, enqueue: deps.enqueue, credentialContext: p.credentialSignal, onArtifact: deps.onArtifact },
       ),
+    // P6 F1 grab-all — persist generalized structured rows as a type=extraction artifact. Same credential
+    // choke as every other persist path (belt-and-suspenders: host refuses at entry, broker refuses again).
+    persistExtraction: async (p: { sessionId: string; url: string; columns: string[]; rows: Record<string, string>[]; credentialSignal: CredSignal }): Promise<CaptureResult> =>
+      captureFromPage(
+        { type: 'extraction', sessionId: p.sessionId, url: p.url, columns: p.columns, rows: p.rows },
+        { db: deps.db, enqueue: deps.enqueue, credentialContext: p.credentialSignal, onArtifact: deps.onArtifact },
+      ),
     persistComment: async (p: { sessionId: string; text: string }): Promise<CaptureResult> =>
       captureHumanNote({ sessionId: p.sessionId, text: p.text }, { db: deps.db, enqueue: deps.enqueue }),
     persistScreenshot: async (p: { sessionId: string; url: string; title: string; mediaPath: string; contentHash: string; credentialSignal: CredSignal }): Promise<CaptureResult> =>

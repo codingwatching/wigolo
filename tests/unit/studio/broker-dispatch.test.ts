@@ -137,6 +137,26 @@ describe('studio-db-broker — createBrokerHandlers (dispatch, real in-memory DB
     expect(artifactCount()).toBe(0);
   });
 
+  it('P6 F1: persistExtraction stores a type=extraction row (in listArtifacts) content_trusted=0; dedups on identical rows', async () => {
+    const p = { sessionId: 's1', url: 'https://ex.com/plans', columns: ['name', 'price'], rows: [{ name: 'Pro', price: '$20' }], credentialSignal: {} };
+    const a = await handlers.persistExtraction(p);
+    expect(a.inserted).toBe(true);
+    const row = db().prepare('SELECT artifact_type, content_trusted FROM studio_artifacts WHERE id=?').get(a.id) as { artifact_type: string; content_trusted: number };
+    expect(row.artifact_type).toBe('extraction');
+    expect(row.content_trusted).toBe(0);
+    const list = await handlers.listArtifacts({ sessionId: 's1', limit: 50 });
+    expect(list.some((x) => x.id === a.id && x.type === 'extraction')).toBe(true);
+    const b = await handlers.persistExtraction(p);
+    expect(b.inserted).toBe(false);
+  });
+
+  it('P6 F1: persistExtraction REFUSES on a credential signal — no row (broker defense, not just host ordering)', async () => {
+    await expect(handlers.persistExtraction({
+      sessionId: 's1', url: 'https://ex.com/login', columns: ['user'], rows: [{ user: 'a' }], credentialSignal: { pageUrl: 'https://ex.com/login' },
+    })).rejects.toThrow(/capture refused|credential/i);
+    expect(artifactCount()).toBe(0);
+  });
+
   it('persistSessionFetch stores a session-targeted fetch as a clip (returns CaptureResult)', async () => {
     const r = await handlers.persistSessionFetch({ sessionId: 's1', url: 'https://ex.com/doc', title: 'Doc', markdown: 'fetched body', credentialSignal: {} });
     expect(r.inserted).toBe(true);
