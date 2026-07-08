@@ -13,8 +13,10 @@ export function CapturesPanel({ captures }: { captures: CaptureDto[] }) {
   return (
     <ul className="caps">
       {captures.map((c) => (
-        <li key={c.id} className="caps__item">
-          <span className="caps__type">{c.type}</span>
+        <li key={c.id} className={`caps__item${c.type === 'extraction' ? ' caps__item--extraction' : ''}`}>
+          <span className="caps__type">{c.type === 'extraction' ? 'grab-all' : c.type}</span>
+          {/* For an extraction the title is host-derived counts ("N rows · M columns"); no page-derived
+              cell/column text is rendered in the rail (safest-by-construction — nothing to neutralize here). */}
           <span className="caps__title">{c.title || c.url || 'untitled'}</span>
           {c.url && (
             <a className="caps__url" href={c.url} onClick={(e) => e.preventDefault()}>{c.url}</a>

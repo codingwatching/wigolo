@@ -264,6 +264,11 @@ async function createWindow(): Promise<void> {
   });
   // P4: the human's chat composer → a trusted `chat` event on the active session (agent drains it in observe).
   ipcMain.on(IPC.chatSend, (_e, text: string) => { void studioHost.postHumanChat(String(text ?? '')); });
+  // P6 F1 grab-all: a human "Extract" affordance → the same host handler the agent's studio_extract_set uses.
+  // The resulting extraction artifact fans to the captures rail via the existing onArtifact → captureAdded path.
+  ipcMain.on(IPC.extractSet, (_e, input: { tab_id: string; mark_id: string; exclude_refs?: string[]; follow_pagination?: boolean }) => {
+    void studioHost.handlers.extractSet(input);
+  });
   // §13.8c: one-click localhost/private-net grant for the agent on the active session (revocable). Echo the
   // resulting state so the grant card reflects it. link_local/cloud-metadata stays hard-blocked regardless.
   ipcMain.handle(IPC.grantLocalhost, () => { const ok = studioHost.grantLocalhost(); win.webContents.send(IPC.grantState, { granted: studioHost.localhostGranted() }); return ok; });

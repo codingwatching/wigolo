@@ -338,6 +338,8 @@ button { font-family: inherit; }
   font: 10px var(--chrome-font); text-transform: uppercase; letter-spacing: .04em;
   color: var(--agent); background: var(--agent-dim); border-radius: var(--r-pill); padding: 1px 7px;
 }
+.caps__item--extraction { border-left: 2px solid var(--agent); }
+.caps__item--extraction .caps__type { color: var(--ok, #6ee7b7); background: color-mix(in srgb, var(--ok, #6ee7b7) 16%, transparent); }
 .caps__title { color: var(--text); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .caps__url {
   grid-column: 2; color: var(--text-faint); font-size: 11px; text-decoration: none;

@@ -19,6 +19,8 @@ const studio = {
   // ── P2 marking ──
   /** Arm the focused tab's marking overlay (toolbar ◈ / ⌘M). */
   armMarkMode: (): void => { ipcRenderer.send(IPC.armMarkMode); },
+  /** P6 F1 grab-all: extract a marked repeating pattern into structured rows (the result lands as a captures card). */
+  extractSet: (input: { tab_id: string; mark_id: string; exclude_refs?: string[]; follow_pagination?: boolean }): void => { ipcRenderer.send(IPC.extractSet, input); },
   /** Live marks for the rail (host push after every human mark/comment). */
   onMarksChanged: (cb: (marks: MarkDto[]) => void): void => {
     ipcRenderer.on(IPC.marksChanged, (_e, marks: MarkDto[]) => cb(marks));

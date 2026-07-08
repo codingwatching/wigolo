@@ -122,6 +122,7 @@ export const IPC = {
   armMarkMode: 'studio:arm-mark-mode',
   markComment: 'studio:mark-comment',
   markGeneralize: 'studio:mark-generalize',
+  extractSet: 'studio:extract-set',
   listCaptures: 'studio:list-captures',
   knowledgeSimilar: 'studio:knowledge-similar',
   // main → renderer
