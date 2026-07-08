@@ -66,6 +66,9 @@ export { heal } from './mark/heal.js';
 export type { HealResult, HealCandidate, HealConfidence } from './mark/heal.js';
 export { generalize, applyGeometry, segEditDistance } from './mark/generalize.js';
 export type { GeneralizeResult, GeneralizeMatch, GeneralizeStructural, GenBox, GeneralizeConfidence } from './mark/generalize.js';
+// P6 F1 grab-all — the pure column-inference + extract orchestrator (no native, no Electron).
+export { inferRows, extractSet } from './extract-set.js';
+export type { MatchSubtree, InferredRows, ExtractSetInput, ExtractSetDeps, ExtractSetResult, ClusterOk, ClusterErr, FollowResult, PersistArgs, PersistResult } from './extract-set.js';
 export { MarkStore } from './mark/store.js';
 export type { StudioMark } from './mark/store.js';
 export { resolveNodePath } from './mark/pick.js';
@@ -146,6 +149,8 @@ export type {
   StudioCaptureOutput,
   StudioSayInput,
   StudioSayOutput,
+  StudioExtractSetInput,
+  StudioExtractSetOutput,
   StudioSpawnInput,
   StudioSpawnOutput,
   StudioCloseInput,

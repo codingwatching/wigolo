@@ -20,6 +20,7 @@ import {
   heal,
   generalize,
   applyGeometry,
+  extractSet,
   resolveNodePath,
   neutralizeMarkers,
   isCredentialContext,
@@ -47,6 +48,10 @@ import {
   type StudioCaptureOutput,
   type StudioSayInput,
   type StudioSayOutput,
+  type StudioExtractSetInput,
+  type StudioExtractSetOutput,
+  type ExtractSetDeps,
+  type MatchSubtree,
   type CaptureResult,
   type FieldSemantics,
   type MarkPayload,
@@ -256,6 +261,8 @@ interface SessionContext {
   credentialSignal: () => Promise<{ pageUrl?: string; fields?: FieldSemantics[] }>;
   /** studio_marks: list (heal each mark) | generalize a mark (preview). Credential-excluded. */
   marksTool: (input: StudioMarksInput) => Promise<StudioMarksOutput | StudioGeneralizeOutput | StudioToolError>;
+  /** P6 F1: extract a marked repeating pattern into structured rows (credential-refused, SSRF-fenced pagination). */
+  extractSet: (input: StudioExtractSetInput) => Promise<StudioExtractSetOutput | StudioToolError>;
   /** P5: the login-wall handoff machine for this session (close() LOCKs it). */
   handoff: LoginHandoff;
   /** P5: apply a matching-origin profile's cookies into the session before its first nav (no-op when no bound origin / no stored profile / origin mismatch). */
@@ -583,6 +590,132 @@ export function createStudioHost(deps: StudioHostDeps): StudioHost {
       return { markId, refs: refined.refs, confidence: refined.confidence, requires_confirmation: true };
     };
 
+    // ── P6 F1 grab-all — extract a marked repeating pattern into structured rows ──
+    // CDP DOM.Node → the pure MatchSubtree shape the row-inference core consumes (light-DOM only, §13.8a).
+    const domToSubtree = (n: DomNode): MatchSubtree => ({
+      nodeType: n.nodeType ?? 1,
+      nodeName: n.nodeName ?? '',
+      nodeValue: n.nodeValue,
+      children: (n.children ?? []).map(domToSubtree),
+    });
+    // Depth-first search for the CDP node with a given backendNodeId (light DOM only — no shadow/frame pierce).
+    const subtreeByBackendNodeId = (root: DomNode | undefined, be: number): DomNode | null => {
+      if (!root) return null;
+      const stack: DomNode[] = [root];
+      let guard = 0;
+      while (stack.length && guard++ < 200000) {
+        const n = stack.pop()!;
+        if (n.backendNodeId === be) return n;
+        for (const c of n.children ?? []) stack.push(c);
+      }
+      return null;
+    };
+    // Fetch AX⋈DOM ONCE and return both the heal candidates and the raw doc root (so a match's backendNodeId
+    // can be resolved to its subtree). Mirrors buildHealCandidates' candidate build; kept separate so that
+    // path stays untouched.
+    const fetchCandidatesWithDoc = async (): Promise<{ candidates: HealCandidate[]; docRoot: DomNode | undefined }> => {
+      const ax = (await transport.send('Accessibility.getFullAXTree')) as { nodes?: AxNode[] };
+      const doc = (await transport.send('DOM.getDocument', { depth: -1, pierce: true })) as { root?: DomNode };
+      const snap = buildSnapshot(ax.nodes ?? [], doc.root, { tokenBudget: inlineBudget });
+      const flat = flattenDom(doc.root).map;
+      const axByBe = indexAxByBackendNode(ax.nodes ?? []);
+      const isOverlay = (be: number): boolean => {
+        let cur: number | null = be, guard = 0;
+        while (cur != null && guard++ < 200) {
+          const d = flat.get(cur);
+          if (!d) break;
+          if (d.attrs['data-wigolo-overlay'] !== undefined) return true;
+          cur = d.parent;
+        }
+        return false;
+      };
+      const candidates: HealCandidate[] = [];
+      for (const [ref, backendNodeId] of snap.refMap) {
+        if (isOverlay(backendNodeId)) continue;
+        const target = buildTargetFromFlat(flat, axByBe, backendNodeId);
+        if (target) candidates.push({ ref, target });
+      }
+      return { candidates, docRoot: doc.root };
+    };
+    // Resolve a mark's generalized match cluster (minus exclude_refs) into subtrees + the excluded count.
+    const resolveExtractCluster: ExtractSetDeps['resolveCluster'] = async (markId, excludeRefs) => {
+      const m = markStore.get(markId);
+      if (!m) return { error: 'no_such_mark' as const };
+      const { candidates, docRoot } = await fetchCandidatesWithDoc();
+      const structural = generalize(m.target, candidates);
+      const boxes = new Map<string, GenBox>();
+      for (const match of structural.matches) {
+        const box = await boxForNode(match.backendNodeId);
+        if (box) boxes.set(match.ref, box);
+      }
+      const refined = applyGeometry(structural, boxes);
+      const excludeSet = new Set(excludeRefs);
+      const keptRefs = refined.refs.filter((r) => !excludeSet.has(r));
+      const excludedCount = refined.refs.length - keptRefs.length;
+      const beByRef = new Map(structural.matches.map((mm) => [mm.ref, mm.backendNodeId]));
+      const subtrees: MatchSubtree[] = [];
+      for (const ref of keptRefs) {
+        const be = beByRef.get(ref);
+        const node = be == null ? null : subtreeByBackendNodeId(docRoot, be);
+        if (node) subtrees.push(domToSubtree(node));
+      }
+      return { subtrees, refs: keptRefs, excludedCount };
+    };
+    // Find a same-page "next"-style control from the live candidates and drive to its href through the SAME
+    // gated nav choke human/agent nav uses (guardNavigation SSRF-fenced; cloud-metadata always blocked; a
+    // private hop needs the session's localhost grant, else it is REFUSED — never auto-followed).
+    const followNextPage: ExtractSetDeps['followNextPage'] = async () => {
+      const { candidates } = await fetchCandidatesWithDoc();
+      const NEXT = /(?:^|\b)(next|more|›|»|older)(?:\b|$)/i;
+      const here = tab.currentUrl();
+      const hit = candidates.find(
+        (c) => (c.target.role === 'link' || c.target.role === 'button') && NEXT.test(c.target.name) && typeof c.target.attrs.href === 'string',
+      );
+      const href = hit?.target.attrs.href;
+      if (!href) return { followed: false };
+      let nextUrl: string;
+      try {
+        nextUrl = here ? new URL(href, here).toString() : href;
+      } catch {
+        return { followed: false };
+      }
+      const r = await drive.gatedNavigate(nextUrl);
+      // The nav model has NO per-hop approval-parking: a private/blocked hop is REFUSED (stronger than a park —
+      // zero rows leaked). followed:false stops the accumulation; the core's pending_approval branch is unused here.
+      return { followed: r.ok };
+    };
+    const extractSetTool = async (input: StudioExtractSetInput): Promise<StudioExtractSetOutput | StudioToolError> => {
+      const result = await extractSet(input, {
+        resolveCluster: resolveExtractCluster,
+        isCredentialPage,
+        followNextPage,
+        persist: async ({ columns, rows }) => {
+          const r = await deps.broker.call<CaptureResult>('persistExtraction', {
+            sessionId,
+            url: tab.currentUrl() ?? '',
+            columns,
+            rows,
+            credentialSignal: await credentialSignal(),
+          });
+          return { id: r.id, inserted: r.inserted, contentHash: r.contentHash, columns, rows };
+        },
+        caps: { maxPagesCeiling: 20, maxRowsCeiling: 1000, defaultPages: 5, defaultRows: 200 },
+      });
+      // no_such_mark is a typed tool error; every other outcome (incl. the refused/pending_approval STAGES) is a result.
+      if (result.error_reason) return { error_reason: result.error_reason, hint: result.hint ?? '' };
+      return {
+        columns: result.columns ?? [],
+        rows: result.rows ?? [],
+        pages_followed: result.pages_followed ?? 0,
+        ...(result.truncated ? { truncated: true } : {}),
+        ...(result.excluded !== undefined ? { excluded: result.excluded } : {}),
+        ...(result.artifact_id !== undefined ? { artifact_id: result.artifact_id } : {}),
+        ...(result.stage ? { stage: result.stage } : {}),
+        ...(result.id ? { approval_id: result.id } : {}),
+        ...(result.reason ? { reason: result.reason } : {}),
+      };
+    };
+
     const marksTool = async (input: StudioMarksInput): Promise<StudioMarksOutput | StudioGeneralizeOutput | StudioToolError> => {
       // 5e-0: studio_marks is an ungated agent read whose marks carry page-derived role/name — a displayed
       // secret if a mark was made on a credential screen. Exclude all mark content on a credential context.
@@ -608,6 +741,7 @@ export function createStudioHost(deps: StudioHostDeps): StudioHost {
       lastObserveEpoch,
       credentialSignal,
       marksTool,
+      extractSet: extractSetTool,
       handoff,
       loadProfile,
       createdAt: Date.now(),
@@ -748,8 +882,21 @@ export function createStudioHost(deps: StudioHostDeps): StudioHost {
       deps.onSay?.({ text, ...(typeof input.markId === 'string' ? { markId: input.markId } : {}), ts, sessionId: ctx.sessionId });
       return { posted: true, posted_at: ts };
     },
-    // P6 F1 — placeholder (F1.7 replaces with the tab-scoped, generalize-backed implementation).
-    extractSet: async () => ({ error_reason: 'not_implemented', hint: 'Grab-all is not wired yet.' }),
+    // P6 F1 — resolve by tab_id, reject a tab that is unknown OR not in the ACTIVE session (confused-deputy
+    // fence — never coerce to active via targetContext, which would let a stale tab_id hit another session).
+    extractSet: async (input: StudioExtractSetInput): Promise<StudioExtractSetOutput | StudioToolError> => {
+      const sid = tabToSession.get(input.tab_id);
+      const ctx = sid ? contexts.get(sid) : undefined;
+      if (!ctx || ctx.status !== 'live' || ctx.sessionId !== activeSessionId) {
+        return { error_reason: 'wrong_session', hint: 'That tab_id is not part of the active studio session.' };
+      }
+      ctx.lastActiveAt = Date.now();
+      try {
+        return await ctx.extractSet(input);
+      } catch {
+        return { error_reason: 'extract_unavailable', hint: 'The local library service is not available — extraction cannot run right now.' };
+      }
+    },
   };
 
   const sessions: StudioSessionsAccessor = {

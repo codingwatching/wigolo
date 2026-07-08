@@ -34,6 +34,8 @@ export interface DomNode {
   nodeType?: number;
   localName?: string;
   nodeName?: string;
+  /** CDP text-node value (nodeType 3). Used by grab-all row inference to read a leaf cell's text. */
+  nodeValue?: string;
   attributes?: string[];
   children?: DomNode[];
   shadowRoots?: DomNode[];
