@@ -230,8 +230,9 @@ export interface StudioCaptureOutput {
 // P6 F1 grab-all: generalize a marked repeating pattern into structured rows. Agent-reachable; credential-
 // refused at source, SSRF-fenced pagination (Document-class only). `mark_id` is required (dispatch casts).
 export interface StudioExtractSetInput {
-  tab_id: string;
   mark_id: string;
+  /** Optional — defaults to the active session's tab. A tab_id belonging to another session is refused. */
+  tab_id?: string;
   exclude_refs?: string[];
   follow_pagination?: boolean;
   max_pages?: number;

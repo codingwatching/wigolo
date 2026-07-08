@@ -885,10 +885,20 @@ export function createStudioHost(deps: StudioHostDeps): StudioHost {
     // P6 F1 — resolve by tab_id, reject a tab that is unknown OR not in the ACTIVE session (confused-deputy
     // fence — never coerce to active via targetContext, which would let a stale tab_id hit another session).
     extractSet: async (input: StudioExtractSetInput): Promise<StudioExtractSetOutput | StudioToolError> => {
-      const sid = tabToSession.get(input.tab_id);
-      const ctx = sid ? contexts.get(sid) : undefined;
-      if (!ctx || ctx.status !== 'live' || ctx.sessionId !== activeSessionId) {
-        return { error_reason: 'wrong_session', hint: 'That tab_id is not part of the active studio session.' };
+      // tab_id is OPTIONAL (no agent tool surfaces one): omitted ⇒ the active session's tab. When PROVIDED it
+      // must belong to the active session — a tab_id from another session is REFUSED, never coerced to active
+      // (confused-deputy fence). This keeps the fence for explicit cross-session ids AND lets the agent call
+      // with just a mark_id.
+      let ctx: SessionContext | undefined;
+      if (typeof input.tab_id === 'string' && input.tab_id) {
+        const sid = tabToSession.get(input.tab_id);
+        ctx = sid ? contexts.get(sid) : undefined;
+        if (!ctx || ctx.status !== 'live' || ctx.sessionId !== activeSessionId) {
+          return { error_reason: 'wrong_session', hint: 'That tab_id is not part of the active studio session.' };
+        }
+      } else {
+        ctx = targetContext();
+        if (!ctx) return noActive();
       }
       ctx.lastActiveAt = Date.now();
       try {

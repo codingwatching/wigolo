@@ -130,6 +130,17 @@ describe('studio_extract_set — host wiring (P6 F1)', () => {
     expect(broker.call).toHaveBeenCalledWith('persistExtraction', expect.objectContaining({ url: 'https://shop.test/plans' }));
   });
 
+  it('POSITIVE: omitting tab_id defaults to the active session (the agent has no tab_id to pass)', async () => {
+    const broker = makeFakeBroker();
+    const { host } = makeHost(extractDebugger, broker);
+    await host.handlers.spawn({ startUrl: 'https://shop.test/plans' });
+    const created = await host.markElement({ tabId: 't1', path: [0, 0], payload: samplePayload });
+    const markId = (created as { markId: string }).markId;
+    const out = await host.handlers.extractSet({ mark_id: markId }); // no tab_id
+    expect(isErr(out)).toBe(false);
+    if (!isErr(out)) expect(out.rows.length).toBe(3);
+  });
+
   it('NEGATIVE confused-deputy (b): a tab_id of a NON-active session is rejected (wrong_session), never coerced', async () => {
     const { host } = makeHost(extractDebugger);
     await host.handlers.spawn({ startUrl: 'https://shop.test/a' }); // t1 = session A

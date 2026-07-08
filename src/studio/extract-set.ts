@@ -97,8 +97,9 @@ export function inferRows(matches: MatchSubtree[]): InferredRows {
 }
 
 export interface ExtractSetInput {
-  tab_id: string;
   mark_id: string;
+  /** Optional — the host resolves the tab; the core routine never reads it (kept for shape parity). */
+  tab_id?: string;
   exclude_refs?: string[];
   follow_pagination?: boolean;
   max_pages?: number;

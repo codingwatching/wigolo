@@ -717,14 +717,14 @@ export const STUDIO_SAY_TOOL_SCHEMA = {
 export const STUDIO_EXTRACT_SET_TOOL_SCHEMA = {
   type: 'object' as const,
   properties: {
-    tab_id: { type: 'string', description: 'The session tab whose page holds the marked pattern.' },
     mark_id: { type: 'string', description: 'The mark (from studio_marks) whose repeating set to extract into rows.' },
+    tab_id: { type: 'string', description: 'Optional — the session tab that owns the mark. Defaults to the active session; a tab_id from another session is refused.' },
     exclude_refs: { type: 'array', items: { type: 'string' }, description: 'Refs from the matched set to drop before extracting.' },
     follow_pagination: { type: 'boolean', description: 'Follow a same-site next-page control and accumulate rows (bounded, gated).' },
     max_pages: { type: 'number', description: 'Max pages to follow (clamped to a host ceiling).' },
     max_rows: { type: 'number', description: 'Max rows to collect (clamped to a host ceiling).' },
   },
-  required: ['tab_id', 'mark_id'],
+  required: ['mark_id'],
   additionalProperties: false,
 };
 
