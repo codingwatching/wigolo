@@ -47,6 +47,65 @@ npx wigolo doctor
 
 Not for you? `npx wigolo config --uninstall --yes` removes everything, cleanly.
 
+### Manual MCP setup (any other agent)
+
+The `--agents` flag has a built-in installer for each agent listed above — but it can't cover every agent in the world. For **anything else — your own custom or in-house agent, or any MCP-capable client we don't wire automatically yet** — set wigolo up by hand: it's just another MCP server. Install the engine once, then register it:
+
+```bash
+npx wigolo init --non-interactive        # engine only: models, browser, cache — no agent wiring
+```
+
+Most clients use an `mcpServers` block in a JSON config file:
+
+```json
+{
+  "mcpServers": {
+    "wigolo": {
+      "command": "npx",
+      "args": ["-y", "wigolo"]
+    }
+  }
+}
+```
+
+`wigolo` with no subcommand starts the MCP stdio server (that is the default). If you installed it globally, use `"command": "wigolo", "args": []` instead.
+
+**The file location — and the exact key — vary by client:**
+
+| Agent | Config file | Servers key |
+|-------|-------------|-------------|
+| Cursor | `~/.cursor/mcp.json` | `mcpServers` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `mcpServers` |
+| Gemini CLI | `~/.gemini/settings.json` | `mcpServers` |
+| Antigravity | `~/.antigravity/mcp.json` | `mcpServers` |
+| VS Code | user `mcp.json` (Command Palette → *MCP: Open User Configuration*) | `servers` |
+| Zed | `~/.config/zed/settings.json` | `context_servers` |
+| Claude Code | *(no file)* run `claude mcp add wigolo -- npx -y wigolo` | — |
+| Codex | `~/.codex/config.toml` (TOML, not JSON) | `[mcp_servers.wigolo]` |
+| Any other | wherever it registers MCP servers | its MCP-servers key |
+
+Codex uses TOML instead of JSON:
+
+```toml
+[mcp_servers.wigolo]
+command = "npx"
+args = ["-y", "wigolo"]
+```
+
+To enable answer synthesis (below) for a hand-wired agent, add the provider and key to the server's `env`:
+
+```json
+{
+  "mcpServers": {
+    "wigolo": {
+      "command": "npx",
+      "args": ["-y", "wigolo"],
+      "env": { "WIGOLO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "<your-free-key>" }
+    }
+  }
+}
+```
+
 ### Optional — enable answer synthesis
 
 `research`, `agent`, and `search format=answer` use an LLM to *write* the final answer. Turn them on by setting a **provider and its key** (in your shell, or in your agent's MCP `env` block). `WIGOLO_LLM_PROVIDER` names the LLM — set it alongside the key:
