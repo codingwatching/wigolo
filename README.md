@@ -106,6 +106,14 @@ To enable answer synthesis (below) for a hand-wired agent, add the provider and 
 }
 ```
 
+### Let an AI set it up for you
+
+Setup is simple enough to hand off to an AI. Ask your coding agent (Claude Code, Cursor, …) — or any chat assistant (ChatGPT, Claude, Gemini) — to do it, and it can follow the steps above. Paste a prompt like:
+
+> Set up the **wigolo** MCP server for my agent. wigolo is a local-first MCP server installed with `npx wigolo init --non-interactive` (engine only — no API keys). Then register it in my agent's MCP config as an `mcpServers` entry `{ "command": "npx", "args": ["-y", "wigolo"] }`. Note the per-client differences: **VS Code** uses the `servers` key with `"type": "stdio"`; **Zed** uses `context_servers`; **Codex** uses TOML `[mcp_servers.wigolo]`; **Claude Code** uses the CLI `claude mcp add wigolo -- npx -y wigolo`. My agent is **<name>** and its MCP config is at **<path, or "wherever it registers MCP servers">**.
+
+That prompt is self-contained, so even an assistant with no web access can act on it. If the assistant *can* browse, point it at this README (the **Manual MCP setup** section above has every client's exact config path) or the project's machine-readable **`llms.txt`** — both carry the full procedure, including the optional LLM-synthesis `env` below.
+
 ### Optional — enable answer synthesis
 
 `research`, `agent`, and `search format=answer` use an LLM to *write* the final answer. Turn them on by setting a **provider and its key** (in your shell, or in your agent's MCP `env` block). `WIGOLO_LLM_PROVIDER` names the LLM — set it alongside the key:
