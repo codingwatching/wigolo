@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { getConfig } from '../config.js';
 import { createLogger } from '../logger.js';
 
@@ -9,8 +9,9 @@ const IMAGE = 'searxng/searxng:latest';
 
 export function isContainerRunning(name: string): boolean {
   try {
-    const result = execSync(
-      `docker inspect --format '{{.State.Running}}' -- ${shellEscape(name)}`,
+    const result = execFileSync(
+      'docker',
+      ['inspect', '--format', '{{.State.Running}}', '--', name],
       { stdio: 'pipe', encoding: 'utf-8' },
     ).trim();
     return result === 'true';
@@ -21,16 +22,12 @@ export function isContainerRunning(name: string): boolean {
 
 export function stopContainer(name: string): void {
   try {
-    const escaped = shellEscape(name);
-    execSync(`docker stop -- ${escaped} && docker rm -- ${escaped}`, { stdio: 'pipe' });
+    execFileSync('docker', ['stop', '--', name], { stdio: 'pipe' });
+    execFileSync('docker', ['rm', '--', name], { stdio: 'pipe' });
     log.info('stopped Docker SearXNG container');
   } catch {
     log.debug('container was not running');
   }
-}
-
-function shellEscape(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 export class DockerSearxng {
@@ -47,9 +44,17 @@ export class DockerSearxng {
     stopContainer(CONTAINER_NAME);
 
     try {
-      execSync(`docker run -d --name ${CONTAINER_NAME} -p ${this.port}:8080 ${IMAGE}`, {
-        stdio: 'pipe',
-      });
+      execFileSync(
+        'docker',
+        [
+          'run',
+          '-d',
+          '--name', CONTAINER_NAME,
+          '-p', `${this.port}:8080`,
+          IMAGE,
+        ],
+        { stdio: 'pipe' },
+      );
     } catch (err) {
       log.error('failed to start Docker SearXNG', { error: String(err) });
       this.port = null;
