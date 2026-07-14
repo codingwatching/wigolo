@@ -256,8 +256,8 @@ export async function resolveSearchBackend(): Promise<BackendResolution> {
         // CLI is present but SEARXNG_MODE=native is pinning us away from it —
         // the installation guidance below would be misleading here.
         ? 'SearXNG has no native Windows support (upstream is POSIX-only). A docker-compatible CLI ' +
-          'was found on PATH, but SEARXNG_MODE=native is set — set SEARXNG_MODE=docker (or unset it) ' +
-          'to use it'
+          'was found on PATH, but SEARXNG_MODE=native is set — set SEARXNG_MODE=docker to use it, ' +
+          'or unset WIGOLO_SEARCH to use the default core backend'
         : 'SearXNG has no native Windows support (upstream is POSIX-only) and no docker-compatible ' +
           'CLI was found on PATH — install Docker Desktop, Podman, or any other CLI that provides a ' +
           '`docker`/`podman` command, or unset searxng to use the default core backend',
