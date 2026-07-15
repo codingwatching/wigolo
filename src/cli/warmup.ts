@@ -10,6 +10,7 @@ import { isProcessAlive } from '../searxng/process.js';
 import { getRerankProvider } from '../providers/rerank-provider.js';
 import { runCommand } from './tui/run-command.js';
 import type { WarmupReporter } from './tui/reporter.js';
+import { noopReporter } from './tui/reporter.js';
 import { autoReporter } from './tui/reporter-auto.js';
 import { runVerify as runVerifyTui } from './tui/verify.js';
 import { sanitizeForTerminal } from './doctor.js';
@@ -100,7 +101,7 @@ async function installLinuxDeps(
  *      (GH #116): the binary can be on disk yet fail to launch when system libs
  *      are missing. Only a successful launch reports `ok`.
  */
-async function installBrowser(
+export async function installBrowser(
   browser: BrowserName,
 ): Promise<{ ok: boolean; error?: string }> {
   const cli = resolveBundledPlaywrightCli();
@@ -172,7 +173,7 @@ export function formatLocalLlmWarmupLine(state: {
   return `  Local model:   ${sanitizeForTerminal(state.localLlm)} — not reachable (synthesis falls back to keyless)`;
 }
 
-function wipeSearxngState(dataDir: string, reporter: WarmupReporter): void {
+export function wipeSearxngState(dataDir: string, reporter: WarmupReporter = noopReporter): void {
   const bootstrapLockPath = join(dataDir, 'bootstrap.lock');
   if (existsSync(bootstrapLockPath)) {
     try {
@@ -257,7 +258,7 @@ async function installWebkit(reporter: WarmupReporter): Promise<Pick<WarmupResul
   return { webkit: 'failed', webkitError: headline };
 }
 
-async function installEmbeddings(reporter: WarmupReporter): Promise<Pick<WarmupResult, 'embeddings' | 'embeddingsError'>> {
+export async function installEmbeddings(reporter: WarmupReporter = noopReporter): Promise<Pick<WarmupResult, 'embeddings' | 'embeddingsError'>> {
   reporter.start('embeddings', 'Downloading semantic embeddings model (fastembed)');
   try {
     const { FastembedEmbedProvider } = await import('../embedding/fastembed-provider.js');

@@ -65,8 +65,9 @@ vi.mock('../../../src/embedding/fastembed-provider.js', () => {
 });
 
 import { existsSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { runCommand } from '../../../src/cli/tui/run-command.js';
-import { runWarmup } from '../../../src/cli/warmup.js';
+import { runWarmup, installBrowser, installEmbeddings, wipeSearxngState } from '../../../src/cli/warmup.js';
 import { checkPythonAvailable, bootstrapNativeSearxng, getBootstrapState } from '../../../src/searxng/bootstrap.js';
 import { checkVenvModule } from '../../../src/python-env.js';
 import { getConfig } from '../../../src/config.js';
@@ -355,6 +356,44 @@ describe('runWarmup with flags', () => {
     expect(result.playwright).toBe('ok');
   });
 
+});
+
+describe('exported repair functions (S9 — reused by doctor --fix)', () => {
+  // WHY (D9): doctor --fix invokes the same repair primitives warmup uses, but
+  // it must be able to call them WITHOUT wiring a full WarmupReporter. The three
+  // functions are exported and decoupled from the reporter via a no-op default,
+  // so a caller that only wants the effect (not the progress lines) can invoke
+  // them bare. runWarmup keeps passing its real reporter — behavior unchanged.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(runCommand).mockResolvedValue(ok);
+    vi.mocked(getConfig).mockReturnValue(coreConfig as never);
+  });
+
+  it('installBrowser is exported and runs without a reporter', async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    const r = await installBrowser('chromium');
+    expect(r.ok).toBe(true);
+    const [cmd, args] = vi.mocked(runCommand).mock.calls[0] as [string, string[], unknown];
+    expect(cmd).toBe(process.execPath);
+    expect(args).toContain('install');
+    expect(args).toContain('chromium');
+  });
+
+  it('installEmbeddings is exported and runs without a reporter', async () => {
+    const r = await installEmbeddings();
+    expect(r.embeddings).toBe('ok');
+  });
+
+  it('wipeSearxngState is exported and runs without a reporter', () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    // No throw, and it deletes the state/install/lock paths.
+    expect(() => wipeSearxngState('/tmp/test-wigolo')).not.toThrow();
+    const removed = vi.mocked(rmSync).mock.calls.map((c) => String(c[0]));
+    expect(removed.some((p) => p.endsWith('state.json'))).toBe(true);
+    expect(removed.some((p) => p.endsWith('searxng.lock'))).toBe(true);
+    expect(removed.some((p) => p.endsWith('searxng.port'))).toBe(true);
+  });
 });
 
 describe('warmup --reranker', () => {
