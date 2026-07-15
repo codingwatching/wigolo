@@ -312,26 +312,36 @@ describe('doctor --json', () => {
 });
 
 describe('doctor — SearXNG process state is not a hard failure', () => {
-  it('returns 0 and says "starts on-demand" when installed but not running', async () => {
-    vi.mocked(spawnSync).mockReturnValue(okProc('Python 3.12.4'));
-    vi.mocked(existsSync).mockImplementation((p) => {
-      const s = String(p);
-      if (s.endsWith('state.json')) return true;
-      if (s.endsWith('searxng.lock')) return false;
-      return true;
-    });
-    vi.mocked(readFileSync).mockImplementation((p) => {
-      if (String(p).endsWith('state.json')) {
-        return JSON.stringify({ status: 'ready', searxngPath: '/tmp/searxng' });
-      }
-      return '';
-    });
+  it('returns 0 and says "starts on-demand" when installed but not running (sidecar configured)', async () => {
+    // The process-state line lives in the searxng-configured section (D5 gates
+    // it off on the default core backend), so opt into the sidecar backend to
+    // exercise the "not a hard failure" assertion.
+    process.env.WIGOLO_SEARCH = 'searxng';
+    resetConfig();
+    try {
+      vi.mocked(spawnSync).mockReturnValue(okProc('Python 3.12.4'));
+      vi.mocked(existsSync).mockImplementation((p) => {
+        const s = String(p);
+        if (s.endsWith('state.json')) return true;
+        if (s.endsWith('searxng.lock')) return false;
+        return true;
+      });
+      vi.mocked(readFileSync).mockImplementation((p) => {
+        if (String(p).endsWith('state.json')) {
+          return JSON.stringify({ status: 'ready', searxngPath: '/tmp/searxng' });
+        }
+        return '';
+      });
 
-    const code = await runDoctor('/tmp/.wigolo');
+      const code = await runDoctor('/tmp/.wigolo');
 
-    expect(code).toBe(0);
-    expect(outBuffer).toMatch(/not running.*starts on-demand/i);
-    expect(outBuffer).toMatch(/Overall: OK/);
+      expect(code).toBe(0);
+      expect(outBuffer).toMatch(/not running.*starts on-demand/i);
+      expect(outBuffer).toMatch(/Overall: OK/);
+    } finally {
+      delete process.env.WIGOLO_SEARCH;
+      resetConfig();
+    }
   });
 
   it('returns 0 when stale lock exists but SearXNG is installed', async () => {
