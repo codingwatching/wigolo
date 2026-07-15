@@ -9,6 +9,8 @@ import { probeHealth } from './health-check.js';
 import { getConfig } from '../config.js';
 import { searxngConfigured } from '../searxng/enabled.js';
 import { createLogger } from '../logger.js';
+import { ensureAdminToken, readAdminToken, tokenMatches } from './admin-token.js';
+import { resetBreakers, getBreakerSnapshot } from '../search/core/engine-base.js';
 
 const log = createLogger('server');
 
@@ -41,6 +43,15 @@ export class DaemonHttpServer {
     } catch (err) {
       log.error('Failed to initialize subsystems', { error: String(err) });
       throw err;
+    }
+
+    // Admin control routes (breaker reset) are gated by a random bearer token
+    // written owner-only to disk at start. doctor --fix reads it back to
+    // authenticate. A fresh token per process invalidates any leaked prior one.
+    try {
+      ensureAdminToken(getConfig().dataDir);
+    } catch (err) {
+      log.warn('Failed to write daemon admin token', { error: String(err) });
     }
 
     this.subsystems.bootstrapSearxng().catch((err) => {
@@ -106,6 +117,10 @@ export class DaemonHttpServer {
       return this.handleSseMessageRequest(req, res, sessionId);
     }
 
+    if (pathname === '/admin/reset-breakers' && method === 'POST') {
+      return this.handleAdminResetBreakers(req, res);
+    }
+
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
   }
@@ -127,6 +142,58 @@ export class DaemonHttpServer {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'down', error: String(err) }));
     }
+  }
+
+  /**
+   * Whether the request's Host header is on the allowlist: `localhost`,
+   * `127.0.0.1`, `[::1]`, or the daemon's configured host. Rejecting other
+   * Hosts blocks DNS-rebinding: a browser resolving an attacker domain to
+   * 127.0.0.1 sends the attacker's Host, not a loopback one.
+   */
+  private isAllowedHost(hostHeader: string | undefined): boolean {
+    if (!hostHeader) return false;
+    // Strip the :port suffix — but keep IPv6 brackets intact.
+    const host = hostHeader.startsWith('[')
+      ? hostHeader.slice(0, hostHeader.indexOf(']') + 1)
+      : hostHeader.split(':')[0];
+    const allow = new Set(['localhost', '127.0.0.1', '[::1]', '::1', this.host]);
+    return allow.has(host);
+  }
+
+  /**
+   * Reset all search-engine circuit breakers. Privileged control route:
+   *   1. Host allowlist (DNS-rebinding guard) — non-allowlisted → 403.
+   *   2. No `Origin` header allowed (browsers always set it; a CLI never does)
+   *      → 403. Runs before the token check so a browser page can't probe the
+   *      token's validity.
+   *   3. `Authorization: Bearer <token>` must match the on-disk admin token —
+   *      missing/wrong → 401.
+   * Loopback source IP is deliberately NOT trusted (cloudflared delivers remote
+   * requests from 127.0.0.1).
+   */
+  private handleAdminResetBreakers(req: IncomingMessage, res: ServerResponse): void {
+    const deny = (code: number, message: string): void => {
+      res.writeHead(code, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: message }));
+    };
+
+    if (!this.isAllowedHost(req.headers.host)) {
+      return deny(403, 'Forbidden: host not allowed');
+    }
+    if (req.headers.origin !== undefined) {
+      return deny(403, 'Forbidden: browser origin not allowed on admin route');
+    }
+
+    const auth = req.headers.authorization ?? '';
+    const provided = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : null;
+    const expected = readAdminToken(getConfig().dataDir);
+    if (!tokenMatches(expected, provided)) {
+      return deny(401, 'Unauthorized');
+    }
+
+    resetBreakers();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ reset: true, breakers: getBreakerSnapshot() }));
   }
 
   private async handleStreamableHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
