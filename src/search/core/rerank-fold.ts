@@ -16,6 +16,15 @@ export const RERANK_RELEVANCE_THRESHOLD = 0;
 export const RERANK_TIER_MARGIN = 0.5;
 export const RERANK_BLEND_COMPOSITE = 0.5;
 export const RERANK_BLEND_RERANK = 0.5;
+// Blend-inflation calibration floor. A cross-encoder logit at/above 0 is the
+// sigmoid midpoint or better — the model is at least uncertain-leaning-relevant.
+// When the WHOLE batch's best logit is strictly below this floor, every member
+// is confidently-irrelevant junk: the intra-tier min-max stretch would still
+// award the least-bad junk a normalised rerank of 1.0 and spread the batch
+// across the tier-0 band. In that all-junk case the stretch is meaningless, so
+// the rerank normaliser collapses to a neutral 0.5. Tier assignment (from raw
+// logits vs RERANK_RELEVANCE_THRESHOLD + RERANK_TIER_MARGIN) is unchanged.
+export const RERANK_CALIBRATION_FLOOR = RERANK_RELEVANCE_THRESHOLD;
 
 // Build the cross-encoder input for one result. Title + snippet ALONE let a
 // short off-topic snippet game the reranker into a high logit (the junk-
@@ -112,7 +121,15 @@ export async function foldRerankIntoOrdering(
   }
 
   const normComposite = makeNormaliser(windowResults.map((res) => res.relevance_score));
-  const normRerank = makeNormaliser(logits);
+  // Blend-inflation guard (gate b): if the batch's best logit is strictly below
+  // the calibration floor, every member is confident junk — the min-max stretch
+  // is meaningless and would only inflate the least-bad junk. Use a neutral 0.5
+  // rerank blend for the whole batch instead. Otherwise stretch normally.
+  const maxLogit = Math.max(...logits);
+  const normRerank =
+    Number.isFinite(maxLogit) && maxLogit < RERANK_CALIBRATION_FLOOR
+      ? () => 0.5
+      : makeNormaliser(logits);
 
   // Junk-floor guard: a result that shares NONE of the query's rare COMPOUND
   // terms cannot ride the cross-encoder ALONE into the confidently-relevant

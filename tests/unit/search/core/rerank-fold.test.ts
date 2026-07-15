@@ -209,6 +209,78 @@ describe('foldRerankIntoOrdering — junk-floor guard (no-shared-rare-term)', ()
   });
 });
 
+// Blend-inflation guard (gate b): when EVERY raw logit is below the
+// calibration floor (an all-junk batch — the reranker is confident nothing is
+// relevant), the intra-tier min-max stretch would still hand the LEAST-bad junk
+// a normalised rerank of 1.0, inflating its blend across the tier-0 band. The
+// guard replaces the stretch with a neutral 0.5 blend so junk batches stop
+// being stretched apart. Tier assignment from RAW logits is unchanged — this
+// only touches the intra-tier blend value.
+describe('foldRerankIntoOrdering — blend-inflation guard (all-below-calibration batch)', () => {
+  it('an all-negative-logit batch is NOT stretched: no result gets a normalised rerank of 1.0', async () => {
+    // Every logit is confidently-negative (junk). Old min-max would map the
+    // largest (-6) to nr=1.0 and the smallest (-9) to nr=0.0, spreading junk
+    // across the whole tier-0 band. The guard collapses the intra-tier blend to
+    // the neutral 0.5 point so the least-bad junk is not inflated.
+    const results = [r('A', 0.5), r('B', 0.5), r('C', 0.5)];
+    const out = await foldRerankIntoOrdering(results, {
+      queries: ['q'], rerank: fakeRerank({ A: -6, B: -7.5, C: -9 }),
+    });
+    // No cross_encoder component may reach 1.0 (the stretched top of an
+    // uncalibrated junk batch). Neutral 0.5 blend on all-junk.
+    for (const x of out) {
+      expect(x.evidence_score!.components.cross_encoder).toBeCloseTo(0.5, 6);
+      // tier-0 (all logits below the tier margin) with a neutral 0.5 blend
+      // maps to 0.5 * (0.5*composite + 0.5*0.5); it can never reach the top of
+      // the tier-0 band the way a stretched nr=1.0 would.
+      expect(x.relevance_score).toBeLessThan(0.5);
+    }
+  });
+
+  it('BOUNDARY: a batch whose max logit sits AT the calibration floor is not treated as all-junk', async () => {
+    // The gate fires only when EVERY logit is strictly below the floor. A batch
+    // whose best logit is exactly at the floor still gets the normal stretch —
+    // it is not an all-junk batch.
+    const results = [r('A', 0.5), r('B', 0.5)];
+    const out = await foldRerankIntoOrdering(results, {
+      queries: ['q'], rerank: fakeRerank({ A: 0, B: -4 }),
+    });
+    // A (at the floor) and B (well below) are stretched apart — A's normalised
+    // rerank is the top of the range (1.0), NOT the neutral 0.5.
+    const a = out.find((x) => x.url === 'A')!;
+    expect(a.evidence_score!.components.cross_encoder).toBeCloseTo(1, 6);
+  });
+
+  it('MUST-NOT-FIRE: a batch with any above-floor logit is still stretched (wide range)', async () => {
+    // A genuinely-relevant member (logit 5) plus junk (logit -8): the batch is
+    // NOT all-junk, so the min-max stretch is preserved and the relevant member
+    // reaches nr=1.0 as before.
+    const results = [r('A', 0.5), r('B', 0.5)];
+    const out = await foldRerankIntoOrdering(results, {
+      queries: ['q'], rerank: fakeRerank({ A: 5, B: -8 }),
+    });
+    const a = out.find((x) => x.url === 'A')!;
+    expect(a.evidence_score!.components.cross_encoder).toBeCloseTo(1, 6);
+    expect(a.relevance_score).toBeGreaterThanOrEqual(0.5); // still tier-1
+  });
+
+  it('MUST-NOT-FIRE: a tiny-but-real above-floor range is handled sanely (still stretched)', async () => {
+    // Both logits are just above the floor with a narrow spread. The batch is
+    // not all-junk, so the normal stretch applies (the higher logit -> nr=1.0)
+    // and no NaN is produced.
+    const results = [r('A', 0.5), r('B', 0.5)];
+    const out = await foldRerankIntoOrdering(results, {
+      queries: ['q'], rerank: fakeRerank({ A: 0.2, B: 0.1 }),
+    });
+    const a = out.find((x) => x.url === 'A')!;
+    const b = out.find((x) => x.url === 'B')!;
+    expect(Number.isNaN(a.relevance_score)).toBe(false);
+    expect(Number.isNaN(b.relevance_score)).toBe(false);
+    expect(a.evidence_score!.components.cross_encoder).toBeCloseTo(1, 6);
+    expect(b.evidence_score!.components.cross_encoder).toBeCloseTo(0, 6);
+  });
+});
+
 describe('foldRerankIntoOrdering', () => {
   it('a negative-logit result cannot outrank a positive-logit result even with max composite', async () => {
     const results = [r('A', 1.0), r('B', 0.01)];
