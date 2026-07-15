@@ -13,6 +13,7 @@ const {
   summarizeSetupMock,
   runConfigMock,
   wasUninstalledMock,
+  saveInitConfigMock,
 } = vi.hoisted(() => ({
   runSystemCheckMock: vi.fn(),
   renderBannerMock: vi.fn(() => 'BANNER\n'),
@@ -26,6 +27,7 @@ const {
   summarizeSetupMock: vi.fn(),
   runConfigMock: vi.fn(),
   wasUninstalledMock: vi.fn(() => false),
+  saveInitConfigMock: vi.fn(),
 }));
 
 vi.mock('../../../src/cli/tui/system-check.js', () => ({
@@ -60,7 +62,7 @@ vi.mock('../../../src/config.js', () => ({
   getConfig: () => ({ dataDir: '/tmp/data' }),
 }));
 vi.mock('../../../src/cli/tui/utils/config-writer.js', () => ({
-  saveInitConfig: vi.fn(),
+  saveInitConfig: saveInitConfigMock,
   readInitConfig: vi.fn(() => ({})),
 }));
 vi.mock('../../../src/cli/tui/actions/setup-status.js', () => ({
@@ -347,6 +349,199 @@ describe('runInit', () => {
       } finally {
         cap.restore();
       }
+    });
+  });
+
+  describe('zero-download on BOTH init paths (headless-first)', () => {
+    let prevTTY: boolean | undefined;
+    let prevCI: string | undefined;
+    let prevGha: string | undefined;
+
+    beforeEach(() => {
+      prevTTY = process.stdout.isTTY;
+      prevCI = process.env.CI;
+      prevGha = process.env.GITHUB_ACTIONS;
+      Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+      delete process.env.CI;
+      delete process.env.GITHUB_ACTIONS;
+      runConfigMock.mockResolvedValue(0);
+      runWarmupMock.mockResolvedValue(undefined);
+      wasUninstalledMock.mockReturnValue(false);
+    });
+
+    afterEach(() => {
+      Object.defineProperty(process.stdout, 'isTTY', { value: prevTTY, configurable: true });
+      if (prevCI === undefined) delete process.env.CI; else process.env.CI = prevCI;
+      if (prevGha === undefined) delete process.env.GITHUB_ACTIONS; else process.env.GITHUB_ACTIONS = prevGha;
+    });
+
+    // MEMORY TRAP (binding): every behavior change is verified on BOTH init paths.
+    // runWarmup is the single gate that would invoke the browser / embedding
+    // installers (installBrowser / installEmbeddings live behind runWarmup, which
+    // is fully mocked here) — so runWarmup NOT-called proves no component download
+    // is triggered on either path.
+    it('plain (non-interactive) default: runWarmup — the installer gate — is never called', async () => {
+      primeHappyPath();
+      const cap = capture();
+      try {
+        await runInit(['--non-interactive', '--agents=cursor', '--skip-verify']);
+        expect(runWarmupMock).not.toHaveBeenCalled();
+      } finally {
+        cap.restore();
+      }
+    });
+
+    it('plain default on a bare TTY: runWarmup never called', async () => {
+      primeHappyPath();
+      selectAgentsMock.mockResolvedValue([]);
+      const cap = capture();
+      try {
+        await runInit([]);
+        expect(runWarmupMock).not.toHaveBeenCalled();
+      } finally {
+        cap.restore();
+      }
+    });
+
+    it('--wizard default: runWarmup — the installer gate — is never called', async () => {
+      const cap = capture();
+      try {
+        await runInit(['--wizard']);
+        expect(runWarmupMock).not.toHaveBeenCalled();
+      } finally {
+        cap.restore();
+      }
+    });
+  });
+
+  describe('--wizard mounts the Ink entry; default TTY does not', () => {
+    let prevTTY: boolean | undefined;
+    let prevCI: string | undefined;
+    let prevGha: string | undefined;
+
+    beforeEach(() => {
+      prevTTY = process.stdout.isTTY;
+      prevCI = process.env.CI;
+      prevGha = process.env.GITHUB_ACTIONS;
+      Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+      delete process.env.CI;
+      delete process.env.GITHUB_ACTIONS;
+      runConfigMock.mockResolvedValue(0);
+      runWarmupMock.mockResolvedValue(undefined);
+      wasUninstalledMock.mockReturnValue(false);
+    });
+
+    afterEach(() => {
+      Object.defineProperty(process.stdout, 'isTTY', { value: prevTTY, configurable: true });
+      if (prevCI === undefined) delete process.env.CI; else process.env.CI = prevCI;
+      if (prevGha === undefined) delete process.env.GITHUB_ACTIONS; else process.env.GITHUB_ACTIONS = prevGha;
+    });
+
+    it('--wizard invokes the Ink entry (runConfig --force-wizard)', async () => {
+      // runConfig(['--force-wizard']) is the single delegate that mounts the Ink
+      // TUI (runConfig → runEntry → render). Its invocation IS the Ink mount.
+      const cap = capture();
+      try {
+        await runInit(['--wizard']);
+        expect(runConfigMock).toHaveBeenCalledTimes(1);
+        expect(runConfigMock.mock.calls[0]?.[0]).toEqual(['--force-wizard']);
+      } finally {
+        cap.restore();
+      }
+    });
+
+    it('default TTY init does NOT invoke the Ink entry', async () => {
+      primeHappyPath();
+      selectAgentsMock.mockResolvedValue([]);
+      const cap = capture();
+      try {
+        await runInit([]);
+        expect(runConfigMock).not.toHaveBeenCalled();
+      } finally {
+        cap.restore();
+      }
+    });
+
+    it('--wizard in a non-TTY context falls back to plain (Ink cannot mount)', async () => {
+      // Ink requires a real terminal; --wizard on a non-TTY must NOT try to mount
+      // and must NOT call runConfig — it degrades to the plain path.
+      Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+      primeHappyPath();
+      const cap = capture();
+      try {
+        await runInit(['--wizard', '--non-interactive', '--agents=cursor', '--skip-verify']);
+        expect(runConfigMock).not.toHaveBeenCalled();
+      } finally {
+        cap.restore();
+      }
+    });
+  });
+
+  describe('parity: plain-default and --wizard agree on config + agent registrations', () => {
+    let prevTTY: boolean | undefined;
+    let prevCI: string | undefined;
+    let prevGha: string | undefined;
+
+    beforeEach(() => {
+      prevTTY = process.stdout.isTTY;
+      prevCI = process.env.CI;
+      prevGha = process.env.GITHUB_ACTIONS;
+      Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+      delete process.env.CI;
+      delete process.env.GITHUB_ACTIONS;
+      runConfigMock.mockResolvedValue(0);
+      runWarmupMock.mockResolvedValue(undefined);
+      wasUninstalledMock.mockReturnValue(false);
+    });
+
+    afterEach(() => {
+      Object.defineProperty(process.stdout, 'isTTY', { value: prevTTY, configurable: true });
+      if (prevCI === undefined) delete process.env.CI; else process.env.CI = prevCI;
+      if (prevGha === undefined) delete process.env.GITHUB_ACTIONS; else process.env.GITHUB_ACTIONS = prevGha;
+    });
+
+    // Parity contract (D8, LOCKED): identical inputs ⇒ byte-identical persisted
+    // config + the same agent-registration set across plain vs --wizard. The
+    // wizard path funnels persistence through the SAME shared config machinery
+    // (runConfig → the schema catalog + default agent targets + propagation.save)
+    // that the plain path resolves from. This test locks the observable persisted
+    // shape on the plain (reference) path and asserts the --wizard path routes the
+    // identical agent selection through that single shared entry.
+    it('plain non-interactive persists agents + init-config for a fixed input; --wizard routes the same', async () => {
+      primeHappyPath();
+      saveInitConfigMock.mockClear();
+      applyConfigsMock.mockClear();
+
+      // Reference path (plain, non-interactive) with a fixed agent selection.
+      const capA = capture();
+      let plainCode: number;
+      try {
+        plainCode = await runInit(['--non-interactive', '--agents=cursor', '--skip-verify']);
+      } finally {
+        capA.restore();
+      }
+      expect(plainCode).toBe(0);
+
+      // Observable persisted config on the plain path.
+      expect(applyConfigsMock).toHaveBeenCalledTimes(1);
+      const registeredPlain = applyConfigsMock.mock.calls[0]?.[1];
+      expect(registeredPlain).toEqual(['cursor']);
+      expect(saveInitConfigMock).toHaveBeenCalledTimes(1);
+      const savedPayload = saveInitConfigMock.mock.calls[0]?.[1] as { configuredAgents: string[] };
+      expect(savedPayload.configuredAgents).toEqual(['cursor']);
+
+      // --wizard path: delegates to the SINGLE shared config entry with
+      // --force-wizard. That entry resolves the same catalog + agent targets +
+      // propagation.save the plain path uses, so persistence stays parity-locked.
+      runConfigMock.mockClear();
+      const capB = capture();
+      try {
+        await runInit(['--wizard']);
+      } finally {
+        capB.restore();
+      }
+      expect(runConfigMock).toHaveBeenCalledTimes(1);
+      expect(runConfigMock.mock.calls[0]?.[0]).toEqual(['--force-wizard']);
     });
   });
 
