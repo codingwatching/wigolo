@@ -58,13 +58,41 @@ vi.mock('../../../src/searxng/docker.js', () => ({
   })),
 }));
 
+// Boot-negative (D2): initSubsystems must init the embedding store WITHOUT
+// probing the ONNX provider. The probe fires lazily on first use, never at boot.
+const embeddingInit = vi.fn().mockResolvedValue(undefined);
+const embeddingEnsureProviderReady = vi.fn().mockResolvedValue(true);
+vi.mock('../../../src/embedding/embed.js', () => ({
+  getEmbeddingService: vi.fn(() => ({
+    init: embeddingInit,
+    ensureProviderReady: embeddingEnsureProviderReady,
+    isAvailable: vi.fn().mockReturnValue(true),
+    isSubprocessReady: vi.fn().mockReturnValue(false),
+    shutdown: vi.fn(),
+  })),
+  resetEmbeddingService: vi.fn(),
+}));
+
 describe('initSubsystems', () => {
   beforeEach(() => {
     resetConfig();
     vi.clearAllMocks();
+    embeddingInit.mockClear().mockResolvedValue(undefined);
+    embeddingEnsureProviderReady.mockClear().mockResolvedValue(true);
   });
   afterEach(() => {
     resetConfig();
+  });
+
+  it('inits the embedding store at boot but does NOT probe the ONNX provider', async () => {
+    const { initSubsystems } = await import('../../../src/server.js');
+    await initSubsystems();
+
+    // Positive control: boot still initializes the embedding subsystem.
+    expect(embeddingInit).toHaveBeenCalledTimes(1);
+    // Boot-negative: the lazy provider probe must not fire at startup (this is
+    // the ~150-200MB idle-footprint win).
+    expect(embeddingEnsureProviderReady).not.toHaveBeenCalled();
   });
 
   it('exports initSubsystems function', async () => {

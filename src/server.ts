@@ -94,9 +94,10 @@ export async function initSubsystems(): Promise<Subsystems> {
   mkdirSync(config.dataDir, { recursive: true });
   initDatabase(join(config.dataDir, 'wigolo.db'));
 
-  // Initialize embedding service: loads stored vectors into in-memory index
-  // so find_similar can run the embedding path. Subprocess starts lazily on
-  // first embed() call, so this is cheap if no embeddings exist yet.
+  // Initialize embedding service: provisions the vector store, runs the
+  // legacy-embedding migration, and surfaces sqlite-vec failures. It does NOT
+  // load the embedding model — that happens lazily on first embed/find_similar
+  // via ensureProviderReady(), keeping idle footprint low (D2).
   try {
     await getEmbeddingService().init();
   } catch (err) {

@@ -398,6 +398,49 @@ describe('handleFindSimilar', () => {
     });
   });
 
+  describe('lazy embedding readiness (D2 gate sites)', () => {
+    it('awaits provider readiness before probing availability rather than returning false immediately', async () => {
+      const embedModule = await import('../../../src/embedding/embed.js');
+
+      let resolveReady: (v: boolean) => void = () => {};
+      const readyPromise = new Promise<boolean>((res) => { resolveReady = res; });
+      const ensureProviderReady = vi.fn().mockReturnValue(readyPromise);
+
+      // Availability = true (service booted), provider verified only AFTER the
+      // slow ensureProviderReady() resolves. If the gate did not await, the
+      // synchronous isSubprocessReady() probe would read false and the whole
+      // request would report embedding_available:false.
+      let verified = false;
+      vi.spyOn(embedModule, 'getEmbeddingService').mockReturnValue({
+        isAvailable: () => true,
+        isSubprocessReady: () => verified,
+        ensureProviderReady,
+        getIndex: () => ({ size: () => 0, has: () => false }),
+        findSimilar: vi.fn().mockResolvedValue([]),
+        embedAndStore: vi.fn().mockResolvedValue(undefined),
+        embedAsync: vi.fn(),
+      } as unknown as ReturnType<typeof embedModule.getEmbeddingService>);
+
+      const out$ = handleFindSimilar(
+        { concept: 'React hooks', include_web: false },
+        [mockEngine],
+        mockRouter,
+      );
+
+      // Let the pipeline reach the readiness gate, then resolve it as verified.
+      await Promise.resolve();
+      verified = true;
+      resolveReady(true);
+
+      const __r = await out$;
+      const out = __r.ok ? __r.data : ({ ...__r } as any);
+
+      expect(ensureProviderReady).toHaveBeenCalled();
+      // The gate awaited readiness, so availability reflects the resolved state.
+      expect(out.embedding_available).toBe(true);
+    });
+  });
+
   it('concurrent calls do not interfere with each other', async () => {
     const results = await Promise.all([
       handleFindSimilar(
