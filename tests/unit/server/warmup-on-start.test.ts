@@ -1,21 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const embedWarmup = vi.fn().mockResolvedValue(undefined);
+const ensureProviderReady = vi.fn().mockResolvedValue(true);
 const rerankWarmup = vi.fn().mockResolvedValue(undefined);
-const getEmbedProvider = vi.fn().mockResolvedValue({
-  modelId: 'mock-embed',
-  dim: 384,
-  embed: vi.fn().mockResolvedValue([]),
-  warmup: embedWarmup,
-});
 const getRerankProvider = vi.fn().mockResolvedValue({
   modelId: 'mock-rerank',
   rerank: vi.fn().mockResolvedValue([]),
   warmup: rerankWarmup,
 });
 
-vi.mock('../../../src/providers/embed-provider.js', () => ({
-  getEmbedProvider,
+// Eager warmup now primes the embedding provider through the service's lazy
+// ensureProviderReady() (D2) rather than reaching into the embed provider
+// factory directly.
+vi.mock('../../../src/embedding/embed.js', () => ({
+  getEmbeddingService: () => ({
+    ensureProviderReady,
+  }),
 }));
 vi.mock('../../../src/providers/rerank-provider.js', () => ({
   getRerankProvider,
@@ -31,9 +30,8 @@ describe('maybeEagerWarmup', () => {
   const originalEnv = process.env.WIGOLO_EAGER_WARMUP;
 
   beforeEach(() => {
-    embedWarmup.mockClear().mockResolvedValue(undefined);
+    ensureProviderReady.mockClear().mockResolvedValue(true);
     rerankWarmup.mockClear().mockResolvedValue(undefined);
-    getEmbedProvider.mockClear();
     getRerankProvider.mockClear();
   });
 
@@ -57,7 +55,7 @@ describe('maybeEagerWarmup', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(getEmbedProvider).not.toHaveBeenCalled();
+    expect(ensureProviderReady).not.toHaveBeenCalled();
     expect(getRerankProvider).not.toHaveBeenCalled();
     expect(_getWarmupPendingForTest()).toBeNull();
   });
@@ -71,17 +69,16 @@ describe('maybeEagerWarmup', () => {
     expect(pending).not.toBeNull();
     await pending;
 
-    expect(getEmbedProvider).toHaveBeenCalledTimes(1);
+    expect(ensureProviderReady).toHaveBeenCalledTimes(1);
     expect(getRerankProvider).toHaveBeenCalledTimes(1);
-    expect(embedWarmup).toHaveBeenCalledTimes(1);
     expect(rerankWarmup).toHaveBeenCalledTimes(1);
   });
 
   it('returns synchronously before warmup completes', async () => {
     process.env.WIGOLO_EAGER_WARMUP = '1';
     let resolveEmbed: (() => void) | null = null;
-    embedWarmup.mockImplementationOnce(
-      () => new Promise<void>((res) => { resolveEmbed = res; }),
+    ensureProviderReady.mockImplementationOnce(
+      () => new Promise<boolean>((res) => { resolveEmbed = () => res(true); }),
     );
 
     const before = Date.now();
@@ -91,7 +88,7 @@ describe('maybeEagerWarmup', () => {
     expect(elapsed).toBeLessThan(50);
     expect(_getWarmupPendingForTest()).not.toBeNull();
 
-    // Drain microtasks so the warmEmbed body runs and calls embedWarmup.
+    // Drain microtasks so the warmEmbed body runs and calls ensureProviderReady.
     while (resolveEmbed === null) {
       await Promise.resolve();
     }
@@ -100,12 +97,12 @@ describe('maybeEagerWarmup', () => {
 
   it('still attempts rerank when embed warmup throws', async () => {
     process.env.WIGOLO_EAGER_WARMUP = '1';
-    embedWarmup.mockRejectedValueOnce(new Error('embed boom'));
+    ensureProviderReady.mockRejectedValueOnce(new Error('embed boom'));
 
     maybeEagerWarmup();
     await _getWarmupPendingForTest();
 
-    expect(embedWarmup).toHaveBeenCalledTimes(1);
+    expect(ensureProviderReady).toHaveBeenCalledTimes(1);
     expect(rerankWarmup).toHaveBeenCalledTimes(1);
   });
 
@@ -115,7 +112,7 @@ describe('maybeEagerWarmup', () => {
 
     expect(() => maybeEagerWarmup()).not.toThrow();
     await expect(_getWarmupPendingForTest()).resolves.toBeUndefined();
-    expect(embedWarmup).toHaveBeenCalledTimes(1);
+    expect(ensureProviderReady).toHaveBeenCalledTimes(1);
     expect(rerankWarmup).toHaveBeenCalledTimes(1);
   });
 
@@ -130,19 +127,15 @@ describe('maybeEagerWarmup', () => {
     expect(_getWarmupPendingForTest()).toBeNull();
   });
 
-  it('skips warmup invocation when provider exposes no warmup method', async () => {
+  it('primes the embedding provider via the service ensureProviderReady path', async () => {
     process.env.WIGOLO_EAGER_WARMUP = '1';
-    getEmbedProvider.mockResolvedValueOnce({
-      modelId: 'no-warmup',
-      dim: 1,
-      embed: vi.fn().mockResolvedValue([]),
-    });
 
     maybeEagerWarmup();
     await _getWarmupPendingForTest();
 
-    expect(getEmbedProvider).toHaveBeenCalledTimes(1);
-    expect(embedWarmup).not.toHaveBeenCalled();
+    // Eager warmup drives the lazy provider load through the service, not a
+    // direct provider-factory warmup — this is the single seam that primes it.
+    expect(ensureProviderReady).toHaveBeenCalledTimes(1);
     expect(rerankWarmup).toHaveBeenCalledTimes(1);
   });
 });

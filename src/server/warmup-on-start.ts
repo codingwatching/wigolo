@@ -1,4 +1,5 @@
 import { createLogger } from '../logger.js';
+import { getEmbeddingService } from '../embedding/embed.js';
 
 const log = createLogger('server');
 
@@ -29,11 +30,9 @@ export function maybeEagerWarmup(): void {
 async function warmEmbed(): Promise<void> {
   const start = Date.now();
   try {
-    const mod = await import('../providers/embed-provider.js');
-    const provider = (await mod.getEmbedProvider()) as MaybeWarmable;
-    if (typeof provider.warmup === 'function') {
-      await provider.warmup();
-    }
+    // Prime the lazy provider load through the service (D2) so the first real
+    // embed/find_similar does not pay the model-load cost.
+    await getEmbeddingService().ensureProviderReady();
     log.info('eager warmup: embed ready', { ms: Date.now() - start });
   } catch (err) {
     log.warn('eager warmup: embed failed', {
