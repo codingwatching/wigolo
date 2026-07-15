@@ -8,6 +8,8 @@ import {
   looksJsRequired,
   describeAntiBot,
   tlsFetch,
+  hasBrowserChallengeBody,
+  isChallengeSkeleton,
   _setTlsBackendForTests,
   _resetTlsBackend,
   TlsTierUnavailableError,
@@ -99,6 +101,79 @@ describe('tls-tier: anti-bot detectors', () => {
     expect(describeAntiBot(429, '')).toBe('status_429');
     expect(describeAntiBot(200, 'cf-browser-verification')).toBe('challenge_body');
     expect(describeAntiBot(200, '<html>normal</html>')).toBe(null);
+  });
+});
+
+describe('tls-tier: browser-tier contextual challenge detection', () => {
+  // A near-empty interstitial body: no real article prose, tiny <body>.
+  const nearEmptyBody =
+    '<html><head><title>Just a moment...</title></head><body><div class="cf-turnstile"></div></body></html>';
+  // Full login page that legitimately embeds a Turnstile widget: real form,
+  // substantial content. Must NOT be treated as a challenge skeleton.
+  const realTurnstileLogin =
+    '<html><head><title>Sign in to Acme</title></head><body>' +
+    '<header><nav>Home Products Pricing Docs Support About Contact</nav></header>' +
+    '<main><h1>Welcome back</h1><p>Sign in to your Acme account to continue managing ' +
+    'your projects, billing, and team members. New here? Create an account.</p>' +
+    '<form action="/login" method="post"><label>Email</label><input name="email">' +
+    '<label>Password</label><input name="password" type="password">' +
+    '<div class="cf-turnstile" data-sitekey="0x4AAA"></div>' +
+    '<button type="submit">Sign in</button></form>' +
+    '<footer><p>Terms of Service and Privacy Policy apply to all Acme accounts.</p></footer>' +
+    '</main></body></html>'.padEnd(1200, ' ');
+
+  it('isChallengeSkeleton: true for a near-empty challenge body', () => {
+    expect(isChallengeSkeleton(nearEmptyBody)).toBe(true);
+  });
+
+  it('isChallengeSkeleton: true when a challenge-platform script src is present', () => {
+    const withScript =
+      '<html><body><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script>' +
+      // Padded to defeat the near-empty check so the script src is the sole signal.
+      '<div>'.padEnd(2000, 'x') + '</div></body></html>';
+    expect(isChallengeSkeleton(withScript)).toBe(true);
+  });
+
+  it('isChallengeSkeleton: true for a challenge title on an otherwise larger body', () => {
+    const withTitle =
+      '<html><head><title>Just a moment...</title></head><body>' +
+      '<div>'.padEnd(2000, 'x') + '</div></body></html>';
+    expect(isChallengeSkeleton(withTitle)).toBe(true);
+  });
+
+  it('isChallengeSkeleton: false for a full page with real content', () => {
+    expect(isChallengeSkeleton(realTurnstileLogin)).toBe(false);
+    expect(isChallengeSkeleton('<html><body>' + 'real content '.repeat(200) + '</body></html>')).toBe(false);
+    expect(isChallengeSkeleton(null)).toBe(false);
+    expect(isChallengeSkeleton('')).toBe(false);
+  });
+
+  it('hasBrowserChallengeBody: true for shared markers (delegates to hasChallengeBody)', () => {
+    expect(hasBrowserChallengeBody('<html><body>cf-browser-verification</body></html>')).toBe(true);
+    expect(hasBrowserChallengeBody('<title>Just a moment...</title>')).toBe(true);
+  });
+
+  it('hasBrowserChallengeBody: true for cf-turnstile ONLY when co-occurring with a skeleton', () => {
+    // Bare turnstile on a real full page → NOT a challenge (contextual gate).
+    expect(hasBrowserChallengeBody(realTurnstileLogin)).toBe(false);
+    // Turnstile on a near-empty interstitial skeleton → challenge.
+    expect(hasBrowserChallengeBody(nearEmptyBody)).toBe(true);
+  });
+
+  it('hasBrowserChallengeBody: cf-turnstile as a bare substring never fires alone', () => {
+    // A large article that mentions cf-turnstile in prose / a code sample.
+    const article =
+      '<html><body><article>' +
+      'Here is how to embed a widget: add a <div class="cf-turnstile"></div> element. '.repeat(50) +
+      '</article></body></html>';
+    expect(hasBrowserChallengeBody(article)).toBe(false);
+    expect(isChallengeSkeleton(article)).toBe(false);
+  });
+
+  it('hasBrowserChallengeBody: false for normal HTML / empty', () => {
+    expect(hasBrowserChallengeBody('<html><body><h1>Normal page with plenty of text here</h1></body></html>')).toBe(false);
+    expect(hasBrowserChallengeBody(null)).toBe(false);
+    expect(hasBrowserChallengeBody('')).toBe(false);
   });
 });
 

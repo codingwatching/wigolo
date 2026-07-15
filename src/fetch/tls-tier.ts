@@ -325,6 +325,82 @@ export function hasChallengeBody(html: string | null | undefined): boolean {
   return false;
 }
 
+// --- Browser-tier-only contextual detection (D6) ---
+//
+// The browser tier fast-fails a hard challenge page (see browser-pool.ts). It
+// must NOT touch the shared CHALLENGE_MARKERS list (which drives router
+// escalation + isRateLimit): a bare-substring turnstile marker there would
+// over-fire. Instead the browser tier layers a CONTEXTUAL turnstile signal on
+// top of the shared body scan, gated on a challenge-page skeleton.
+
+// Turnstile widget marker — only meaningful in the browser tier and only when
+// co-occurring with a challenge skeleton. Deliberately NOT in CHALLENGE_MARKERS.
+const TURNSTILE_MARKER = 'cf-turnstile';
+// A script the challenge interstitial loads to run the browser check.
+const CHALLENGE_PLATFORM_SRC = '/cdn-cgi/challenge-platform/';
+// Interstitial page titles. Cloudflare's "Just a moment" already lives in the
+// shared marker list; this covers the title form used by the skeleton check
+// without widening the shared list.
+const CHALLENGE_TITLE_PATTERN = /<title>[^<]*(?:just a moment|attention required|checking your browser)[^<]*<\/title>/i;
+// Below this rendered-text size a body carries no real article content — the
+// hallmark of an interstitial that is nothing but a challenge widget.
+const CHALLENGE_SKELETON_MAX_TEXT = 600;
+// A server-rendered interactive form (login/search) proves the body is a real
+// page, not a challenge interstitial (which injects its widget via JS and ships
+// no real form). Used to exempt text-light login pages from the skeleton check.
+const REAL_FORM_PATTERN = /<form[\s>][\s\S]*?<(?:input|button|select|textarea)[\s>]/i;
+
+// Approximate the visible text length of an HTML body: strip script/style and
+// tags, collapse whitespace. Cheap and bounded — the caller only cares whether
+// the result is tiny (interstitial) or substantial (real page).
+function approxVisibleTextLength(html: string): number {
+  const slice = html.length > 32768 ? html.slice(0, 32768) : html;
+  const stripped = slice
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return stripped.length;
+}
+
+/**
+ * Browser-tier-only heuristic: does the page look like a challenge-page
+ * skeleton rather than a real document? True when ANY of:
+ *   - the visible body text is near-empty (interstitials carry almost no prose), OR
+ *   - a `/cdn-cgi/challenge-platform/` script is loaded, OR
+ *   - the page title is a known interstitial title.
+ *
+ * This is the CONTEXT gate for the contextual turnstile signal — a real login
+ * page that embeds a Turnstile widget has substantial content, no
+ * challenge-platform script, and a normal title, so it is never a skeleton.
+ */
+export function isChallengeSkeleton(html: string | null | undefined): boolean {
+  if (!html) return false;
+  const slice = html.length > 32768 ? html.slice(0, 32768) : html;
+  if (slice.includes(CHALLENGE_PLATFORM_SRC)) return true;
+  if (CHALLENGE_TITLE_PATTERN.test(slice)) return true;
+  // A real server-rendered interactive form means this is a genuine page (e.g.
+  // a text-light login screen), not an interstitial skeleton.
+  if (REAL_FORM_PATTERN.test(slice)) return false;
+  return approxVisibleTextLength(slice) < CHALLENGE_SKELETON_MAX_TEXT;
+}
+
+/**
+ * Browser-tier challenge-body predicate. Fires when the shared body scan
+ * matches (hasChallengeBody) OR when the Turnstile widget marker co-occurs
+ * with a challenge-page skeleton. The turnstile signal is CONTEXTUAL — a bare
+ * `cf-turnstile` substring on a full real page (a login form) never fires.
+ * The shared CHALLENGE_MARKERS list is untouched.
+ */
+export function hasBrowserChallengeBody(html: string | null | undefined): boolean {
+  if (!html) return false;
+  if (hasChallengeBody(html)) return true;
+  const slice = html.length > 32768 ? html.slice(0, 32768) : html;
+  if (slice.includes(TURNSTILE_MARKER) && isChallengeSkeleton(slice)) return true;
+  return false;
+}
+
 /**
  * A 429 without an anti-bot challenge body is a plain
  * rate-limit, not an anti-bot wall. Playwright will hit the same rate
