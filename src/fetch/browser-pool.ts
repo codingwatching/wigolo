@@ -6,7 +6,29 @@ import { BrowserSelector, type SelectionStrategy } from './browser-selector.js';
 import { executeActions } from './action-executor.js';
 import { HYDRATION_PROBE_SOURCE } from './hydration-probe.js';
 import { abortRejection } from '../util/abort.js';
+import { isAntiBotStatus, hasBrowserChallengeBody } from './tls-tier.js';
 import type { RawFetchResult, BrowserType, ActionResult, BrowserAction } from '../types.js';
+
+/**
+ * Thrown when the browser tier lands on a hard bot-protection challenge page
+ * that does not clear within the settle window. Carries a structured code so
+ * the router can map it to a `blocked_by_challenge` stage error instead of
+ * hanging on the full navigation timeout. Message + hint use capability
+ * language (never vendor internals).
+ */
+export class ChallengeBlockedError extends Error {
+  readonly code = 'blocked_by_challenge' as const;
+  readonly hint: string;
+  constructor(
+    public readonly targetUrl: string,
+    message = "The site's bot protection served a challenge page that could not be cleared automatically",
+    hint = 'Retry with use_auth: true using a real browser session, or fetch an alternate source for this content',
+  ) {
+    super(message);
+    this.name = 'ChallengeBlockedError';
+    this.hint = hint;
+  }
+}
 
 export interface BrowserFetchOptions {
   timeoutMs?: number;
@@ -323,6 +345,11 @@ export class MultiBrowserPool {
     let finalUrl = url;
     let gotoTimedOut = false;
 
+    // When an auto-passing challenge clears during the settle wait, the fresh
+    // (real) body is captured here so the post-goto path reuses it instead of
+    // re-reading the page.
+    let settledHtml: string | undefined;
+
     try {
       try {
         // Race the navigation against the caller's abort signal so the fetch
@@ -395,6 +422,52 @@ export class MultiBrowserPool {
         log.warn('page.goto timed out, returning partial content', { url, navTimeoutMs });
       }
 
+      // Anti-bot fast-fail (D6). A hard bot-protection interstitial otherwise
+      // holds the tab for the full nav + load timeout (30-45s). Fail fast so the
+      // budget is bounded to a short settle window.
+      //
+      // Success path: STATUS-GATED — fire only when the response is an anti-bot
+      // status AND the body carries a (contextual) challenge signal. Body
+      // markers alone never fire (a 200 article quoting the markers passes).
+      // After a bounded settle, RE-CHECK: an auto-passing challenge navigates to
+      // a real page and proceeds normally.
+      //
+      // Timeout path: no reliable status on a goto timeout, so we require a
+      // challenge-body signal (a shared marker, or the contextual turnstile on
+      // a challenge skeleton). A normal SPA that merely timed out has a
+      // near-empty shell but NO markers, so `hasBrowserChallengeBody` is false
+      // and the existing partial-return behavior is preserved.
+      if (gotoTimedOut) {
+        // Peek at the partial body for a challenge signal. We deliberately do
+        // NOT reuse it as the final body — the post-goto hydration waits below
+        // may still render more content on a timed-out SPA, and the existing
+        // behavior returns whatever the page holds AFTER those waits.
+        const partial = await readContentWithRetry(page, url).catch(() => '');
+        if (hasBrowserChallengeBody(partial)) {
+          log.warn('challenge body on goto-timeout partial, fast-failing', { url });
+          throw new ChallengeBlockedError(url);
+        }
+      } else if (isAntiBotStatus(statusCode)) {
+        const initial = await readContentWithRetry(page, url).catch(() => '');
+        if (hasBrowserChallengeBody(initial)) {
+          const settleMs = config.challengeSettleMs;
+          log.warn('bot-protection challenge detected, settling before re-check', { url, statusCode, settleMs });
+          await Promise.race([
+            new Promise<void>((resolve) => setTimeout(resolve, settleMs)),
+            abortRejection(options.signal),
+          ]);
+          const reChecked = await readContentWithRetry(page, url).catch(() => '');
+          if (hasBrowserChallengeBody(reChecked)) {
+            log.warn('bot-protection challenge did not clear within settle window, fast-failing', { url, statusCode });
+            throw new ChallengeBlockedError(url);
+          }
+          // Auto-passed: reuse the settled (real) body so we don't re-read it
+          // after the hydration waits below.
+          settledHtml = reChecked;
+          log.info('bot-protection challenge auto-passed within settle window', { url });
+        }
+      }
+
       // A fast goto can win its race while the budget is already exhausted —
       // bail before entering the post-goto waits so a never-networkidle SPA
       // can't hold the slot past the stage budget.
@@ -442,8 +515,10 @@ export class MultiBrowserPool {
       // Client-side routers (React Router / Next.js) can fire a pushState
       // navigation during initial hydration. If page.content() runs mid-
       // transition Playwright throws "Execution context was destroyed".
-      // Retry briefly so a hydration nav doesn't fail the whole fetch.
-      const html = await readContentWithRetry(page, url);
+      // Retry briefly so a hydration nav doesn't fail the whole fetch. When a
+      // challenge auto-passed during settle we already captured the real body —
+      // reuse it rather than re-reading.
+      const html = settledHtml ?? await readContentWithRetry(page, url);
 
       let screenshotBase64: string | undefined;
       if (options.screenshot) {
