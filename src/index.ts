@@ -54,7 +54,7 @@ switch (command) {
     break;
 
   case 'health': {
-    const exitCode = await runHealthCheck();
+    const exitCode = await runHealthCheck(args);
     await exitCli(exitCode);
     break;
   }
