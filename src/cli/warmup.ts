@@ -10,6 +10,7 @@ import { isProcessAlive } from '../searxng/process.js';
 import { getRerankProvider } from '../providers/rerank-provider.js';
 import { runCommand } from './tui/run-command.js';
 import type { WarmupReporter } from './tui/reporter.js';
+import { noopReporter } from './tui/reporter.js';
 import { autoReporter } from './tui/reporter-auto.js';
 import { runVerify as runVerifyTui } from './tui/verify.js';
 import { sanitizeForTerminal } from './doctor.js';
@@ -100,7 +101,7 @@ async function installLinuxDeps(
  *      (GH #116): the binary can be on disk yet fail to launch when system libs
  *      are missing. Only a successful launch reports `ok`.
  */
-async function installBrowser(
+export async function installBrowser(
   browser: BrowserName,
 ): Promise<{ ok: boolean; error?: string }> {
   const cli = resolveBundledPlaywrightCli();
@@ -172,7 +173,7 @@ export function formatLocalLlmWarmupLine(state: {
   return `  Local model:   ${sanitizeForTerminal(state.localLlm)} — not reachable (synthesis falls back to keyless)`;
 }
 
-function wipeSearxngState(dataDir: string, reporter: WarmupReporter): void {
+export function wipeSearxngState(dataDir: string, reporter: WarmupReporter = noopReporter): void {
   const bootstrapLockPath = join(dataDir, 'bootstrap.lock');
   if (existsSync(bootstrapLockPath)) {
     try {
@@ -257,7 +258,7 @@ async function installWebkit(reporter: WarmupReporter): Promise<Pick<WarmupResul
   return { webkit: 'failed', webkitError: headline };
 }
 
-async function installEmbeddings(reporter: WarmupReporter): Promise<Pick<WarmupResult, 'embeddings' | 'embeddingsError'>> {
+export async function installEmbeddings(reporter: WarmupReporter = noopReporter): Promise<Pick<WarmupResult, 'embeddings' | 'embeddingsError'>> {
   reporter.start('embeddings', 'Downloading semantic embeddings model (fastembed)');
   try {
     const { FastembedEmbedProvider } = await import('../embedding/fastembed-provider.js');
@@ -330,7 +331,10 @@ export async function runWarmup(
   reporter?: WarmupReporter,
 ): Promise<WarmupResult> {
   const flagSet = new Set(flags);
-  const plain = flagSet.has('--plain');
+  const json = flagSet.has('--json');
+  // --json implies plain: a TUI progress reporter would emit ANSI to stderr;
+  // the machine result goes to stdout at the end, logs stay plain on stderr.
+  const plain = flagSet.has('--plain') || json;
   const reporterImpl = reporter ?? autoReporter({ plain });
 
   const config = getConfig();
@@ -410,5 +414,11 @@ export async function runWarmup(
   }
 
   reporterImpl.finish();
+
+  if (json) {
+    // Machine shape on stdout; the progress/summary lines stay on stderr.
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  }
+
   return result;
 }

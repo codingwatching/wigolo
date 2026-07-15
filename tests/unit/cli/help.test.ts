@@ -65,6 +65,23 @@ describe('printHelp', () => {
     const text = output();
     expect(text).toContain('warmup [--all|--searxng|--browser|--no-searxng]');
   });
+
+  it('documents doctor --fix and --json (S9/D9)', () => {
+    const { stream, output } = captureStream();
+    printHelp(stream);
+    const text = output();
+    expect(text).toContain('doctor [--fix] [--json]');
+  });
+
+  it('documents --json on the diagnose commands (status, health, verify)', () => {
+    const { stream, output } = captureStream();
+    printHelp(stream);
+    const text = output();
+    // The diagnose commands are AI-drivable with --json.
+    expect(text).toContain('status [--json]');
+    expect(text).toContain('health [--json]');
+    expect(text).toContain('verify [--json]');
+  });
 });
 
 describe('TOOL_HELP', () => {

@@ -149,16 +149,17 @@ Usage:
 
 Subcommands:
   init                    Set up wigolo: install components, wire into agents
-  doctor                  Diagnose installation
+  doctor [--fix] [--json] Diagnose installation; --fix repairs known failures
   config                  Manage settings (TUI or --set K=V headless)
   setup mcp               Wire wigolo into MCP clients
   shell                   Interactive REPL
-  serve                   Start HTTP daemon
-  health                  Health check (exit code = status)
+  serve [--port N]        Start HTTP daemon
+  health [--json]         Health check (exit code = status)
+  verify [--json]         End-to-end capability smoke check
   auth                    Manage site auth
   plugin                  Manage plugins
   uninstall               Remove wigolo install
-  status                  Show running daemon status
+  status [--json]         Show running daemon status
   backfill                Backfill embeddings for cached pages without them
 
 Tools (one-shot; add --json for machine-readable output, --help for flags):

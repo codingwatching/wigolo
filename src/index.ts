@@ -54,7 +54,7 @@ switch (command) {
     break;
 
   case 'health': {
-    const exitCode = await runHealthCheck();
+    const exitCode = await runHealthCheck(args);
     await exitCli(exitCode);
     break;
   }
@@ -62,6 +62,8 @@ switch (command) {
   case 'doctor': {
     const code = await runDoctorIsolated(getConfig().dataDir, {
       probeEngines: args.includes('--probe-engines'),
+      fix: args.includes('--fix'),
+      json: args.includes('--json'),
     });
     await exitCli(code);
     break;

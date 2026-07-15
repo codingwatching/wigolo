@@ -30,6 +30,10 @@ import { isLlmConfigured } from '../integrations/cloud/llm/run.js';
 import { resolveCustomBackend, pickOllamaModel } from '../integrations/cloud/llm/custom-backend.js';
 import { probeOllama, resolveProbeBaseUrl, maybeOllamaHint, DEFAULT_PROBE_TIMEOUT_MS } from './ollama-probe.js';
 import { resolveLocalModelTier, type LocalModelTier } from '../integrations/cloud/llm/local-tier.js';
+import { installBrowser, installEmbeddings, wipeSearxngState } from './warmup.js';
+import { resetBreakers, getBreakerSnapshot } from '../search/core/engine-base.js';
+import { searxngConfigured } from '../searxng/enabled.js';
+import { readAdminToken } from '../daemon/admin-token.js';
 
 function out(line = ''): void { process.stderr.write(`${line}\n`); }
 
@@ -384,6 +388,198 @@ function humanRetry(nextRetryAt?: string): string {
 export interface DoctorOptions {
   /** Run a live search probe against every registered engine. */
   probeEngines?: boolean;
+  /** Attempt an automatic repair for every failed check with a known fix. */
+  fix?: boolean;
+  /** Emit a machine-readable JSON report on stdout (logs still go to stderr). */
+  json?: boolean;
+}
+
+/** One diagnosable component in the doctor report. `fixable` marks checks that
+ * `--fix` knows how to repair. */
+export interface DoctorCheck {
+  name: string;
+  status: 'ok' | 'failed' | 'skipped';
+  fixable: boolean;
+  detail?: string;
+}
+
+/** Before/after record for one repair `--fix` attempted. */
+export interface DoctorFix {
+  name: string;
+  action: string;
+  before: 'ok' | 'failed' | 'skipped';
+  after: 'ok' | 'failed' | 'skipped';
+  ok: boolean;
+  error?: string;
+}
+
+/** The machine-readable doctor report emitted under `--json`. */
+export interface DoctorReport {
+  status: 'ok' | 'degraded';
+  exitCode: number;
+  checks: DoctorCheck[];
+  fixes: DoctorFix[];
+}
+
+/** Whether the daemon appears to be running (a live admin token + a reachable
+ * /health). Used to decide whether to ALSO POST the breaker reset to the daemon
+ * (its breaker Map is separate from this CLI process's). */
+async function daemonReachable(dataDir: string): Promise<boolean> {
+  const token = readAdminToken(dataDir);
+  if (!token) return false;
+  try {
+    const cfg = getConfig();
+    const resp = await fetch(`http://${cfg.daemonHost}:${cfg.daemonPort}/health`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    return resp.ok || resp.status === 503;
+  } catch {
+    return false;
+  }
+}
+
+/** POST the authed breaker reset to a running daemon. Best-effort: a failure is
+ * reported but never turns doctor into a hard failure (the in-process reset
+ * already happened). */
+async function postDaemonBreakerReset(dataDir: string): Promise<{ ok: boolean; error?: string }> {
+  const token = readAdminToken(dataDir);
+  if (!token) return { ok: false, error: 'no admin token on disk' };
+  try {
+    const cfg = getConfig();
+    const resp = await fetch(`http://${cfg.daemonHost}:${cfg.daemonPort}/admin/reset-breakers`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!resp.ok) return { ok: false, error: `daemon returned HTTP ${resp.status}` };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Collect the checks `--fix` knows how to repair. Each returns `ok`/`failed`
+ * with a fixable flag. Pure snapshots — no side effects — so they can be run
+ * before AND after a repair to build the before/after record.
+ */
+async function collectFixableChecks(dataDir: string): Promise<DoctorCheck[]> {
+  const checks: DoctorCheck[] = [];
+
+  const pw = await checkPlaywright();
+  checks.push({
+    name: 'browser',
+    status: pw.browsers.chromium ? 'ok' : 'failed',
+    fixable: true,
+    detail: pw.browsers.chromium ? 'chromium launchable' : 'chromium missing',
+  });
+
+  const emb = checkFastembedCache(dataDir);
+  checks.push({
+    name: 'embeddings',
+    status: emb.installed ? 'ok' : 'failed',
+    fixable: true,
+    detail: emb.installed ? 'model cached' : (emb.reason ?? 'model missing'),
+  });
+
+  // searxng bootstrap: only a fixable failure when the sidecar is opted into.
+  // On core (default) a failed/absent state is EXPECTED, not a failure — report
+  // it skipped and non-fixable so the wipe never runs (D9 hard gate).
+  const configured = searxngConfigured(getConfig());
+  const state = getBootstrapState(dataDir) as BootstrapState | null;
+  const bootstrapFailed = state?.status === 'failed';
+  const staleLock = detectStaleSearxngLock(dataDir);
+  if (!configured) {
+    checks.push({ name: 'searxng', status: 'skipped', fixable: false, detail: 'sidecar not configured (core backend)' });
+  } else if (bootstrapFailed || staleLock) {
+    checks.push({ name: 'searxng', status: 'failed', fixable: true, detail: bootstrapFailed ? 'bootstrap failed' : 'stale lock/port files' });
+  } else {
+    checks.push({ name: 'searxng', status: 'ok', fixable: true, detail: state?.status ?? 'ready' });
+  }
+
+  const openBreakers = getBreakerSnapshot().filter((b) => b.state !== 'closed');
+  checks.push({
+    name: 'breakers',
+    status: openBreakers.length > 0 ? 'failed' : 'ok',
+    fixable: true,
+    detail: openBreakers.length > 0 ? `${openBreakers.length} open/half-open` : 'all closed',
+  });
+
+  return checks;
+}
+
+/** Whether a stale searxng lock/port file is present (process dead / unparseable). */
+function detectStaleSearxngLock(dataDir: string): boolean {
+  const lockPath = join(dataDir, 'searxng.lock');
+  if (!existsSync(lockPath)) return existsSync(join(dataDir, 'searxng.port'));
+  try {
+    const lock = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid?: number };
+    return !(lock.pid && isProcessAlive(lock.pid));
+  } catch {
+    return true; // unparseable lock = stale
+  }
+}
+
+/**
+ * Run repairs for every failed, fixable check and return the before/after
+ * records. Re-checks after each repair so the report reflects the real
+ * post-repair state.
+ */
+async function applyDoctorFixes(dataDir: string, checks: DoctorCheck[]): Promise<DoctorFix[]> {
+  const fixes: DoctorFix[] = [];
+  const configured = searxngConfigured(getConfig());
+
+  for (const check of checks) {
+    if (check.status !== 'failed' || !check.fixable) continue;
+
+    if (check.name === 'browser') {
+      out(`[wigolo doctor] --fix: installing browser engine (chromium)...`);
+      const r = await installBrowser('chromium');
+      const after = (await checkPlaywright()).browsers.chromium ? 'ok' : 'failed';
+      fixes.push({ name: 'browser', action: 'installBrowser(chromium)', before: 'failed', after, ok: r.ok && after === 'ok', error: r.error });
+      out(`[wigolo doctor] --fix: browser ${after}`);
+    } else if (check.name === 'embeddings') {
+      out(`[wigolo doctor] --fix: downloading embeddings model...`);
+      const r = await installEmbeddings();
+      const after = checkFastembedCache(dataDir).installed ? 'ok' : 'failed';
+      fixes.push({ name: 'embeddings', action: 'installEmbeddings()', before: 'failed', after, ok: r.embeddings === 'ok' && after === 'ok', error: r.embeddingsError });
+      out(`[wigolo doctor] --fix: embeddings ${after}`);
+    } else if (check.name === 'searxng') {
+      // Hard gate: only wipe when the sidecar is opted into. On core this branch
+      // is unreachable (check is skipped/non-fixable) — belt-and-braces here.
+      if (!configured) continue;
+      out(`[wigolo doctor] --fix: wiping stale search-engine state...`);
+      wipeSearxngState(dataDir);
+      const staleAfter = detectStaleSearxngLock(dataDir);
+      const stateAfter = (getBootstrapState(dataDir) as BootstrapState | null)?.status;
+      // Wipe clears the locks; a failed bootstrap still needs a warmup, so the
+      // check may remain failed — report honestly.
+      const after: DoctorFix['after'] = !staleAfter && stateAfter !== 'failed' ? 'ok' : 'failed';
+      fixes.push({
+        name: 'searxng',
+        action: 'wipeSearxngState()',
+        before: 'failed',
+        after,
+        ok: after === 'ok',
+        error: after === 'failed' ? 'locks cleared; run `wigolo warmup --searxng` to re-bootstrap' : undefined,
+      });
+      out(`[wigolo doctor] --fix: search-engine state ${after === 'ok' ? 'cleared' : 'cleared (re-bootstrap needed)'}`);
+    } else if (check.name === 'breakers') {
+      out(`[wigolo doctor] --fix: resetting search-engine circuit breakers...`);
+      resetBreakers();
+      let error: string | undefined;
+      if (await daemonReachable(dataDir)) {
+        const daemonReset = await postDaemonBreakerReset(dataDir);
+        if (!daemonReset.ok) error = `daemon reset failed: ${daemonReset.error}`;
+        else out(`[wigolo doctor] --fix: daemon breakers reset via admin route`);
+      }
+      const after = getBreakerSnapshot().some((b) => b.state !== 'closed') ? 'failed' : 'ok';
+      fixes.push({ name: 'breakers', action: 'resetBreakers()', before: 'failed', after, ok: after === 'ok', error });
+      out(`[wigolo doctor] --fix: breakers ${after === 'ok' ? 'reset' : 'still open'}`);
+    }
+  }
+
+  return fixes;
 }
 
 export async function runDoctor(dataDir: string, opts?: DoctorOptions): Promise<number> {
@@ -400,6 +596,10 @@ export async function runDoctor(dataDir: string, opts?: DoctorOptions): Promise<
 
 async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<number> {
   let degraded = false;
+  // A degraded contributor doctor cannot repair (python + docker both missing).
+  // Kept separate so the --fix exit-code recompute can tell "unfixable failure
+  // remains" apart from the fixable browser/searxng contributions.
+  let nonFixableDegraded = false;
 
   out(`[wigolo doctor] Data dir:        ${dataDir}`);
   out('');
@@ -409,7 +609,7 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
   out('[wigolo doctor] Runtime:');
   out(`  Python 3:      ${py.ok ? `available (${py.version ?? 'unknown'})` : 'not available'}`);
   out(`  Docker:        ${dk.ok ? `available (${dk.cli}, ${dk.version})` : 'not available'}`);
-  if (!py.ok && !dk.ok) degraded = true;
+  if (!py.ok && !dk.ok) { degraded = true; nonFixableDegraded = true; }
 
   out('');
   const pw = await checkPlaywright();
@@ -668,9 +868,35 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
     }
   }
 
+  // --fix pass: repair every failed, fixable check, then recompute status from
+  // the post-fix fixable checks + the unfixable degraded contributor. Without
+  // --fix the original `degraded` verdict is authoritative (preserves the
+  // report-only exit-code contract).
+  let fixes: DoctorFix[] = [];
+  let fixableChecks = await collectFixableChecks(dataDir);
+  if (opts?.fix) {
+    out('');
+    fixes = await applyDoctorFixes(dataDir, fixableChecks);
+    if (fixes.length === 0) out('[wigolo doctor] --fix: nothing to repair');
+    // Re-collect so the report + status reflect the repaired state.
+    fixableChecks = await collectFixableChecks(dataDir);
+    const anyFixableStillFailed = fixableChecks.some((c) => c.status === 'failed');
+    degraded = nonFixableDegraded || anyFixableStillFailed;
+  }
+
+  const status: DoctorReport['status'] = degraded ? 'degraded' : 'ok';
+  const exitCode = degraded ? 1 : 0;
+
   out('');
   out(`[wigolo doctor] Overall: ${degraded ? 'DEGRADED' : 'OK'}`);
-  return degraded ? 1 : 0;
+
+  if (opts?.json) {
+    const report: DoctorReport = { status, exitCode, checks: fixableChecks, fixes };
+    // Machine shape on stdout; the human diagnostic above stays on stderr.
+    process.stdout.write(`${JSON.stringify(report)}\n`);
+  }
+
+  return exitCode;
 }
 
 async function checkCoreEmbeddings(): Promise<void> {
@@ -921,8 +1147,16 @@ export async function runDoctorAsChild(dataDir: string, opts?: DoctorOptions): P
   }
 
   // Inherit stdout, but pipe stderr so we can strip the cosmetic libc++ abort
-  // message that fires after the child's diagnostic has completed.
-  const childArgs = [entry, 'doctor', ...(opts?.probeEngines ? ['--probe-engines'] : [])];
+  // message that fires after the child's diagnostic has completed. --json writes
+  // its machine object to the child's stdout, which passes through via the
+  // inherited fd — so the JSON survives the child-process isolation path.
+  const childArgs = [
+    entry,
+    'doctor',
+    ...(opts?.probeEngines ? ['--probe-engines'] : []),
+    ...(opts?.fix ? ['--fix'] : []),
+    ...(opts?.json ? ['--json'] : []),
+  ];
   const code: number = await new Promise((resolve) => {
     const child = spawn(process.execPath, childArgs, {
       stdio: ['inherit', 'inherit', 'pipe'],
