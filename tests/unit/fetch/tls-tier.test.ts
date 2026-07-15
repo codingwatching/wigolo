@@ -5,6 +5,7 @@ import {
   isAntiBotStatus,
   hasChallengeBody,
   isAntiBotSignal,
+  isChallengeShell,
   looksJsRequired,
   describeAntiBot,
   tlsFetch,
@@ -174,6 +175,61 @@ describe('tls-tier: browser-tier contextual challenge detection', () => {
     expect(hasBrowserChallengeBody('<html><body><h1>Normal page with plenty of text here</h1></body></html>')).toBe(false);
     expect(hasBrowserChallengeBody(null)).toBe(false);
     expect(hasBrowserChallengeBody('')).toBe(false);
+  });
+});
+
+describe('tls-tier: isChallengeShell (status-agnostic challenge classifier)', () => {
+  // DataDome-style interstitial served at HTTP 200: challenge markers PLUS a
+  // near-empty challenge skeleton (title + dd-loader, no real prose).
+  const dataDomeShell200 =
+    '<html><head><title>Just a moment...</title></head><body>' +
+    '<div class="dd-loader"></div><script>window._dd_s = 1;</script></body></html>';
+  // A real article at 200 that merely QUOTES a marker string in substantial prose.
+  const articleQuotingMarker =
+    '<html><head><title>Understanding bot protection</title></head><body><article>' +
+    ('The interstitial sets _cfChlOpt and shows "Just a moment" while loading. ' +
+      'This article explains the full flow in depth for engineers. ').repeat(30) +
+    '</article></body></html>';
+
+  it('MUST-FIRE: anti-bot status + challenge body (preserves existing behavior)', () => {
+    expect(isChallengeShell(403, '<html><body>cf-browser-verification</body></html>')).toBe(true);
+    expect(isChallengeShell(503, '<title>Just a moment...</title>')).toBe(true);
+  });
+
+  it('MUST-FIRE: 200 + challenge markers + challenge skeleton (the new case)', () => {
+    expect(isChallengeShell(200, dataDomeShell200)).toBe(true);
+    expect(isChallengeShell(204, dataDomeShell200)).toBe(true);
+  });
+
+  it('MUST-NOT-FIRE: 2xx with markers but SUBSTANTIAL prose (article quoting markers)', () => {
+    expect(isChallengeShell(200, articleQuotingMarker)).toBe(false);
+  });
+
+  it('MUST-NOT-FIRE: 2xx skeleton WITHOUT any challenge marker (plain SPA shell)', () => {
+    const spaShell = '<html><head><title>My App</title></head><body><div id="root"></div></body></html>';
+    expect(isChallengeShell(200, spaShell)).toBe(false);
+  });
+
+  it('MUST-NOT-FIRE: 2xx with markers alone (markers present but body is substantial, not skeleton)', () => {
+    // Markers present but body has >600 visible chars → not a skeleton → no fire.
+    const bulky =
+      '<html><body>_cfChlOpt ' + 'genuine readable content that a user would consume here. '.repeat(30) +
+      '</body></html>';
+    expect(hasChallengeBody(bulky)).toBe(true);
+    expect(isChallengeSkeleton(bulky)).toBe(false);
+    expect(isChallengeShell(200, bulky)).toBe(false);
+  });
+
+  it('MUST-NOT-FIRE: 200 clean page, null, empty', () => {
+    expect(isChallengeShell(200, '<html><body><h1>Normal page with plenty of text here that is real</h1></body></html>')).toBe(false);
+    expect(isChallengeShell(200, null)).toBe(false);
+    expect(isChallengeShell(200, '')).toBe(false);
+  });
+
+  it('MUST-NOT-FIRE: bare anti-bot status (403) with a real HTML body and no markers', () => {
+    // A substantive admin 403 page must pass through — not a challenge shell.
+    const admin403 = '<html><body><h1>403 Forbidden</h1><p>' + 'You do not have permission to view this resource. '.repeat(20) + '</p></body></html>';
+    expect(isChallengeShell(403, admin403)).toBe(false);
   });
 });
 

@@ -8,6 +8,7 @@ import {
   tlsFetch,
   isAntiBotSignal,
   isAntiBotStatus,
+  isChallengeShell,
   isRateLimit,
   hasChallengeBody,
   looksJsRequired,
@@ -454,7 +455,12 @@ export class SmartRouter {
       const logger = createLogger('fetch');
       if (fallback) {
         logger.info('browser engine not ready within budget — returning lower-tier content with note', { url });
-        return { ...fallback, warning: BROWSER_INSTALLING_NOTE };
+        // The browser was the escalation target because the lower tier returned
+        // a challenge shell (or an anti-bot-status challenge body). If we cannot
+        // acquire it, we must NOT fall back to returning that shell as content —
+        // guard it so a challenge fallback becomes blocked_by_challenge, while
+        // legit lower-tier content passes through unchanged with the note.
+        return this.guardChallengeShell({ ...fallback, warning: BROWSER_INSTALLING_NOTE });
       }
       logger.info('browser engine not ready within budget and no lower-tier content — failing with actionable error', { url });
       return {
@@ -480,6 +486,28 @@ export class SmartRouter {
     }
   }
 
+  /**
+   * Terminal choke point: never return a challenge-shell body as final fetch
+   * content. When a lower tier's result is about to exit to the caller as final
+   * content (http-only mode, TLS terminal, escalation exhausted) and the body
+   * classifies as a challenge shell (challenge markers + skeleton, at any HTTP
+   * status), map it to the same `blocked_by_challenge` stage error the browser
+   * tier raises — the caller gets a structured, actionable error instead of the
+   * interstitial markdown. A clean result passes through untouched.
+   */
+  private guardChallengeShell(raw: RawFetchResult): RawFetchResult | StageError {
+    if (isChallengeShell(raw.statusCode, raw.html)) {
+      const err = new ChallengeBlockedError(raw.url);
+      return {
+        error: err.code,
+        error_reason: err.message,
+        stage: 'fetch',
+        hint: err.hint,
+      };
+    }
+    return raw;
+  }
+
   async fetch(url: string, options: RouterFetchOptions & { mode: 'stealth' }): Promise<RawFetchResult | StageError>;
   async fetch(url: string, options?: RouterFetchOptions): Promise<RawFetchResult>;
   async fetch(
@@ -497,7 +525,13 @@ export class SmartRouter {
       logger.debug('routing to stealth (static then escalate)', { url });
       const staticResult = await this.httpFetcher(url, { headers, signal });
       this.ensureStats(domain);
-      if (!shouldEscalate(staticResult.text)) {
+      // Escalate on thin content (shouldEscalate) OR on a challenge shell. The
+      // /enable javascript/i shell already trips shouldEscalate, but a
+      // challenge skeleton that carries markers yet exceeds the 500-char floor
+      // and never says "enable javascript" would otherwise pass through — the
+      // isChallengeShell check (markers + skeleton) covers that shape too.
+      const stealthChallenge = isChallengeShell(200, staticResult.html);
+      if (!shouldEscalate(staticResult.text) && !stealthChallenge) {
         return {
           url: staticResult.url,
           finalUrl: staticResult.url,
@@ -517,7 +551,10 @@ export class SmartRouter {
       const acquired = await this.browserAcquirer.ensureBrowser();
       if (acquired !== 'ready') {
         logger.info('stealth escalation: browser engine not ready within budget — returning static content with note', { url });
-        return {
+        // If the static body is itself a challenge shell we cannot fall back to
+        // returning it — surface the structured challenge error instead of the
+        // interstitial markdown.
+        return this.guardChallengeShell({
           url: staticResult.url,
           finalUrl: staticResult.url,
           html: staticResult.html,
@@ -526,7 +563,7 @@ export class SmartRouter {
           method: 'http',
           headers: {},
           warning: BROWSER_INSTALLING_NOTE,
-        };
+        });
       }
       try {
         const pw = await this.playwrightFetcher(url, { signal });
@@ -617,7 +654,10 @@ export class SmartRouter {
         logger.info('known-SPA domain served substantive HTTP via render_js:never — downgrading prefer-chromium', { url, domain });
         neverStats.preferPlaywright = false;
       }
-      return this.toRawFetchResult(result);
+      // http-only mode can never escalate to the browser to clear a challenge,
+      // so a challenge shell here is terminal — surface the structured error
+      // instead of returning the interstitial markdown.
+      return this.guardChallengeShell(this.toRawFetchResult(result));
     }
 
     // Binary downloads (PDF/zip/office docs) must go to the byte tier: the
@@ -666,7 +706,7 @@ export class SmartRouter {
     if (tryTlsFirst) {
       const tlsTry = await this.tryTlsTier(url, domain, headers, signal);
       if (tlsTry.ok) {
-        return tlsTry.result;
+        return this.guardChallengeShell(tlsTry.result);
       }
       // TLS failed → fall through to HTTP, then to Playwright if needed.
       logger.debug('tls-first miss, falling back to http', { url, domain, reason: tlsTry.reason });
@@ -699,6 +739,35 @@ export class SmartRouter {
       if (isRateLimit(result.statusCode, result.html)) {
         logger.debug('rate-limit (429) without challenge body — passing through, NOT escalating', { url, domain });
         return this.toRawFetchResult(result);
+      }
+
+      // Challenge interstitial shell. Some bot walls (DataDome "enable
+      // JavaScript" pages) serve the challenge at HTTP 200, which the
+      // status-gated anti-bot checks below miss. Escalate exactly as an
+      // anti-bot-status response would — TLS first when usable, else the
+      // browser (which may clear the challenge within its settle window). This
+      // is intentionally NOT a hard fail at the HTTP tier. Restricted to the
+      // 2xx-shell case here (markers AND skeleton); status-driven signals stay
+      // with the blocks below so a bare 403 with no markers is unaffected.
+      const is2xxShell =
+        result.statusCode >= 200 && result.statusCode < 300 &&
+        isChallengeShell(result.statusCode, result.html);
+      if (is2xxShell) {
+        if (tlsUsable) {
+          const tlsTry = await this.tryTlsTier(url, domain, headers, signal);
+          if (tlsTry.ok) {
+            return this.guardChallengeShell(tlsTry.result);
+          }
+        }
+        if (!this.browserPool) throw new Error('SmartRouter: browserPool not configured');
+        logger.info('challenge shell at 2xx: escalating to browser', {
+          url,
+          domain,
+          httpStatus: result.statusCode,
+          signal: describeAntiBot(result.statusCode, result.html),
+        });
+        stats.preferPlaywright = true;
+        return this.browserFetch(url, { headers, screenshot, signal, fallback: this.toRawFetchResult(result) });
       }
 
       // Anti-bot signal (403/503 or challenge body, plus 429 with
@@ -769,7 +838,11 @@ export class SmartRouter {
         stats.preferPlaywright = false;
       }
 
-      return this.toRawFetchResult(result);
+      // Final HTTP-tier content return. The explicit 2xx-shell escalation above
+      // already re-routes challenge interstitials to the browser, but guard the
+      // terminal return too so no challenge body can leak to the caller if a
+      // future branch reaches here with one.
+      return this.guardChallengeShell(this.toRawFetchResult(result));
     } catch (err) {
       stats.failureCount++;
       logger.warn('http fetch failed', {
