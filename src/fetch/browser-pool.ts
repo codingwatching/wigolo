@@ -6,7 +6,7 @@ import { BrowserSelector, type SelectionStrategy } from './browser-selector.js';
 import { executeActions } from './action-executor.js';
 import { HYDRATION_PROBE_SOURCE } from './hydration-probe.js';
 import { abortRejection } from '../util/abort.js';
-import { isAntiBotStatus, hasBrowserChallengeBody } from './tls-tier.js';
+import { isAntiBotStatus, hasBrowserChallengeBody, isChallengeShell } from './tls-tier.js';
 import type { RawFetchResult, BrowserType, ActionResult, BrowserAction } from '../types.js';
 
 /**
@@ -58,6 +58,10 @@ export interface PoolTypeStat {
 }
 
 const log = createLogger('fetch');
+
+function isSuccessStatus(status: number): boolean {
+  return status >= 200 && status < 300;
+}
 
 const NAV_RACE_PATTERN = /execution context (?:was )?destroyed|page is navigating|frame.*detached|target closed/i;
 // Chromium rejects page.goto with this when the response is a download
@@ -442,9 +446,20 @@ export class MultiBrowserPool {
           log.warn('challenge body on goto-timeout partial, fast-failing', { url });
           throw new ChallengeBlockedError(url);
         }
-      } else if (isAntiBotStatus(statusCode)) {
+      } else if (isAntiBotStatus(statusCode) || isSuccessStatus(statusCode)) {
+        // Widened past the anti-bot-status gate: some bot walls (DataDome
+        // "enable JavaScript" shells) serve the challenge interstitial at HTTP
+        // 200. The initial read + isChallengeShell check keeps the 2xx branch
+        // precise — a real 200 article (even one that happens to be an SPA
+        // shell without challenge markers) is NOT a challenge and falls
+        // through to the normal hydration waits. Markers AND skeleton are both
+        // required at 2xx (see isChallengeShell), so an article quoting the
+        // markers never enters the settle window.
         const initial = await readContentWithRetry(page, url).catch(() => '');
-        if (hasBrowserChallengeBody(initial)) {
+        const isChallenge = isAntiBotStatus(statusCode)
+          ? hasBrowserChallengeBody(initial)
+          : isChallengeShell(statusCode, initial);
+        if (isChallenge) {
           const settleMs = config.challengeSettleMs;
           log.warn('bot-protection challenge detected, settling before re-check', { url, statusCode, settleMs });
           await Promise.race([
@@ -452,7 +467,10 @@ export class MultiBrowserPool {
             abortRejection(options.signal),
           ]);
           const reChecked = await readContentWithRetry(page, url).catch(() => '');
-          if (hasBrowserChallengeBody(reChecked)) {
+          const stillChallenge = isAntiBotStatus(statusCode)
+            ? hasBrowserChallengeBody(reChecked)
+            : isChallengeShell(statusCode, reChecked);
+          if (stillChallenge) {
             log.warn('bot-protection challenge did not clear within settle window, fast-failing', { url, statusCode });
             throw new ChallengeBlockedError(url);
           }

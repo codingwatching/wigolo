@@ -426,6 +426,28 @@ export function isAntiBotSignal(statusCode: number, html: string | null | undefi
 }
 
 /**
+ * Status-agnostic challenge-shell classifier. A challenge interstitial must
+ * never be returned as fetch content REGARDLESS of HTTP status — some bot
+ * walls (DataDome "enable JavaScript" pages) serve the shell at HTTP 200.
+ *
+ * Fires when EITHER:
+ *   - (anti-bot status AND challenge body) — the pre-existing status-gated
+ *     signal, preserved verbatim, OR
+ *   - (2xx AND challenge markers present AND challenge-page skeleton) — the
+ *     200-shell case. BOTH the markers AND the skeleton are required: markers
+ *     alone must never fire (an article quoting 'Just a moment' or 'dd-loader'
+ *     is legit content), and a skeleton alone is a plain SPA shell handled by
+ *     the SPA-empty-content path, not the challenge path.
+ */
+export function isChallengeShell(statusCode: number, html: string | null | undefined): boolean {
+  if (!html) return false;
+  if (isAntiBotStatus(statusCode) && hasChallengeBody(html)) return true;
+  const is2xx = statusCode >= 200 && statusCode < 300;
+  if (is2xx && hasChallengeBody(html) && isChallengeSkeleton(html)) return true;
+  return false;
+}
+
+/**
  * Heuristic: the page came back but tells the user that JavaScript is
  * required. Mirrors playwright-tier.shouldEscalate's marker check but is
  * exposed separately so the router can distinguish "TLS failed → try

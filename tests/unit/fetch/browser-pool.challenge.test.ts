@@ -133,16 +133,47 @@ describe('browser-pool anti-bot fast-fail (D6)', () => {
     await pool.shutdown();
   });
 
-  it('MUST-NOT-FIRE: 200 challenge body WITHOUT anti-bot status never fires (status-gated)', async () => {
-    // A 200 status that happens to carry a challenge-marker body — the gate is
-    // status-gated, so body markers alone NEVER fast-fail.
+  it('MUST-FIRE: 200 challenge shell (markers + skeleton) enters settle window and fast-fails when it persists', async () => {
+    // NEW SPEC: a challenge interstitial served at HTTP 200 (DataDome-style)
+    // must be treated as a challenge — the gate is no longer status-gated.
+    vi.useFakeTimers();
+    process.env.WIGOLO_CHALLENGE_SETTLE_MS = '5000';
+    resetConfig();
     state.status = 200;
-    state.bodies = [CHALLENGE_INTERSTITIAL];
+    state.bodies = [CHALLENGE_INTERSTITIAL, CHALLENGE_INTERSTITIAL];
 
     const pool = new MultiBrowserPool();
-    const res = await pool.fetchWithBrowser('https://blocked.example/');
+    const p = pool.fetchWithBrowser('https://blocked.example/');
+    const assertion = expect(p).rejects.toBeInstanceOf(ChallengeBlockedError);
+    await vi.advanceTimersByTimeAsync(6000);
+    await assertion;
+    delete process.env.WIGOLO_CHALLENGE_SETTLE_MS;
+    await pool.shutdown();
+  });
+
+  it('MUST-NOT-FIRE: 200 challenge body markers but SUBSTANTIAL content (article quoting markers) never fires', async () => {
+    // Markers present at 200 but the body is a real article, not a skeleton.
+    state.status = 200;
+    state.bodies = [ARTICLE_QUOTING_MARKERS];
+
+    const pool = new MultiBrowserPool();
+    const res = await pool.fetchWithBrowser('https://news.example/article');
     expect(res.statusCode).toBe(200);
-    expect(res.html).toContain('cf-browser-verification');
+    expect(res.html).toContain('How Cloudflare challenges work');
+    await pool.shutdown();
+  });
+
+  it('MUST-NOT-FIRE: 200 challenge shell that HYDRATES into real content within the settle window returns content', async () => {
+    vi.useFakeTimers();
+    state.status = 200;
+    const realArticle = '<html><body><article>' + 'Real hydrated content here. '.repeat(50) + '</article></body></html>';
+    state.bodies = [CHALLENGE_INTERSTITIAL, realArticle];
+
+    const pool = new MultiBrowserPool();
+    const p = pool.fetchWithBrowser('https://blocked.example/');
+    await vi.advanceTimersByTimeAsync(6000);
+    const res = await p;
+    expect(res.html).toContain('Real hydrated content');
     await pool.shutdown();
   });
 
