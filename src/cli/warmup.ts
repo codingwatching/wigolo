@@ -49,8 +49,15 @@ async function detectDepsStrategy(): Promise<'root' | 'sudo' | 'skip'> {
   if (process.getuid?.() === 0) return 'root';
   // `sudo -n true` never prompts: -n makes sudo fail immediately (non-zero)
   // rather than ask for a password when credentials aren't cached.
-  const probe = await runCommand('sudo', ['-n', 'true'], { timeout: 5000 });
-  return probe.code === 0 ? 'sudo' : 'skip';
+  try {
+    const probe = await runCommand('sudo', ['-n', 'true'], { timeout: 5000 });
+    return probe.code === 0 ? 'sudo' : 'skip';
+  } catch {
+    // No sudo binary at all (spawn ENOENT — e.g. slim containers). runCommand
+    // REJECTS on spawn errors, so without this catch the whole browser install
+    // crashes before the launch smoke-test. Same verdict as a failed probe.
+    return 'skip';
+  }
 }
 
 /**
