@@ -670,7 +670,10 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
   out('[wigolo doctor] Runtime:');
   out(`  Python 3:      ${py.ok ? `available (${py.version ?? 'unknown'})` : 'not available'}`);
   out(`  Docker:        ${dk.ok ? `available (${dk.cli}, ${dk.version})` : 'not available'}`);
-  if (!py.ok && !dk.ok) { degraded = true; nonFixableDegraded = true; }
+  // python/docker are prerequisites ONLY for the opt-in search-engine sidecar
+  // (bootstrap + --fix repair). On the default core backend their absence is
+  // healthy — same gate the searxng section and collectFixableChecks use.
+  if (searxngConfigured(getConfig()) && !py.ok && !dk.ok) { degraded = true; nonFixableDegraded = true; }
 
   out('');
   const pw = await checkPlaywright();

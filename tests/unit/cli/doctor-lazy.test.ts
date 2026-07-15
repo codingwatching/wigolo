@@ -69,6 +69,10 @@ function okProc(stdout = ''): ReturnType<typeof spawnSync> {
   return { status: 0, stdout, stderr: '', signal: null, pid: 1, output: [], error: undefined } as ReturnType<typeof spawnSync>;
 }
 
+function failProc(): ReturnType<typeof spawnSync> {
+  return { status: 1, stdout: '', stderr: '', signal: null, pid: 1, output: [], error: undefined } as ReturnType<typeof spawnSync>;
+}
+
 let outBuffer = '';
 let stdoutBuffer = '';
 let writeSpy: ReturnType<typeof vi.spyOn>;
@@ -203,6 +207,51 @@ describe('doctor — POSITIVE: models present are reported installed', () => {
 
     expect(outBuffer).toMatch(/Embeddings model:\s+installed/i);
     expect(outBuffer).toMatch(/ML reranker:\s+not installed/i);
+  });
+});
+
+describe('doctor — python/docker runtime prerequisite is searxng-scoped', () => {
+  // WHY: python/docker exist ONLY to bootstrap/run the optional search-engine
+  // sidecar. On the default core backend a machine (e.g. a slim container) with
+  // neither runtime is perfectly healthy — degrading there fails the P1
+  // "doctor green on a fresh install" acceptance for the Docker channel. This
+  // is the same D5 gate the searxng section and collectFixableChecks use.
+  function mockNoRuntimes(): void {
+    // Every external process probe fails: no python3, docker --version fails.
+    vi.mocked(spawnSync).mockImplementation(() => failProc());
+    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(readdirSync).mockReturnValue([] as never);
+    vi.mocked(readFileSync).mockReturnValue('');
+  }
+
+  it('exits 0 with python AND docker both missing under the default core backend', async () => {
+    mockNoRuntimes();
+    const code = await runDoctor('/tmp/.wigolo-slim');
+    expect(outBuffer).toMatch(/Python 3:\s+not available/);
+    expect(outBuffer).toMatch(/Docker:\s+not available/);
+    expect(code).toBe(0);
+    expect(outBuffer).toMatch(/Overall: OK/);
+  });
+
+  it('STILL degrades on missing python+docker when searxng is configured (isolated: bootstrap ready)', async () => {
+    // The bootstrap is READY, so the ONLY degradation source left is the
+    // runtime check — this guard fails if the gate over-fires and turns the
+    // check off for configured-searxng installs too.
+    process.env.WIGOLO_SEARCH = 'searxng';
+    resetConfig();
+    vi.mocked(spawnSync).mockImplementation(() => failProc());
+    vi.mocked(existsSync).mockImplementation((p) => String(p).endsWith('state.json'));
+    vi.mocked(readdirSync).mockReturnValue([] as never);
+    vi.mocked(readFileSync).mockImplementation((p) => {
+      if (String(p).endsWith('state.json')) return JSON.stringify({ status: 'ready', searxngPath: '/tmp/sx' });
+      return '';
+    });
+
+    const code = await runDoctor('/tmp/.wigolo-sx-noruntime');
+
+    expect(outBuffer).toMatch(/status:\s+ready/);
+    expect(code).toBe(1);
+    expect(outBuffer).toMatch(/Overall: DEGRADED/);
   });
 });
 
