@@ -23,9 +23,15 @@ command -v brew >/dev/null 2>&1 || { echo "FAIL: brew not on PATH"; exit 1; }
 EXPECTED_VERSION="$(node -e "process.stdout.write(require('$REPO_ROOT/package.json').version)")"
 echo "==> package.json version: $EXPECTED_VERSION"
 
+# Homebrew (6.x) refuses to install a formula from a bare path — it must live in
+# a tap. We create an ephemeral local tap, drop the temp formula in it, install
+# from there, then untap on cleanup.
+LOCAL_TAP="wigolo-verify/local"
+
 WORK="$(mktemp -d)"
 cleanup() {
   brew uninstall --force wigolo >/dev/null 2>&1 || true
+  brew untap "$LOCAL_TAP" >/dev/null 2>&1 || true
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -37,19 +43,23 @@ TARBALL="$WORK/$(node -e "process.stdout.write(JSON.parse(process.argv[1])[0].fi
 [ -f "$TARBALL" ] || { echo "FAIL: tarball not produced"; exit 1; }
 echo "    tarball: $TARBALL"
 
-# 2. Temp formula: file:// url + real sha256.
+# 2. Temp formula in an ephemeral local tap: file:// url + real sha256.
 SHA="$(shasum -a 256 "$TARBALL" | awk '{print $1}')"
 echo "==> tarball sha256: $SHA"
-TEMP_FORMULA="$WORK/wigolo.rb"
+brew untap "$LOCAL_TAP" >/dev/null 2>&1 || true
+brew tap-new --no-git "$LOCAL_TAP" >/dev/null 2>&1
+TAP_DIR="$(brew --repository "$LOCAL_TAP")"
+TEMP_FORMULA="$TAP_DIR/Formula/wigolo.rb"
+mkdir -p "$TAP_DIR/Formula"
 sed \
   -e "s#url \".*\"#url \"file://$TARBALL\"#" \
   -e "s#sha256 \".*\"#sha256 \"$SHA\"#" \
   "$FORMULA_SRC" > "$TEMP_FORMULA"
 
-# 3. Build from source. Local-path installs need --formula.
-echo "==> brew install --build-from-source --formula $TEMP_FORMULA"
+# 3. Build from source from the tap.
+echo "==> brew install --build-from-source $LOCAL_TAP/wigolo"
 START=$(date +%s)
-brew install --build-from-source --formula "$TEMP_FORMULA" 2>&1 | tee "$WORK/install.log"
+brew install --build-from-source "$LOCAL_TAP/wigolo" 2>&1 | tee "$WORK/install.log"
 echo "    install took $(( $(date +%s) - START ))s"
 
 PREFIX="$(brew --prefix)"
@@ -74,18 +84,19 @@ fi
 
 # 4c. better-sqlite3 prebuilt-vs-source report.
 echo "==> better-sqlite3 build inspection"
-CELLAR="$(brew --cellar wigolo)/$( "$BIN" --version | tr -d '[:space:]')"
+CELLAR="$(brew --cellar wigolo)"
 BS3="$(find "$CELLAR" -type d -name better-sqlite3 2>/dev/null | head -1 || true)"
 if [ -n "$BS3" ]; then
-  if find "$BS3/build" -name '*.o' 2>/dev/null | grep -q .; then
-    echo "    better-sqlite3: NODE-GYP SOURCE BUILD (found *.o objects under build/)"
-  elif [ -f "$BS3/build/Release/better_sqlite3.node" ]; then
-    echo "    better-sqlite3: PREBUILT (.node present, no *.o object files)"
+  if [ ! -f "$BS3/build/Release/better_sqlite3.node" ]; then
+    echo "FAIL: better-sqlite3 binding .node MISSING at $BS3/build/Release/ — cache subsystem will not load"
+    exit 1
+  elif find "$BS3/build" -name '*.o' 2>/dev/null | grep -q .; then
+    echo "    better-sqlite3: NODE-GYP SOURCE BUILD (.node + *.o objects under build/)"
   else
-    echo "    better-sqlite3: present but build state indeterminate at $BS3"
+    echo "    better-sqlite3: PREBUILT (.node present, no *.o object files → prebuild-install)"
   fi
 else
-  echo "    better-sqlite3 dir not located under $CELLAR"
+  echo "FAIL: better-sqlite3 dir not located under $CELLAR"; exit 1
 fi
 
 echo "==> ALL CHECKS PASSED (cleanup uninstalls on exit)"
