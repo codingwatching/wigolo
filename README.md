@@ -358,7 +358,7 @@ wigolo skills remove       # remove the packs wigolo installed
 
 - **Project vs. global.** Default is the project you're in; `--global` targets your home-level agent config.
 - **Idempotent.** Re-running `add` only rewrites what changed; already-current packs are left alone.
-- **Receipts, not guesswork.** Every install is recorded, so `remove` (and `wigolo uninstall`) restores your files to exactly what was there before — hand-edited skills are detected and never clobbered.
+- **Receipts, not guesswork.** Every install is recorded, so `remove` (and `wigolo uninstall`) never removes files it can't verify it installed — hand-edited skills are detected and never clobbered.
 - **Dry-run first.** Preview every create / update / skip before anything touches disk with `--dry-run`.
 
 ## Why it's different

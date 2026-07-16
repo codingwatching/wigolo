@@ -32,6 +32,19 @@ async function loadCat() {
   return import('../../../../../src/cli/agents/skills/catalog.js');
 }
 
+// The real v0.2.0-era SKILL.md whose hash is registered in the legacy manifest.
+const FIXTURE_LEGACY = join(
+  import.meta.dirname,
+  '..',
+  '..',
+  '..',
+  '..',
+  'integration',
+  'fixtures',
+  'skills-legacy',
+  'wigolo-search-SKILL.md',
+);
+
 function sha(s: string): string {
   return createHash('sha256').update(s.replace(/\r\n/g, '\n'), 'utf-8').digest('hex');
 }
@@ -195,20 +208,28 @@ describe('planSkills — adopt + upgrade', () => {
 
   it('legacy-hash bytes with no receipt ⇒ update (adopt-and-upgrade, no force)', async () => {
     const { planSkills } = await load();
-    const { loadLegacyHashes, loadPack } = await loadCat();
-    const legacy = loadLegacyHashes();
-    // Pick a pack whose SKILL.md has a legacy hash != current canonical.
+    const { loadPack } = await loadCat();
     const pack = loadPack('wigolo-search');
     const currentHash = sha(pack.files['SKILL.md']);
-    const historical = [...(legacy['wigolo-search/SKILL.md'] ?? [])].find((h) => h !== currentHash);
-    expect(historical, 'need a distinct historical hash for the upgrade test').toBeTruthy();
-    // We can't easily reproduce the exact old bytes, so simulate by writing bytes
-    // that hash to a legacy value — impossible without the bytes. Instead assert
-    // the code path via a synthetic: write current canonical bytes to a DIFFERENT
-    // pack file that legacy lists. Skip if not reproducible.
-    // (The upgrade path is exercised end-to-end in the integration suite with a
-    // real v0.2.0 fixture.)
-    expect(historical).toBeTruthy();
+
+    // Use the REAL legacy fixture bytes: a prior wigolo version's SKILL.md whose
+    // hash is registered in assets/legacy-skill-hashes.json but differs from the
+    // current canonical. Writing those exact bytes and planning must yield
+    // update+adopted (the legacy-hash branch of resolveFileAdd). If that branch
+    // were deleted the status would fall through to 'refuse' and this fails.
+    const legacyBytes = readFileSync(FIXTURE_LEGACY, 'utf-8');
+    expect(sha(legacyBytes), 'fixture must differ from current canonical').not.toBe(currentHash);
+
+    const dir = join(tmpHome, '.claude', 'skills', 'wigolo-search');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), legacyBytes, 'utf-8');
+
+    const plan = planSkills({ scope: 'global', agents: ['claude-code'], packs: ['wigolo-search'], cwd: tmpCwd });
+    const f = plan.actions
+      .find((a) => a.packs[0] === 'wigolo-search')!
+      .files.find((x) => x.relPath === 'SKILL.md')!;
+    expect(f.status).toBe('update');
+    expect(f.adopted).toBe(true);
   });
 });
 
