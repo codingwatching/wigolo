@@ -124,6 +124,7 @@
     "turndown": "^7.2.4"
   },
   "devDependencies": {
+    "@seriousme/openapi-schema-validator": "2.9.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/cli-progress": "^3.11.6",
     "@types/node": "^25.6.0",
