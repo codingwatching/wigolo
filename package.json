@@ -52,6 +52,8 @@
     "test:integration": "vitest run tests/integration",
     "test:e2e": "vitest run tests/e2e",
     "test:perf": "vitest run --config vitest.perf.config.ts",
+    "test:sdk:ts": "npm --prefix sdks/typescript test",
+    "test:sdk:py": "node scripts/run-sdk-py-tests.mjs",
     "lint": "tsc --noEmit",
     "bench:extraction": "tsx benchmarks/extraction/runner.ts",
     "bench:search": "tsx benchmarks/search/runner.ts",

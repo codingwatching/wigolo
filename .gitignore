@@ -58,3 +58,8 @@ competitive-blueprint.md
 
 # local demo tooling (VHS tapes + build scripts), not shipped
 .demo/
+
+# SDK dev artifacts (each SDK also ships its own .gitignore)
+.venv/
+.pytest_cache/
+*.egg-info

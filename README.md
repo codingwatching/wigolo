@@ -325,6 +325,12 @@ Pick the channel that matches how you run things, then wire the MCP command from
 - **Versionless URLs.** The `install.sh` URL and the binary release-asset URLs are unversioned — they always resolve to the latest release. Upgrading is re-running the same command.
 - **Docker data volume is mandatory.** The `-v wigolo-data:/data` mount holds the cache, models, browser engine binary, and encrypted keys. Without it, every run re-downloads them.
 
+## SDKs (pre-release)
+
+Thin, typed clients for the [REST API](#rest-api--self-host) live in this repo — **TypeScript** (`sdks/typescript/`: zero runtime dependencies, plain `fetch`, runs on Node ≥18 / Bun / Deno / edge runtimes) and **Python** (`sdks/python/`: standard library only, sync `Client` + `AsyncClient`, Python ≥3.10). One method per tool across all ten tools, env-driven configuration (`WIGOLO_BASE_URL`, `WIGOLO_API_TOKEN`), and an embedded local mode that finds or starts a local `wigolo serve` for you (`WIGOLO_LOCAL=1` in Python; `createLocalClient()` from the TypeScript local entry).
+
+**Package names are pending and nothing is published yet** — until then, build and install from this repo: each SDK's README (`sdks/typescript/README.md`, `sdks/python/README.md`) has the pack/build install line and a runnable quickstart. Both SDKs are contract-locked to the server's live `/openapi.json` by drift tests (`npm run test:sdk:ts`, `npm run test:sdk:py`).
+
 ## Tools
 
 | Tool | What it does |

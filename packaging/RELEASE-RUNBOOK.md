@@ -5,6 +5,15 @@ channel. Nothing here runs automatically — each step is a deliberate release a
 Do them in order; npm publish gates everything downstream (the formula url/sha
 and the Docker build both point at the published artifact).
 
+## 0. SDK contract drift gate (pre-publish)
+
+- Run `scripts/verify-sdks.sh` (or `npm run test:sdk:ts && npm run test:sdk:py`).
+  The SDK drift tests validate both clients against the live `/openapi.json` —
+  any REST contract change since the last release fails here, BEFORE anything
+  publishes. Fix the SDK manifests/types (or revert the contract change) first.
+- SDK package publishing (npm + PyPI) is a SEPARATE, deliberate act with its own
+  naming/licensing decisions — not part of this runbook until those are settled.
+
 ## 1. npm publish (source of truth)
 
 - Handled by existing CI on the release tag (`make release-tag`). No manual
