@@ -265,6 +265,8 @@ Serve mode adds transport-level bounds on top of each tool's own defaults (MCP b
 | `WIGOLO_SERVE_MAX_BODY_BYTES` | 1 MiB (5 MiB for `diff` / `extract`) | Request body size → `413` on overflow |
 | `WIGOLO_SERVE_TIMEOUT_SCALE` | `1` | Multiplier on per-route deadlines (60s search/cache/diff/find_similar, 120s fetch/extract/watch, 300s crawl/research/agent) → `504` when exceeded |
 | `WIGOLO_SERVE_MAX_CONCURRENCY` | `16` | In-flight `/v1` + shim requests → `429` when saturated |
+| `WIGOLO_SERVE_REQUEST_TIMEOUT_MS` | `120000` | Whole-request slow-loris guard (Node `requestTimeout`). `0` disables |
+| `WIGOLO_SERVE_HEADERS_TIMEOUT_MS` | `60000` | Header-receipt slow-loris guard (Node `headersTimeout`). `0` disables |
 | `WIGOLO_SERVE_ALLOW_LOCAL_TARGETS` | unset | Set to `1` to allow loopback/localhost **target URLs** under a non-loopback bind (blocked by default so a remote caller can't probe the box's own services) |
 
 Server-side parameter clamps (also published in OpenAPI so a generated SDK can't emit a rejected request): `crawl.max_pages` ≤ 200, `crawl.max_depth` ≤ 5, `agent.max_time_ms` ≤ 240000, `search` query array ≤ 10. An explicit over-cap value returns `400` with the cap in the hint.
