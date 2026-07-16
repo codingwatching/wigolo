@@ -2,6 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { KNOWN_AGENT_IDS } from '../../../../src/cli/tui/flags-types.js';
 import { AGENTS } from '../../../../src/cli/tui/agents.js';
 import { JSON_SPECS } from '../../../../src/cli/tui/config-writer.js';
+import { agentHandlers } from '../../../../src/cli/agents/registry.js';
+import { SUPPORTED_AGENTS } from '../../../../src/cli/agents/skills/targets.js';
+
+// Agents that are intentionally NOT wired into the TUI flag parser / detection
+// descriptors / config-writer seams. cline is skills-only (the P4 engine writes
+// its skill dirs); it deliberately has no `--agents=cline` flag and no
+// JSON_SPECS MCP-config path, so it must be exempted from the drift guards
+// below or they would fail claiming cline is "marketed but does nothing".
+const TUI_ABSENT_BY_DESIGN = new Set(['cline']);
 
 // Regression guard for the "marketed / flag-accepted agent that never actually
 // wires up" class of bug (antigravity: in the registry but missing from the flag
@@ -39,5 +48,23 @@ describe('agent support seams stay consistent', () => {
     expect(KNOWN_AGENT_IDS).toContain('antigravity');
     expect(AGENTS.map((a) => a.id)).toContain('antigravity');
     expect('antigravity' in JSON_SPECS).toBe(true);
+  });
+
+  it('cline is deliberately absent from TUI flags/detection/config-writer (skills-only)', () => {
+    // Explicit exception record: cline is a skills-engine-only agent. If a future
+    // slice adds cline MCP support, remove it from TUI_ABSENT_BY_DESIGN and wire
+    // the three seams above.
+    expect(TUI_ABSENT_BY_DESIGN.has('cline')).toBe(true);
+    expect(KNOWN_AGENT_IDS).not.toContain('cline');
+    expect(AGENTS.map((a) => a.id)).not.toContain('cline');
+    expect('cline' in JSON_SPECS).toBe(false);
+  });
+
+  it('every skills-engine target agent is a real registry handler id', () => {
+    // The targets table drives filesystem writes; each id must map to a
+    // registered handler so detection/uninstall stay coherent.
+    const registryIds = new Set(agentHandlers.map((h) => h.id));
+    const orphans = SUPPORTED_AGENTS.filter((a) => !registryIds.has(a));
+    expect(orphans).toEqual([]);
   });
 });

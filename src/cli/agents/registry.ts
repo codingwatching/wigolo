@@ -6,6 +6,7 @@ import { zedHandler } from './zed.js';
 import { windsurfHandler } from './windsurf.js';
 import { codexHandler } from './codex.js';
 import { antigravityHandler } from './antigravity.js';
+import { clineHandler } from './cline.js';
 
 export type AgentSkillHandler = {
   id: string;
@@ -29,6 +30,7 @@ export const agentHandlers: readonly AgentSkillHandler[] = [
   windsurfHandler,
   codexHandler,
   antigravityHandler,
+  clineHandler,
 ];
 
 const handlerMap = new Map<string, AgentSkillHandler>(
