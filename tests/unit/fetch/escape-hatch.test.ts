@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   solverFetch,
   hostedReaderFetch,
+  _guardedFollow,
   type EscapeHatchConfig,
 } from '../../../src/fetch/escape-hatch.js';
 
@@ -146,6 +147,100 @@ describe('hostedReaderFetch — SSRF guards + redirects', () => {
     );
     const out = await hostedReaderFetch('https://target.example.com', cfg, { fetchImpl });
     expect(out).toBeNull();
+  });
+});
+
+describe('guardedFollow hardening (security fixes)', () => {
+  const cfg: EscapeHatchConfig = { ...baseCfg };
+
+  it('fix 2 — refuses hop 0 when the start URL is a metadata IP (self-contained guard)', async () => {
+    // The follower must NOT trust its input: a start URL pointing at the cloud
+    // metadata endpoint is refused at hop 0, before any fetch is issued, even
+    // though callers also pre-guard.
+    const fetchImpl = vi.fn();
+    const resp = await _guardedFollow(
+      'http://169.254.169.254/latest/meta-data',
+      { method: 'GET' },
+      cfg,
+      fetchImpl,
+    );
+    expect(resp).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('fix 2 — refuses hop 0 when the start URL is a private 10.x and allowPrivate is false', async () => {
+    const fetchImpl = vi.fn();
+    const resp = await _guardedFollow('http://10.0.0.9/x', { method: 'GET' }, cfg, fetchImpl);
+    expect(resp).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('fix 1 — a 302 to a different public host is followed with GET and NO body', async () => {
+    let call = 0;
+    const seen: Array<{ url: string; method?: string; body?: unknown }> = [];
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      call += 1;
+      seen.push({ url, method: init.method, body: init.body });
+      if (call === 1) {
+        return res('', {
+          status: 302,
+          headers: { location: 'https://other-public-host.example/landing' },
+        });
+      }
+      return res('<html>ok</html>', { headers: { 'content-type': 'text/html' } });
+    });
+    const resp = await _guardedFollow(
+      'https://solver.example.com/v1',
+      { method: 'POST', body: JSON.stringify({ url: 'https://target.example.com' }) },
+      cfg,
+      fetchImpl,
+    );
+    expect(resp).not.toBeNull();
+    expect(seen.length).toBe(2);
+    // Hop 0 keeps the original POST + body.
+    expect(seen[0].method).toBe('POST');
+    expect(seen[0].body).toBeTruthy();
+    // The redirected hop must be a GET with NO body — the target URL is not
+    // re-POSTed to a different public host.
+    expect(seen[1].method).toBe('GET');
+    expect(seen[1].body == null).toBe(true);
+  });
+});
+
+describe('hostedReaderFetch — target URL encoding (fix 3)', () => {
+  it('percent-encodes the target so its query cannot inject reader params', async () => {
+    const cfg = { ...baseCfg, hostedReaderUrl: 'https://reader.example.com' };
+    let composed = '';
+    const fetchImpl = vi.fn(async (url: string) => {
+      composed = url;
+      return res('<html>ok</html>', { headers: { 'content-type': 'text/html' } });
+    });
+    await hostedReaderFetch(
+      'https://target.example.com/page?secret=leaked&x=1',
+      cfg,
+      { fetchImpl },
+    );
+    // The reader request path carries the ENCODED target — no raw `?`/`&` from
+    // the target leaks into the reader URL as its own query params.
+    expect(composed).toContain(encodeURIComponent('https://target.example.com/page?secret=leaked&x=1'));
+    // The composed URL's OWN query must be empty (target didn't inject params).
+    const composedUrl = new URL(composed);
+    expect(composedUrl.search).toBe('');
+  });
+
+  it("a crafted target with '/../' and '&x=' cannot inject reader path/params", async () => {
+    const cfg = { ...baseCfg, hostedReaderUrl: 'https://reader.example.com/' };
+    let composed = '';
+    const fetchImpl = vi.fn(async (url: string) => {
+      composed = url;
+      return res('<html>ok</html>', { headers: { 'content-type': 'text/html' } });
+    });
+    await hostedReaderFetch('https://evil.example.com/a/../../admin&inject=1', cfg, { fetchImpl });
+    const composedUrl = new URL(composed);
+    // No injected query params on the reader URL.
+    expect(composedUrl.search).toBe('');
+    // The path did not traverse above the reader base (no `/admin` sibling).
+    expect(composedUrl.pathname).not.toContain('/admin');
   });
 });
 

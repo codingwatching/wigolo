@@ -55,7 +55,7 @@ function hostOf(u: string): string | null {
  * the terminal (non-3xx) Response, or null when a hop is blocked / the hop cap
  * is exceeded / the request errors.
  */
-async function guardedFollow(
+export async function _guardedFollow(
   startUrl: string,
   init: RequestInit,
   cfg: EscapeHatchConfig,
@@ -67,12 +67,29 @@ async function guardedFollow(
   const seen = new Set<string>();
   const headers = new Headers(init.headers);
 
+  // Request shape for the CURRENT hop. On a redirect we drop to a GET with no
+  // body (standard redirect semantics) so the target URL — carried in the POST
+  // body of the solver call — is NEVER re-POSTed to a different host the
+  // service 3xx-redirects to.
+  let method = init.method ?? 'GET';
+  let body: BodyInit | null | undefined = init.body;
+
   for (let hop = 0; hop <= maxHops; hop++) {
     if (seen.has(current)) {
       logger.debug('escape-hatch redirect loop', { url: redactUrl(current) });
       return null;
     }
     seen.add(current);
+
+    // Self-contained guard: re-guard EVERY hop, including hop 0. The follower
+    // must not trust its input even though both callers also pre-guard.
+    const guard = guardFetchUrl(current, hop === 0 ? 'sidecar URL' : 'redirect location', {
+      allowPrivate,
+    });
+    if (!guard.ok) {
+      logger.debug('escape-hatch hop blocked', { reason: guard.code, hop });
+      return null;
+    }
 
     // Drop the Cookie on a cross-host hop so a host-scoped credential never
     // leaks to a different origin.
@@ -83,7 +100,13 @@ async function guardedFollow(
 
     let resp: Response;
     try {
-      resp = await fetchImpl(current, { ...init, headers: hopHeaders, redirect: 'manual' });
+      resp = await fetchImpl(current, {
+        ...init,
+        method,
+        body,
+        headers: hopHeaders,
+        redirect: 'manual',
+      });
     } catch (err) {
       logger.debug('escape-hatch fetch error', {
         url: redactUrl(current),
@@ -101,11 +124,10 @@ async function guardedFollow(
       } catch {
         return null;
       }
-      const guard = guardFetchUrl(next, 'redirect location', { allowPrivate });
-      if (!guard.ok) {
-        logger.debug('escape-hatch redirect blocked', { reason: guard.code });
-        return null;
-      }
+      // Standard redirect semantics: the followed request becomes a bodyless
+      // GET. This is re-guarded at the top of the next iteration.
+      method = 'GET';
+      body = undefined;
       current = next;
       continue;
     }
@@ -169,7 +191,7 @@ export async function solverFetch(
   });
 
   const body = JSON.stringify({ cmd: 'request.get', url: targetUrl, maxTimeout: cfg.fetchTimeoutMs });
-  const resp = await guardedFollow(
+  const resp = await _guardedFollow(
     cfg.solverUrl,
     {
       method: 'POST',
@@ -224,17 +246,18 @@ export async function hostedReaderFetch(
   }
 
   // Reader services conventionally take the target as a path suffix
-  // (`https://reader/<target>`). Build that without letting the target's own
-  // scheme corrupt the base.
+  // (`https://reader/<target>`). Percent-encode the target so its own query /
+  // path segments cannot inject extra params or traverse into the reader
+  // request — the whole target becomes a single opaque path component.
   const base = cfg.hostedReaderUrl.endsWith('/') ? cfg.hostedReaderUrl : `${cfg.hostedReaderUrl}/`;
-  const requestUrl = `${base}${targetUrl}`;
+  const requestUrl = `${base}${encodeURIComponent(targetUrl)}`;
 
   logger.info('routing to hosted reader service (egresses target off-machine)', {
     reader: redactUrl(cfg.hostedReaderUrl),
     target: redactUrl(targetUrl),
   });
 
-  const resp = await guardedFollow(requestUrl, { method: 'GET', signal: opts.signal }, cfg, fetchImpl);
+  const resp = await _guardedFollow(requestUrl, { method: 'GET', signal: opts.signal }, cfg, fetchImpl);
   if (!resp || resp.status >= 400) return null;
 
   let html: string;
