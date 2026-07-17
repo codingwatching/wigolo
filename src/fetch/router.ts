@@ -19,7 +19,18 @@ import {
 import {
   getDomainRouting,
   recordTlsImpersonationSuccess,
+  getDomainClearance,
+  clearDomainClearance,
+  type DomainClearance,
 } from '../cache/store.js';
+import {
+  CLEARANCE_COOKIE_NAME,
+  clearanceCookieValue,
+  isClearanceFresh,
+  uaMatchesTier,
+  parsedClearanceCookie,
+  type ClearanceTier,
+} from './clearance-reuse.js';
 import { ChallengeBlockedError } from './browser-pool.js';
 import { BrowserAcquirer, BROWSER_INSTALLING_NOTE, BROWSER_UNAVAILABLE_ERROR } from './browser-acquire.js';
 import { anySignal } from '../util/abort.js';
@@ -122,6 +133,7 @@ export interface BrowserFetchArgs {
   cdpUrl?: string;
   signal?: AbortSignal;
   stealth?: boolean;
+  injectedCookies?: Array<{ name: string; value: string; domain: string; path?: string }>;
 }
 
 export interface BrowserPoolInterface {
@@ -168,6 +180,16 @@ export interface TlsRoutingPersistence {
   recordSuccess(domain: string): void;
 }
 
+/**
+ * Anti-bot clearance store seam (S-A2). The router reads a stored clearance
+ * before a dispatch and purges a dead one after a re-challenge. Injectable so
+ * router unit tests exercise reuse without a DB; defaults to the cache store.
+ */
+export interface ClearanceStore {
+  get(host: string): DomainClearance | null;
+  clear(host: string): void;
+}
+
 export interface SmartRouterOptions {
   httpClient?: HttpClient;
   browserPool?: BrowserPoolInterface;
@@ -177,6 +199,8 @@ export interface SmartRouterOptions {
   tlsFetcher?: TlsFetcher;
   /** Persistence for `prefer_tls_impersonation` learning. */
   tlsPersistence?: TlsRoutingPersistence;
+  /** Anti-bot clearance reuse store. Defaults to the cache store. */
+  clearanceStore?: ClearanceStore;
   /** Overrides the default HEAD/magic-bytes PDF probe (tests inject a stub). */
   pdfProbe?: PdfProbe;
   /**
@@ -410,6 +434,7 @@ export class SmartRouter {
   private readonly tlsPersistence: TlsRoutingPersistence;
   private readonly pdfProbe: PdfProbe;
   private readonly browserAcquirer: BrowserAcquirer;
+  private readonly clearanceStore: ClearanceStore;
 
   constructor(httpClient: HttpClient, browserPool: BrowserPoolInterface);
   constructor(options: SmartRouterOptions);
@@ -429,6 +454,7 @@ export class SmartRouter {
         'playwrightFetcher' in httpClientOrOptions ||
         'tlsFetcher' in httpClientOrOptions ||
         'tlsPersistence' in httpClientOrOptions ||
+        'clearanceStore' in httpClientOrOptions ||
         'pdfProbe' in httpClientOrOptions)
     ) {
       const opts = httpClientOrOptions as SmartRouterOptions;
@@ -443,6 +469,7 @@ export class SmartRouter {
       this.tlsPersistence = opts.tlsPersistence ?? defaultTlsPersistence();
       this.pdfProbe = opts.pdfProbe ?? defaultPdfProbe;
       this.browserAcquirer = opts.browserAcquirer ?? new BrowserAcquirer();
+      this.clearanceStore = opts.clearanceStore ?? defaultClearanceStore();
       return;
     } else {
       // Backwards-compat: single HttpClient positional (unusual but safe)
@@ -454,6 +481,75 @@ export class SmartRouter {
     this.tlsPersistence = defaultTlsPersistence();
     this.pdfProbe = defaultPdfProbe;
     this.browserAcquirer = new BrowserAcquirer();
+    this.clearanceStore = defaultClearanceStore();
+  }
+
+  /**
+   * The stored clearance for `host` when it is fresh AND presentable by `tier`,
+   * else null. Purges an EXPIRED entry as a side-effect so a dead cookie is not
+   * carried forward. A UA mismatch (e.g. a Firefox-minted clearance for the
+   * Chromium browser tier) returns null WITHOUT clearing — the entry may still
+   * be valid for another tier.
+   */
+  private clearanceFor(host: string, tier: ClearanceTier): DomainClearance | null {
+    let stored: DomainClearance | null;
+    try {
+      stored = this.clearanceStore.get(host);
+    } catch {
+      return null;
+    }
+    if (!stored) return null;
+    if (!isClearanceFresh(stored, Date.now())) {
+      try { this.clearanceStore.clear(host); } catch { /* best-effort */ }
+      return null;
+    }
+    if (!uaMatchesTier(stored.ua, tier)) return null;
+    if (clearanceCookieValue(stored.cookie) == null) return null;
+    return stored;
+  }
+
+  /**
+   * Merge a reused clearance `Cookie:` header for the header tiers (tls/http)
+   * into `headers` without clobbering caller headers. Returns the original
+   * reference when there is no usable clearance so no allocation happens on the
+   * common path.
+   */
+  private withClearanceHeader(
+    host: string,
+    tier: 'tls' | 'http',
+    headers?: Record<string, string>,
+  ): Record<string, string> | undefined {
+    const clearance = this.clearanceFor(host, tier);
+    if (!clearance) return headers;
+    const value = clearanceCookieValue(clearance.cookie);
+    if (value == null) return headers;
+    const existingCookie = headers?.['Cookie'] ?? headers?.['cookie'];
+    const cookieValue = existingCookie
+      ? `${existingCookie}; ${CLEARANCE_COOKIE_NAME}=${value}`
+      : `${CLEARANCE_COOKIE_NAME}=${value}`;
+    return { ...headers, Cookie: cookieValue };
+  }
+
+  /**
+   * HTTP-tier dispatch that injects a reused clearance `Cookie:` header for the
+   * URL's host (best-effort cross-tier). Every real HTTP dispatch routes through
+   * here so no call site is left unthreaded. The http-client's redirect follower
+   * strips the Cookie on a cross-host hop, so the cookie never leaks.
+   */
+  private async httpClientFetch(
+    url: string,
+    opts: {
+      headers?: Record<string, string>;
+      timeoutMs?: number;
+      conditionalHeaders?: RouterFetchOptions['conditionalHeaders'];
+      signal?: AbortSignal;
+    },
+  ): Promise<Awaited<ReturnType<HttpClient['fetch']>>> {
+    if (!this.httpClient) throw new Error('SmartRouter: httpClient not configured');
+    let host: string | null = null;
+    try { host = new URL(url).hostname; } catch { host = null; }
+    const headers = host ? this.withClearanceHeader(host, 'http', opts.headers) : opts.headers;
+    return this.httpClient.fetch(url, { ...opts, headers });
   }
 
   private makeDefaultHttpFetcher(): HttpFetcher {
@@ -461,7 +557,7 @@ export class SmartRouter {
       if (!this.httpClient) {
         throw new Error('SmartRouter: httpClient not configured');
       }
-      const r = await this.httpClient.fetch(url, opts);
+      const r = await this.httpClientFetch(url, opts ?? {});
       return { url: r.url, html: r.html, text: '' };
     };
   }
@@ -494,7 +590,7 @@ export class SmartRouter {
       if (isPdf) {
         if (!this.httpClient) throw new Error('SmartRouter: httpClient not configured');
         logger.debug('content-type probe identified a PDF, routing to http instead of browser', { url, domain });
-        const result = await this.httpClient.fetch(url, { headers, conditionalHeaders, signal });
+        const result = await this.httpClientFetch(url, { headers, conditionalHeaders, signal });
         this.ensureStats(domain);
         return this.toRawFetchResult(result);
       }
@@ -551,6 +647,22 @@ export class SmartRouter {
         stage: 'fetch',
         hint: 'run `wigolo warmup --browser` to install the browser engine now, then retry',
       };
+    }
+
+    // Seed a reused browser-tier clearance (same-tier preferred). Skipped for
+    // the CDP path (an external browser owns its own cookie jar) and when the
+    // caller already supplied injectedCookies. The host is scoped onto the
+    // cookie so the browser drops it on any cross-host redirect.
+    if (!browserOptions.cdpUrl && !browserOptions.injectedCookies) {
+      let host: string | null = null;
+      try { host = new URL(url).hostname; } catch { host = null; }
+      if (host) {
+        const clearance = this.clearanceFor(host, 'browser');
+        const cookie = clearance ? parsedClearanceCookie(clearance.cookie, host) : null;
+        if (cookie) {
+          browserOptions.injectedCookies = [cookie];
+        }
+      }
     }
 
     try {
@@ -689,7 +801,7 @@ export class SmartRouter {
       }
       logger.debug('routing to http (cache)', { url });
       if (!this.httpClient) throw new Error('SmartRouter: httpClient not configured');
-      const result = await this.httpClient.fetch(url, {
+      const result = await this.httpClientFetch(url, {
         headers,
         timeoutMs: config.fastTimeoutMs,
         conditionalHeaders,
@@ -737,7 +849,7 @@ export class SmartRouter {
     if (renderJs === 'never') {
       if (!this.httpClient) throw new Error('SmartRouter: httpClient not configured');
       logger.debug('routing to http (never)', { url });
-      const result = await this.httpClient.fetch(url, { headers, conditionalHeaders, signal });
+      const result = await this.httpClientFetch(url, { headers, conditionalHeaders, signal });
       const neverStats = this.ensureStats(domain);
       // A known-SPA domain that returns substantive
       // HTTP content on a render_js: never call proves the domain is
@@ -767,7 +879,7 @@ export class SmartRouter {
     if (looksLikeBinaryDownload(url)) {
       if (!this.httpClient) throw new Error('SmartRouter: httpClient not configured');
       logger.debug('routing to http (binary download)', { url });
-      const result = await this.httpClient.fetch(url, { headers, conditionalHeaders, signal });
+      const result = await this.httpClientFetch(url, { headers, conditionalHeaders, signal });
       this.ensureStats(domain);
       return this.toRawFetchResult(result);
     }
@@ -812,7 +924,7 @@ export class SmartRouter {
     // Try HTTP first
     try {
       if (!this.httpClient) throw new Error('SmartRouter: httpClient not configured');
-      const result = await this.httpClient.fetch(url, { headers, conditionalHeaders, signal });
+      const result = await this.httpClientFetch(url, { headers, conditionalHeaders, signal });
 
       // 304 = unchanged: pass through; never escalate to a browser.
       if (result.statusCode === 304) {
@@ -1082,9 +1194,14 @@ export class SmartRouter {
   ): Promise<{ ok: true; result: RawFetchResult } | { ok: false; reason: 'unavailable' | 'still_blocked' | 'js_required' | 'error'; error?: unknown }>
   {
     const logger = createLogger('fetch');
+    // Best-effort cross-tier reuse: a stored clearance for this host is injected
+    // as a Cookie header (any minting UA is allowed for the header tiers). A
+    // different JA3 may still be re-challenged — that surfaces as an anti-bot
+    // signal below and escalates normally.
+    const tlsHeaders = this.withClearanceHeader(domain, 'tls', headers);
     let r: TlsFetchResult;
     try {
-      r = await this.tlsFetcher(url, { headers, signal });
+      r = await this.tlsFetcher(url, { headers: tlsHeaders, signal });
     } catch (err) {
       if (err instanceof TlsTierUnavailableError) {
         logger.debug('tls tier unavailable, escalating', { url, domain });
@@ -1124,6 +1241,12 @@ export class SmartRouter {
     }
 
     if (isAntiBotSignal(r.statusCode, r.html)) {
+      // Re-validation: if we injected a reused clearance and it STILL tripped
+      // the anti-bot wall, the stored clearance is dead for this tier — purge it
+      // so it isn't replayed, then escalate normally.
+      if (tlsHeaders !== headers) {
+        try { this.clearanceStore.clear(domain); } catch { /* best-effort */ }
+      }
       logger.info('tls tier returned anti-bot signal, escalating to playwright', {
         url,
         domain,
@@ -1166,6 +1289,25 @@ export class SmartRouter {
  * the SmartRouter constructor so tests that never touch the DB never
  * trigger a `getDatabase()` call.
  */
+function defaultClearanceStore(): ClearanceStore {
+  return {
+    get(host) {
+      try {
+        return getDomainClearance(host);
+      } catch {
+        return null;
+      }
+    },
+    clear(host) {
+      try {
+        clearDomainClearance(host);
+      } catch {
+        // Best-effort — swallow.
+      }
+    },
+  };
+}
+
 function defaultTlsPersistence(): TlsRoutingPersistence {
   return {
     getPreferTls(domain) {

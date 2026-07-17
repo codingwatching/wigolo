@@ -137,6 +137,30 @@ async function loadBackend(): Promise<LoadedTlsBackend> {
   return _backendPromise;
 }
 
+/** Host-equality of two URLs; malformed inputs are treated as different hosts. */
+function sameHost(a: string, b: string): boolean {
+  try {
+    return new URL(a).hostname === new URL(b).hostname;
+  } catch {
+    return false;
+  }
+}
+
+/** A copy of `headers` with any Cookie entry removed (case-insensitive), or the
+ *  original reference when there is nothing to strip. */
+function stripCookieHeader(
+  headers: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!headers) return headers;
+  const out: Record<string, string> = {};
+  let stripped = false;
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === 'cookie') { stripped = true; continue; }
+    out[k] = v;
+  }
+  return stripped ? out : headers;
+}
+
 function headersToRecord(h: WreqHeaders | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   if (!h) return out;
@@ -280,8 +304,13 @@ export async function tlsFetch(url: string, options: TlsFetchOptions = {}): Prom
     for (let hop = 0; hop <= maxHops; hop++) {
       if (seen.has(current)) throw new Error(`redirect loop at ${current}`);
       seen.add(current);
+      // Never carry a Cookie across a cross-host redirect hop — a reused,
+      // host-scoped anti-bot clearance must not leak to a different origin.
+      const hopHeaders = sameHost(url, current)
+        ? options.headers
+        : stripCookieHeader(options.headers);
       const resp = await backend.fetch(current, {
-        headers: options.headers,
+        headers: hopHeaders,
         browser,
         signal,
         redirect: 'manual',

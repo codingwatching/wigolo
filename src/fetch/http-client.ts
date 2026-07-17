@@ -38,6 +38,16 @@ function bufferLooksLikePdf(buf: Buffer): boolean {
   return buf.length >= PDF_MAGIC.length && buf.subarray(0, PDF_MAGIC.length).toString('latin1') === PDF_MAGIC;
 }
 
+/** True when both URLs resolve to the same hostname (host-equality, not eTLD+1).
+ *  Malformed inputs are treated as different hosts (fail closed). */
+function isSameHost(a: string, b: string): boolean {
+  try {
+    return new URL(a).hostname === new URL(b).hostname;
+  } catch {
+    return false;
+  }
+}
+
 const RETRYABLE_STATUSES = new Set([429, 502, 503]);
 const RETRYABLE_ERROR_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED']);
 const REDIRECT_STATUSES = new Set([301, 302, 307, 308]);
@@ -161,6 +171,13 @@ async function fetchWithRedirects(
     try {
       const ua = getRotatingUserAgent(getConfig());
       const mergedHeaders: Record<string, string> = { 'User-Agent': ua, ...options.headers };
+      // Never carry a Cookie across a cross-host redirect hop. A reused anti-bot
+      // clearance cookie is host-scoped; leaking it to a different host on a 3xx
+      // would send a credential to an unintended origin.
+      if (!isSameHost(originalUrl, currentUrl)) {
+        delete mergedHeaders['Cookie'];
+        delete mergedHeaders['cookie'];
+      }
       // Conditional GET: inject If-None-Match / If-Modified-Since so the
       // server can return 304 + no body when the resource hasn't changed.
       // Callers (eg. etag-incremental crawl) wire these from the persisted
