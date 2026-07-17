@@ -2,7 +2,17 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parseBrowserTypes } from './fetch/browser-types.js';
 import type { BrowserType } from './types.js';
-import { readPersistedConfig, resetPersistedConfig, defaultConfigPath } from './persisted-config.js';
+import {
+  readPersistedConfig,
+  resetPersistedConfig,
+  defaultConfigPath,
+  readCredentialFromKeychain,
+} from './persisted-config.js';
+import {
+  credentialKeychainUser,
+  recomposeWithUserinfo,
+  splitUserinfo,
+} from './fetch/proxy-credentials.js';
 
 export interface Config {
   searxngUrl: string | null;
@@ -76,6 +86,10 @@ export interface Config {
   crawlPrivateDelayMs: number;
   useProxy: boolean;
   proxyUrl: string | null;
+  /** Opt-in challenge-solver service URL (Tier-B escape hatch). Off unless set. */
+  solverUrl: string | null;
+  /** Opt-in hosted reader-service URL (Tier-B escape hatch). Off unless set. */
+  hostedReaderUrl: string | null;
   userAgent: string | null;
   validateLinks: boolean;
   respectRobotsTxt: boolean;
@@ -272,6 +286,21 @@ export function validateTlsBrowser(raw: string | null | undefined, fallback: str
   return fallback;
 }
 
+/**
+ * Resolve a proxy/solver/reader URL, re-composing a keychain-stored credential
+ * onto a credential-free host URL. A value that already carries inline userinfo
+ * (typically from an env var — trusted + ephemeral) is used verbatim; the
+ * keychain is only consulted to complete a stripped, disk-persisted URL.
+ */
+function resolveCredentialUrl(raw: string | null, settingsKey: string): string | null {
+  if (!raw) return raw;
+  const { userinfo } = splitUserinfo(raw);
+  if (userinfo !== null) return raw; // already has creds (env) — use as-is
+  const stored = readCredentialFromKeychain(credentialKeychainUser(settingsKey));
+  if (!stored) return raw;
+  return recomposeWithUserinfo(raw, stored);
+}
+
 let cachedConfig: Config | null = null;
 
 export function getConfig(): Config {
@@ -328,7 +357,15 @@ export function getConfig(): Config {
     crawlPrivateConcurrency: envInt('CRAWL_PRIVATE_CONCURRENCY', 10, settings, 'crawlPrivateConcurrency'),
     crawlPrivateDelayMs: envInt('CRAWL_PRIVATE_DELAY_MS', 0, settings, 'crawlPrivateDelayMs'),
     useProxy: envBool('USE_PROXY', false, settings, 'useProxy'),
-    proxyUrl: envStr('PROXY_URL', null, settings, 'proxyUrl'),
+    proxyUrl: resolveCredentialUrl(envStr('PROXY_URL', null, settings, 'proxyUrl'), 'proxyUrl'),
+    solverUrl: resolveCredentialUrl(
+      envStr('WIGOLO_SOLVER_URL', null, settings, 'solverUrl'),
+      'solverUrl',
+    ),
+    hostedReaderUrl: resolveCredentialUrl(
+      envStr('WIGOLO_HOSTED_READER_URL', null, settings, 'hostedReaderUrl'),
+      'hostedReaderUrl',
+    ),
     userAgent: envStr('USER_AGENT', null, settings, 'userAgent'),
     validateLinks: envBool('VALIDATE_LINKS', true, settings, 'validateLinks'),
     respectRobotsTxt: envBool('RESPECT_ROBOTS_TXT', true, settings, 'respectRobotsTxt'),
