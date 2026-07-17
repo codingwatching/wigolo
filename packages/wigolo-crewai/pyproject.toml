@@ -39,7 +39,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/KnockOutEZ/wigolo"
-Repository = "https://github.com/KnockOutEZ/wigolo/tree/main/packages/crewai-wigolo"
+Repository = "https://github.com/KnockOutEZ/wigolo/tree/main/packages/wigolo-crewai"
 Issues = "https://github.com/KnockOutEZ/wigolo/issues"
 
 [tool.pytest.ini_options]

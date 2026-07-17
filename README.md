@@ -353,9 +353,9 @@ Drop wigolo's tools into the agent framework you already use — opt-in wrappers
 
 | Framework | Package | What you get |
 |-----------|---------|--------------|
-| **LangChain** | `packages/langchain-wigolo` | Each tool as a LangChain `BaseTool`, plus a `BaseRetriever` backed by search/find_similar for RAG chains. |
-| **CrewAI** | `packages/crewai-wigolo` | wigolo tools as CrewAI `BaseTool`s via `wigolo_tools()`, ready to hand to any crew. |
-| **LlamaIndex** | `packages/llama-index-readers-wigolo` | A `BaseReader` that loads fetched / crawled / searched pages as LlamaIndex documents. |
+| **LangChain** | `packages/wigolo-langchain` | Each tool as a LangChain `BaseTool`, plus a `BaseRetriever` backed by search/find_similar for RAG chains. |
+| **CrewAI** | `packages/wigolo-crewai` | wigolo tools as CrewAI `BaseTool`s via `wigolo_tools()`, ready to hand to any crew. |
+| **LlamaIndex** | `packages/wigolo-llamaindex` | A `BaseReader` that loads fetched / crawled / searched pages as LlamaIndex documents. |
 | **Vercel AI SDK** | `packages/wigolo-ai-sdk` | Tool factories for `generateText` / `streamText` `tools`, edge-friendly. |
 
 Published as `wigolo-langchain`, `wigolo-crewai`, and `wigolo-llamaindex` on PyPI and `wigolo-ai-sdk` on npm; see each package's README for the import-and-call quickstart. They're opt-in extras — the core MCP server never depends on any framework.

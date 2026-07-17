@@ -104,9 +104,9 @@ jobs:
           check_npm sdks/typescript
           check_npm packages/wigolo-ai-sdk
           check_py sdks/python
-          check_py packages/langchain-wigolo
-          check_py packages/crewai-wigolo
-          check_py packages/llama-index-readers-wigolo
+          check_py packages/wigolo-langchain
+          check_py packages/wigolo-crewai
+          check_py packages/wigolo-llamaindex
           if [ "$fail" != "0" ]; then exit 1; fi
           echo "All sub-package versions agree on $TAG_VERSION"
 
@@ -140,7 +140,7 @@ jobs:
           twine upload dist/*
 
       - name: Publish wigolo-langchain (PyPI)
-        working-directory: packages/langchain-wigolo
+        working-directory: packages/wigolo-langchain
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
@@ -149,7 +149,7 @@ jobs:
           twine upload dist/*
 
       - name: Publish wigolo-crewai (PyPI)
-        working-directory: packages/crewai-wigolo
+        working-directory: packages/wigolo-crewai
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
@@ -158,7 +158,7 @@ jobs:
           twine upload dist/*
 
       - name: Publish wigolo-llamaindex (PyPI)
-        working-directory: packages/llama-index-readers-wigolo
+        working-directory: packages/wigolo-llamaindex
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}

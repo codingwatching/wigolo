@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# packages/crewai-wigolo/tests/conftest.py -> repo root is three parents up.
+# packages/wigolo-crewai/tests/conftest.py -> repo root is three parents up.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _SDK_SRC = _REPO_ROOT / "sdks" / "python" / "src"
 if _SDK_SRC.is_dir():
