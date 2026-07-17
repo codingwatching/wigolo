@@ -3,6 +3,7 @@ import type { QueryType } from './decompose.js';
 import { extractHighlights } from '../search/highlights.js';
 import { buildCitationGraph } from './citation-graph.js';
 import { detectEntityGaps } from './entity-extractor.js';
+import { SCORE_FLOOR } from './source-validation.js';
 
 const MAX_HIGHLIGHTS = 12;
 const MAX_KEY_FINDING_LEN = 280;
@@ -141,6 +142,11 @@ function buildKeyFindings(
   const out: Array<{ text: string; fetchedIdx: number }> = [];
   const seen = new Set<string>();
   for (const { s, fetchedIdx } of ordered) {
+    // A source the cross-encoder judged NOT relevant (score < floor) must
+    // never produce a finding. render-brief only caps the RENDERED text at the
+    // top-8; without this guard the returned array leaks negative-score junk at
+    // its tail. Sorted desc, so the first sub-floor source ends the scan.
+    if (s.relevance_score < SCORE_FLOOR) break;
     const first = firstSubstantiveParagraph(s.markdown_content);
     if (!first) continue;
     const trimmed = first.length > MAX_KEY_FINDING_LEN

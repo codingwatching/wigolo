@@ -69,6 +69,61 @@ describe('buildResearchBrief', () => {
     expect(brief.key_findings[0]).toContain('topic B');
   });
 
+  // WHY: render-brief.ts caps the RENDERED report to the top-8 findings, which
+  // hides negative-score junk from the human-readable text — but the returned
+  // brief.key_findings ARRAY is consumed programmatically (host LLM, tests,
+  // downstream tools). A source the cross-encoder judged NOT relevant
+  // (relevance_score < 0) must never leak an entry into that array, even at the
+  // tail where the rendered slice would drop it.
+  it('does not leak a negative-score source into the returned key_findings array', async () => {
+    const sources = [
+      mkSource({
+        url: 'https://good.com',
+        relevance_score: 4.2,
+        markdown_content: 'A clearly on-topic paragraph about the subject with enough substantive length to survive the finding filter and land in the array.',
+      }),
+      mkSource({
+        url: 'https://junk.com',
+        relevance_score: -11,
+        markdown_content: 'An off-topic paragraph that the reranker scored well below zero yet is long enough that it would otherwise produce a finding entry.',
+      }),
+    ];
+    const brief = await buildResearchBrief('q', sources, [], 3000, 40000);
+    expect(brief.key_findings.length).toBe(1);
+    expect(brief.key_findings[0]).toContain('on-topic');
+    expect(brief.key_findings.join(' ')).not.toContain('off-topic');
+  });
+
+  it('still produces entries for positive-score sources (no regression)', async () => {
+    const sources = [
+      mkSource({ url: 'https://a.com', relevance_score: 2.1, markdown_content: 'First substantive on-topic paragraph long enough to become a key finding entry in the returned array.' }),
+      mkSource({ url: 'https://b.com', relevance_score: 0.3, markdown_content: 'Second distinct substantive on-topic paragraph also long enough to become a separate key finding entry.' }),
+    ];
+    const brief = await buildResearchBrief('q', sources, [], 3000, 40000);
+    expect(brief.key_findings.length).toBe(2);
+  });
+
+  it('array floor matches the rendered report (no sub-floor entries beyond the render cap)', async () => {
+    // Build enough positive sources to exceed the rendered top-8 cap, then add
+    // a negative-score straggler. The returned array must not contain the
+    // straggler — the floor is applied in buildKeyFindings, not just at render.
+    const sources = Array.from({ length: 10 }, (_, i) =>
+      mkSource({
+        url: `https://pos${i}.com`,
+        relevance_score: 5 - i * 0.1,
+        markdown_content: `Positive on-topic finding number ${i} with sufficient prose length to clear the minimum finding threshold and be included.`,
+      }),
+    );
+    sources.push(mkSource({
+      url: 'https://neg.com',
+      relevance_score: -3,
+      markdown_content: 'A negative-score off-topic straggler that would otherwise sit at the tail of the key findings array below the render cap.',
+    }));
+    const brief = await buildResearchBrief('q', sources, [], 3000, 40000);
+    expect(brief.key_findings.every((f) => !f.includes('straggler'))).toBe(true);
+    expect(brief.key_findings.length).toBe(10);
+  });
+
   it('trims long findings with ellipsis', async () => {
     const sources = [mkSource({ markdown_content: 'a'.repeat(500) })];
     const brief = await buildResearchBrief('q', sources, [], 3000, 40000);
