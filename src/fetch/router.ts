@@ -1,4 +1,4 @@
-import { getConfig } from '../config.js';
+import { getConfig, type Config } from '../config.js';
 import { createLogger } from '../logger.js';
 import { contentAppearsEmpty } from './content-check.js';
 import { getAuthOptions } from './auth.js';
@@ -109,10 +109,25 @@ export interface HttpClient {
   }>;
 }
 
+/**
+ * Options accepted by the browser tier's `fetchWithBrowser`. `stealth` opts a
+ * single fetch into the dedicated anti-bot fingerprint-hardening context path.
+ */
+export interface BrowserFetchArgs {
+  headers?: Record<string, string>;
+  storageStatePath?: string;
+  userDataDir?: string;
+  screenshot?: boolean;
+  actions?: BrowserAction[];
+  cdpUrl?: string;
+  signal?: AbortSignal;
+  stealth?: boolean;
+}
+
 export interface BrowserPoolInterface {
   fetchWithBrowser(
     url: string,
-    options?: { headers?: Record<string, string>; storageStatePath?: string; userDataDir?: string; screenshot?: boolean; actions?: BrowserAction[]; cdpUrl?: string; signal?: AbortSignal },
+    options?: BrowserFetchArgs,
   ): Promise<RawFetchResult>;
   /** Optional pre-launch of the browser engine so a later fetch doesn't pay
    *  cold-start inline. Idempotent + best-effort. Pools that don't implement it
@@ -344,6 +359,34 @@ export function isAntiBotTlsFirstUrl(url: string, extraDomains: readonly string[
   return isAntiBotTlsDomain(host, extraDomains);
 }
 
+/**
+ * Whether a browser-tier fetch should use the dedicated anti-bot
+ * fingerprint-hardening (stealth) context, given the configured mode and
+ * whether THIS browser fetch was reached via an anti-bot / challenge
+ * escalation.
+ *
+ *   - 'off'  → never harden.
+ *   - 'on'   → harden every browser fetch.
+ *   - 'auto' → harden ONLY an anti-bot / challenge escalation (a bot wall the
+ *              lower tiers could not clear). A benign SPA-shell render or an
+ *              explicit browser request (render_js:'always' / auth / actions)
+ *              is left on the pooled default fingerprint — hardening a benign
+ *              page adds cost + a distinct context for no anti-bot benefit.
+ */
+export function stealthForBrowser(
+  config: Pick<Config, 'stealth'>,
+  ctx: { antiBotEscalation: boolean },
+): boolean {
+  switch (config.stealth) {
+    case 'off':
+      return false;
+    case 'on':
+      return true;
+    default:
+      return ctx.antiBotEscalation;
+  }
+}
+
 // Connection-level timeout / reset errors that surface as a THROW
 // (no HTTP status) rather than a response. Mirrors the retryable set the HTTP
 // client uses; the AbortSignal.timeout path throws TimeoutError, while raw
@@ -457,7 +500,14 @@ export class SmartRouter {
       }
     }
     if (!this.browserPool) throw new Error('SmartRouter: browserPool not configured');
-    return this.browserFetch(url, { headers, screenshot, signal });
+    // Domain-marked / binary auto path — not an anti-bot escalation, so 'auto'
+    // leaves it unhardened; 'on' still hardens every browser fetch.
+    return this.browserFetch(url, {
+      headers,
+      screenshot,
+      signal,
+      stealth: stealthForBrowser(getConfig(), { antiBotEscalation: false }),
+    });
   }
 
   /**
@@ -477,7 +527,7 @@ export class SmartRouter {
    */
   private async browserFetch(
     url: string,
-    options: { headers?: Record<string, string>; storageStatePath?: string; userDataDir?: string; screenshot?: boolean; actions?: BrowserAction[]; cdpUrl?: string; signal?: AbortSignal; fallback?: RawFetchResult },
+    options: BrowserFetchArgs & { fallback?: RawFetchResult },
   ): Promise<RawFetchResult | StageError> {
     if (!this.browserPool) throw new Error('SmartRouter: browserPool not configured');
 
@@ -657,7 +707,14 @@ export class SmartRouter {
       if (!this.browserPool) throw new Error('SmartRouter: browserPool not configured');
       const authOptions = useAuth ? (await getAuthOptions() ?? {}) : {};
       logger.debug('routing to playwright', { url, reason: 'actions present' });
-      return this.browserFetch(url, { headers, screenshot, actions, ...authOptions, signal });
+      return this.browserFetch(url, {
+        headers,
+        screenshot,
+        actions,
+        ...authOptions,
+        signal,
+        stealth: stealthForBrowser(config, { antiBotEscalation: false }),
+      });
     }
 
     // Always Playwright for auth or explicit override
@@ -665,7 +722,15 @@ export class SmartRouter {
       if (!this.browserPool) throw new Error('SmartRouter: browserPool not configured');
       const authOptions = useAuth ? (await getAuthOptions() ?? {}) : {};
       logger.debug('routing to playwright', { url, reason: useAuth ? 'auth' : 'render_js=always' });
-      return this.browserFetch(url, { headers, screenshot, ...authOptions, signal });
+      // Explicit browser request (auth / render_js:always) — not an anti-bot
+      // escalation, so 'auto' leaves it unhardened; 'on' still hardens.
+      return this.browserFetch(url, {
+        headers,
+        screenshot,
+        ...authOptions,
+        signal,
+        stealth: stealthForBrowser(config, { antiBotEscalation: false }),
+      });
     }
 
     // HTTP only, no fallback
@@ -799,7 +864,13 @@ export class SmartRouter {
           signal: describeAntiBot(result.statusCode, result.html),
         });
         stats.preferPlaywright = true;
-        return this.browserFetch(url, { headers, screenshot, signal, fallback: this.toRawFetchResult(result) });
+        return this.browserFetch(url, {
+          headers,
+          screenshot,
+          signal,
+          stealth: stealthForBrowser(config, { antiBotEscalation: true }),
+          fallback: this.toRawFetchResult(result),
+        });
       }
 
       // Anti-bot signal (403/503 or challenge body, plus 429 with
@@ -819,7 +890,13 @@ export class SmartRouter {
           tlsReason: tlsTry.reason,
         });
         stats.preferPlaywright = true;
-        return this.browserFetch(url, { headers, screenshot, signal, fallback: this.toRawFetchResult(result) });
+        return this.browserFetch(url, {
+          headers,
+          screenshot,
+          signal,
+          stealth: stealthForBrowser(config, { antiBotEscalation: true }),
+          fallback: this.toRawFetchResult(result),
+        });
       }
 
       // With TLS tier disabled, escalate to Playwright
@@ -840,7 +917,13 @@ export class SmartRouter {
           signal: describeAntiBot(result.statusCode, result.html),
         });
         stats.preferPlaywright = true;
-        return this.browserFetch(url, { headers, screenshot, signal, fallback: this.toRawFetchResult(result) });
+        return this.browserFetch(url, {
+          headers,
+          screenshot,
+          signal,
+          stealth: stealthForBrowser(config, { antiBotEscalation: true }),
+          fallback: this.toRawFetchResult(result),
+        });
       }
 
       // SPA-shell detection is only meaningful for 2xx
@@ -854,7 +937,14 @@ export class SmartRouter {
         if (!this.browserPool) throw new Error('SmartRouter: browserPool not configured');
         logger.info('SPA shell detected, marking domain for playwright', { url, domain });
         stats.preferPlaywright = true;
-        return this.browserFetch(url, { headers, screenshot, signal, fallback: this.toRawFetchResult(result) });
+        // Benign SPA render — anti-bot hardening only when the mode is 'on'.
+        return this.browserFetch(url, {
+          headers,
+          screenshot,
+          signal,
+          stealth: stealthForBrowser(config, { antiBotEscalation: false }),
+          fallback: this.toRawFetchResult(result),
+        });
       }
 
       // A known-SPA domain (pre-marked preferPlaywright
@@ -905,7 +995,14 @@ export class SmartRouter {
         if (!this.browserPool) throw new Error('SmartRouter: browserPool not configured');
         logger.info('failure threshold reached, marking domain for playwright', { url, domain, threshold });
         stats.preferPlaywright = true;
-        return this.browserFetch(url, { headers, screenshot, signal });
+        // Repeated plain-HTTP failure is not itself an anti-bot signal —
+        // harden only when the mode is 'on'.
+        return this.browserFetch(url, {
+          headers,
+          screenshot,
+          signal,
+          stealth: stealthForBrowser(config, { antiBotEscalation: false }),
+        });
       }
 
       throw err;
