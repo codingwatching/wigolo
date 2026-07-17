@@ -3,6 +3,8 @@ import { mkdirSync } from 'node:fs';
 import { SmartRouter, type HttpClient } from '../fetch/router.js';
 import { BrowserPool } from '../fetch/browser-pool.js';
 import { httpFetch } from '../fetch/http-client.js';
+import { DuckDuckGoEngine } from '../search/engines/duckduckgo.js';
+import { BingEngine } from '../search/engines/bing.js';
 import { initDatabase, closeDatabase } from '../cache/db.js';
 import { BackendStatus } from '../server/backend-status.js';
 import { getConfig } from '../config.js';
@@ -161,8 +163,11 @@ async function dispatch(
  * One-shot runner for the ten MCP tools. Initializes the DB + fetch router the
  * same way the interactive shell does, but is searxng-free BY CONSTRUCTION: it
  * never calls `resolveSearchBackend` and never constructs a sidecar process.
- * The default core search provider needs no external engines, so the executor
- * `engines` list is empty.
+ * The `search`/`fetch` tools route through the core provider (its own direct
+ * adapters), but the research/agent/find_similar pipelines search the passed
+ * engine instances directly — so we seed the same keyless direct engines the
+ * MCP server uses (DuckDuckGo + Bing, no sidecar). Without these, one-shot
+ * research/agent/find_similar would find zero web sources.
  *
  * Contract: RESULT → stdout, ALL logs → stderr. `--json` emits the tool's
  * MCP-shape JSON on stdout (exit 0), a failure exits 1, and under `--json` a
@@ -193,7 +198,11 @@ export async function runTool(command: string, rawArgs: string[]): Promise<numbe
   const browserPool = new BrowserPool();
   const router = new SmartRouter(httpClient, browserPool);
   const backendStatus = new BackendStatus();
-  const deps: ReplDeps = { router, engines: [], backendStatus };
+  const deps: ReplDeps = {
+    router,
+    engines: [new DuckDuckGoEngine(), new BingEngine()],
+    backendStatus,
+  };
 
   try {
     const result = await dispatch(command, parsed, deps);

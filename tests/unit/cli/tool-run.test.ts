@@ -36,9 +36,11 @@ vi.mock('../../../src/cli/shutdown.js', () => ({
 // Domain handlers.
 vi.mock('../../../src/tools/search.js', () => ({ handleSearch: vi.fn() }));
 vi.mock('../../../src/tools/fetch.js', () => ({ handleFetch: vi.fn() }));
+vi.mock('../../../src/tools/research.js', () => ({ handleResearch: vi.fn() }));
 
 import { handleSearch } from '../../../src/tools/search.js';
 import { handleFetch } from '../../../src/tools/fetch.js';
+import { handleResearch } from '../../../src/tools/research.js';
 import { runTool } from '../../../src/cli/tool-run.js';
 
 function captureStdout(): { restore: () => void; text: () => string } {
@@ -77,6 +79,26 @@ describe('runTool', () => {
     expect(resolveSearchBackend).not.toHaveBeenCalled();
     expect(getBootstrapState).not.toHaveBeenCalled();
     expect(searxngStart).not.toHaveBeenCalled();
+  });
+
+  it('WHY: seeds direct web engines so one-shot research/agent/find_similar find sources (not searxng-empty)', async () => {
+    // research/agent/find_similar pipelines search the passed SearchEngine
+    // instances directly (unlike search/fetch, which use the core provider).
+    // A one-shot run with an empty engines list silently returns zero sources —
+    // this guards that the runner seeds the keyless direct engines.
+    vi.mocked(handleResearch).mockResolvedValue({
+      report: 'r', sources: [], sub_queries: [], citations: [],
+    } as unknown as Awaited<ReturnType<typeof handleResearch>>);
+    const cap = captureStdout();
+    try {
+      await runTool('research', ['what is rag', '--json']);
+    } finally {
+      cap.restore();
+    }
+    expect(handleResearch).toHaveBeenCalled();
+    const enginesArg = vi.mocked(handleResearch).mock.calls[0][1];
+    expect(Array.isArray(enginesArg)).toBe(true);
+    expect(enginesArg.length).toBeGreaterThanOrEqual(2);
   });
 
   it('search --json: exit 0 and full stdout parses as the MCP-shape data', async () => {
