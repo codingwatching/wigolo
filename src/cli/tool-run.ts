@@ -8,6 +8,7 @@ import { BackendStatus } from '../server/backend-status.js';
 import { getConfig } from '../config.js';
 import { createLogger } from '../logger.js';
 import { parseArgs, type ParsedArgs } from '../repl/parser.js';
+import { booleanFlagsFor } from './flag-bridge.js';
 import {
   formatSearchResults,
   formatFetchResult,
@@ -180,8 +181,9 @@ export async function runTool(command: string, rawArgs: string[]): Promise<numbe
 
   const useJson = rawArgs.includes('--json');
   const args = rawArgs.filter((a) => a !== '--json');
-  // `parseArgs` expects the command token at index 0.
-  const parsed = parseArgs([command, ...args]);
+  // `parseArgs` expects the command token at index 0. The boolean-flag set
+  // keeps bare no-value flags (e.g. --no-content) from swallowing a positional.
+  const parsed = parseArgs([command, ...args], booleanFlagsFor(command));
 
   const config = getConfig();
   mkdirSync(config.dataDir, { recursive: true });

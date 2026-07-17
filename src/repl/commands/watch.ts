@@ -2,6 +2,7 @@ import type { WatchJobInput, WatchJobOutput, WatchAction } from '../../types.js'
 import type { ParsedArgs } from '../parser.js';
 import type { ReplDeps } from './types.js';
 import { handleWatch } from '../../tools/watch.js';
+import { coerceFlags, mergeBridged } from '../../cli/flag-bridge.js';
 import { createLogger } from '../../logger.js';
 
 const log = createLogger('repl');
@@ -56,6 +57,7 @@ export async function executeWatch(args: ParsedArgs, deps: ReplDeps): Promise<Wa
     }
 
     const input: WatchJobInput = { action };
+    const consumed = new Set<string>();
 
     if (action === 'create') {
       const url = args.positional[1];
@@ -64,10 +66,28 @@ export async function executeWatch(args: ParsedArgs, deps: ReplDeps): Promise<Wa
       if (interval) input.interval_seconds = parseInt(interval, 10);
       if (args.flags.selector) input.selector = args.flags.selector;
       if (args.flags.notify) input.notification = args.flags.notify;
+      consumed.add('interval');
+      consumed.add('interval-seconds');
+      consumed.add('selector');
+      consumed.add('notify');
     } else if (action === 'delete' || action === 'check' || action === 'pause' || action === 'resume') {
       const jobId = args.positional[1] ?? args.flags['job-id'] ?? args.flags.id;
       if (jobId) input.job_id = jobId;
+      consumed.add('job-id');
+      consumed.add('id');
     }
+
+    // Remaining flags (e.g. --url, --urls, --notification, or a schema addition)
+    // validate through the bridge; already-set curated keys win.
+    const rest: Record<string, string> = {};
+    for (const [k, v] of Object.entries(args.flags)) {
+      if (!consumed.has(k)) rest[k] = v;
+    }
+    const bridged = coerceFlags('watch', rest);
+    if (bridged.errors.length > 0) {
+      return errEnvelope(bridged.errors[0]);
+    }
+    mergeBridged(input, bridged.input);
 
     log.debug('executing watch command', { verb, action, flags: args.flags });
     const r = await handleWatch(input, deps.router);

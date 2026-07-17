@@ -8,6 +8,7 @@ import type { ParsedArgs } from '../parser.js';
 import type { ReplDeps } from './types.js';
 import { handleDiff, type DiffInput } from '../../tools/diff.js';
 import { handleFetch } from '../../tools/fetch.js';
+import { coerceFlags } from '../../cli/flag-bridge.js';
 import { createLogger } from '../../logger.js';
 
 const log = createLogger('repl');
@@ -38,6 +39,19 @@ export async function executeDiff(args: ParsedArgs, deps: ReplDeps): Promise<Dif
 
     const output = args.flags.output as DiffOutputShape | undefined;
     const granularity = args.flags.granularity as DiffGranularity | undefined;
+
+    // --old/--new keep curated STRING semantics (wrapped below); the schema
+    // `old`/`new` objects are excluded from the flag round-trip. Reject any
+    // OTHER stray flag via the bridge so typos fail loudly.
+    const rest: Record<string, string> = {};
+    for (const [k, v] of Object.entries(args.flags)) {
+      if (k === 'old' || k === 'new' || k === 'output' || k === 'granularity') continue;
+      rest[k] = v;
+    }
+    const bridged = coerceFlags('diff', rest);
+    if (bridged.errors.length > 0) {
+      return errEnvelope(bridged.errors[0]);
+    }
 
     const input: DiffInput = {};
     if (output) input.output = output;
