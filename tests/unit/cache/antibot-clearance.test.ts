@@ -164,7 +164,9 @@ describe('db hardening — 0600 file mode', () => {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
-  it('chmods the DB file to 0600 on init (cf_clearance is a session-bearing token)', () => {
+  // POSIX mode bits only — Windows has no 0o600 concept (files report 0o666),
+  // and the runtime chmod is a correct no-op there.
+  it.skipIf(process.platform === 'win32')('chmods the DB file to 0600 on init (cf_clearance is a session-bearing token)', () => {
     const dbPath = join(dir, 'cache.db');
     initDatabase(dbPath);
     const mode = statSync(dbPath).mode & 0o777;
@@ -179,7 +181,10 @@ describe('db hardening — 0600 file mode', () => {
     db.exec("INSERT INTO domain_routing (domain, prefer_playwright, http_failures) VALUES ('walcheck.test', 0, 0)");
     recordBackoff('walcheck.test', Date.now() + 1000);
 
-    const walMode = statSync(`${dbPath}-wal`).mode & 0o777;
-    expect(walMode).toBe(0o600);
+    // POSIX-only assertion: Windows reports 0o666 and the chmod is a no-op there.
+    if (process.platform !== 'win32') {
+      const walMode = statSync(`${dbPath}-wal`).mode & 0o777;
+      expect(walMode).toBe(0o600);
+    }
   });
 });

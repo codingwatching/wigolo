@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..', '..');
 const SKILLS_DIR = join(REPO_ROOT, 'skills');
@@ -164,10 +164,13 @@ describe('skills content gates', () => {
 });
 
 // Only *.md pack files (not blocks) for the manifest-coverage check.
+// Keys must match the manifest's forward-slash repo-relative shape (the runtime
+// catalog normalizes with `relative(base, full).split(sep).join('/')`), so
+// backslash separators on Windows do not break the lookup.
 function walkMdFiles(dir: string, base: string, acc: string[]): void {
   for (const name of readdirSync(dir)) {
     const full = join(dir, name);
     if (statSync(full).isDirectory()) walkMdFiles(full, base, acc);
-    else if (name.endsWith('.md')) acc.push(full.replace(base + '/', ''));
+    else if (name.endsWith('.md')) acc.push(relative(base, full).split(sep).join('/'));
   }
 }

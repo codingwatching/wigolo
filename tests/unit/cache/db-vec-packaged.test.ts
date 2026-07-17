@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 // Mock the packaged-binary detector so we can drive both branches of the
 // sqlite-vec loader without actually running inside a pkg snapshot.
@@ -18,6 +18,11 @@ const sv = await import('sqlite-vec');
 
 describe('sqlite-vec loading under a packaged binary', () => {
   const dirs: string[] = [];
+
+  // The runtime copies `basename(sv.getLoadablePath())`, which is platform-
+  // specific: vec0.dylib (macOS), vec0.so (Linux), vec0.dll/.node (Windows).
+  // Derive the expected filename from the same source rather than hardcoding.
+  const vecFilename = basename(sv.getLoadablePath());
 
   beforeEach(() => {
     isPackagedMock.mockReset();
@@ -53,7 +58,7 @@ describe('sqlite-vec loading under a packaged binary', () => {
     // Copy-then-load: the vector extension is active AND a real copy exists in
     // the sibling native/ dir (proving we did NOT dlopen straight from source).
     expect(isVecExtensionLoaded()).toBe(true);
-    const nativeCopy = join(dbPath, '..', 'native', 'vec0.dylib');
+    const nativeCopy = join(dbPath, '..', 'native', vecFilename);
     expect(existsSync(nativeCopy)).toBe(true);
     // The copy matches the source byte-for-byte in size — a real extraction,
     // not an empty stub — so loadExtension had a genuine dylib to dlopen.
@@ -65,7 +70,7 @@ describe('sqlite-vec loading under a packaged binary', () => {
     const dbPath = freshDbPath();
 
     initDatabase(dbPath);
-    const nativeCopy = join(dbPath, '..', 'native', 'vec0.dylib');
+    const nativeCopy = join(dbPath, '..', 'native', vecFilename);
     const firstMtime = statSync(nativeCopy).mtimeMs;
     closeDatabase();
 
