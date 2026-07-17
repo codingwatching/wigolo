@@ -4,6 +4,11 @@
   "description": "Thin TypeScript client for a local-first wigolo web-intelligence daemon (search, fetch, crawl, extract, research, and more) over its REST API.",
   "type": "module",
   "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KnockOutEZ/wigolo",
+    "directory": "sdks/typescript"
+  },
   "engines": {
     "node": ">=18"
   },

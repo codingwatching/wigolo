@@ -47,17 +47,32 @@ jobs:
       # Beta versions (x.y.z-beta.N) publish to the default `latest` dist-tag so
       # `npm install wigolo` works during the public beta. (For a separate opt-in
       # beta channel instead, add `--tag beta`.)
-      - run: npm publish --provenance --access public
+      # Idempotent: skip if this exact version is already on npm, so a re-run
+      # after a partial-publish failure (e.g. a downstream sub-package error)
+      # doesn't abort on the root that already landed.
+      - name: Publish wigolo (npm)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VER="$(node -p "require('./package.json').version")"
+          if npm view "wigolo@$VER" version >/dev/null 2>&1; then
+            echo "wigolo@$VER already on npm — skipping"
+          else
+            npm publish --provenance --access public
+          fi
 
       # Publish as a normal GitHub Release so the newest version earns the Latest
-      # badge and shows in the repo sidebar. The -beta.N version string is what
-      # marks it as a beta; GitHub's "Pre-release" flag is intentionally not set.
+      # badge and shows in the repo sidebar. Idempotent: skip if the release
+      # already exists (re-run safety).
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists — skipping"
+          else
+            gh release create "$GITHUB_REF_NAME" --generate-notes
+          fi
 
       # ---------------------------------------------------------------------
       # Sub-package publish (SDKs + framework integrations).
@@ -118,7 +133,12 @@ jobs:
         run: |
           npm ci
           npm run build
-          npm publish --provenance --access public
+          VER="$(node -p "require('./package.json').version")"
+          if npm view "wigolo-sdk@$VER" version >/dev/null 2>&1; then
+            echo "wigolo-sdk@$VER already on npm — skipping"
+          else
+            npm publish --provenance --access public
+          fi
 
       - name: Publish wigolo-ai-sdk (npm)
         working-directory: packages/wigolo-ai-sdk
@@ -127,7 +147,12 @@ jobs:
         run: |
           npm ci
           npm run build
-          npm publish --provenance --access public
+          VER="$(node -p "require('./package.json').version")"
+          if npm view "wigolo-ai-sdk@$VER" version >/dev/null 2>&1; then
+            echo "wigolo-ai-sdk@$VER already on npm — skipping"
+          else
+            npm publish --provenance --access public
+          fi
 
       # PyPI packages: wigolo (SDK) + the three framework integrations.
       - name: Publish wigolo (PyPI)
@@ -137,7 +162,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
         run: |
           python -m build --wheel --sdist
-          twine upload dist/*
+          twine upload --skip-existing dist/*
 
       - name: Publish wigolo-langchain (PyPI)
         working-directory: packages/wigolo-langchain
@@ -146,7 +171,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
         run: |
           python -m build --wheel --sdist
-          twine upload dist/*
+          twine upload --skip-existing dist/*
 
       - name: Publish wigolo-crewai (PyPI)
         working-directory: packages/wigolo-crewai
@@ -155,7 +180,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
         run: |
           python -m build --wheel --sdist
-          twine upload dist/*
+          twine upload --skip-existing dist/*
 
       - name: Publish wigolo-llamaindex (PyPI)
         working-directory: packages/wigolo-llamaindex
@@ -164,7 +189,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
         run: |
           python -m build --wheel --sdist
-          twine upload dist/*
+          twine upload --skip-existing dist/*
 
       # Publish metadata to the Official MCP Registry. GitHub OIDC (id-token: write
       # above) authenticates the io.github.KnockOutEZ/* namespace with no secrets.
