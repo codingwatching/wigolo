@@ -9,6 +9,7 @@ import { abortRejection } from '../util/abort.js';
 import { sanitizedChildEnv } from '../util/child-env.js';
 import { isAntiBotStatus, hasBrowserChallengeBody, isChallengeShell } from './tls-tier.js';
 import { pollUntilCleared } from './challenge-completion.js';
+import { resolveStealthUA, stealthLaunchArgs, stealthContextOptions, STEALTH_INIT_SCRIPT } from './stealth.js';
 import type { RawFetchResult, BrowserType, ActionResult, BrowserAction } from '../types.js';
 
 /**
@@ -42,6 +43,15 @@ export interface BrowserFetchOptions {
   cdpUrl?: string;
   browserType?: BrowserType;
   signal?: AbortSignal;
+  /**
+   * When true, the fetch uses a DEDICATED per-fetch context with anti-bot
+   * fingerprint hardening (a distinct UA + locale/timezone + an init script
+   * that patches high-signal automation leaks), closed at end-of-fetch rather
+   * than returned to the shared pool. Bounded by a separate semaphore so N
+   * concurrent hardened fetches cannot exceed the browser cap. Ignored for the
+   * CDP path (an external browser owns its own fingerprint).
+   */
+  stealth?: boolean;
 }
 
 export interface BrowserPoolOptions {
@@ -139,6 +149,14 @@ export class MultiBrowserPool {
   private readonly selector: BrowserSelector;
   private readonly configuredTypes: BrowserType[];
   private shutdownCalled = false;
+  // Bounded semaphore for the DEDICATED stealth path. That path launches its
+  // own throwaway browser + context, bypassing the pooled activeCount/maxBrowsers
+  // accounting — so without this a burst of stealth fetches could spawn one
+  // browser per fetch and blow past the cap. Mirrors the acquire/release
+  // activeCount + waitQueue pattern: a stealth fetch acquires a slot before
+  // launching and releases it after close.
+  private stealthActive = 0;
+  private readonly stealthWaitQueue: Array<() => void> = [];
 
   constructor(options?: MultiBrowserPoolOptions) {
     let types = options?.browserTypes ?? ['chromium'];
@@ -291,6 +309,33 @@ export class MultiBrowserPool {
     typePool.idleTimers.set(ctx, timer);
   }
 
+  // Acquire a dedicated-stealth concurrency slot. Resolves immediately when a
+  // slot is free, otherwise queues until a release frees one. Default limit is
+  // config.maxBrowsers so the hardened path shares the same overall cap as the
+  // pooled path.
+  private acquireStealthSlot(): Promise<void> {
+    const limit = getConfig().maxBrowsers;
+    if (this.stealthActive < limit) {
+      this.stealthActive++;
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      this.stealthWaitQueue.push(resolve);
+    });
+  }
+
+  // Release a dedicated-stealth slot. Hands the slot straight to the next
+  // waiter when one is queued (keeping stealthActive at the cap), otherwise
+  // decrements the active count.
+  private releaseStealthSlot(): void {
+    const next = this.stealthWaitQueue.shift();
+    if (next) {
+      next();
+      return;
+    }
+    this.stealthActive = Math.max(0, this.stealthActive - 1);
+  }
+
   async fetchWithBrowser(url: string, options: BrowserFetchOptions = {}): Promise<RawFetchResult> {
     // Bail out immediately if the caller's budget is already exhausted.
     if (options.signal?.aborted) throw options.signal.reason;
@@ -304,6 +349,15 @@ export class MultiBrowserPool {
     let ctx: BrowserContext;
     let cdpBrowser: Browser | null = null;
     let resolvedType: BrowserType;
+    // A dedicated stealth fetch owns its context (and a throwaway browser) and
+    // must close both at end-of-fetch instead of releasing to the shared pool.
+    let dedicated = false;
+    let dedicatedBrowser: Browser | null = null;
+    let stealthSlotHeld = false;
+
+    // Stealth applies only to the launch path — the CDP path connects to an
+    // external browser that owns its own fingerprint.
+    const useStealth = options.stealth === true && !options.cdpUrl;
 
     if (options.cdpUrl) {
       // CDP is always Chromium
@@ -319,6 +373,28 @@ export class MultiBrowserPool {
           error: err instanceof Error ? err.message : String(err),
         });
         ctx = await this.acquireForType(resolvedType);
+      }
+    } else if (useStealth) {
+      resolvedType = this.resolveType(options.browserType, url);
+      // Bound concurrency BEFORE launching so a burst cannot exceed the cap.
+      await this.acquireStealthSlot();
+      stealthSlotHeld = true;
+      dedicated = true;
+      log.debug('fetching with browser (anti-bot fingerprint hardening)', { url, type: resolvedType });
+      // Launch a SEPARATE throwaway browser with the hardening launch args so
+      // those flags never leak into the shared pooled browser (which stays on
+      // its default launch). The dedicated context + browser are closed in the
+      // finally.
+      const launcher = getLauncher(resolvedType);
+      dedicatedBrowser = await launcher.launch({
+        headless: true,
+        args: stealthLaunchArgs(resolvedType),
+        env: sanitizedChildEnv(),
+      });
+      ctx = await dedicatedBrowser.newContext(stealthContextOptions(resolveStealthUA()));
+      // Guard for context stubs without addInitScript (unit-test mocks).
+      if (typeof (ctx as { addInitScript?: unknown }).addInitScript === 'function') {
+        await ctx.addInitScript(STEALTH_INIT_SCRIPT);
       }
     } else {
       resolvedType = this.resolveType(options.browserType, url);
@@ -591,6 +667,17 @@ export class MultiBrowserPool {
       await page.close().catch(() => {});
       if (cdpBrowser) {
         await cdpBrowser.close().catch(() => {});
+      } else if (dedicated) {
+        // Dedicated stealth path: close the per-fetch context + throwaway
+        // browser (NEVER release to the shared pool) — guaranteed on abort too
+        // — then free the concurrency slot for the next waiter.
+        await ctx.close().catch(() => {});
+        if (dedicatedBrowser) {
+          await dedicatedBrowser.close().catch(() => {});
+        }
+        if (stealthSlotHeld) {
+          this.releaseStealthSlot();
+        }
       } else {
         // Always release the slot — even on abort — so the pool is not leaked.
         this.releaseForType(resolvedType, ctx);
