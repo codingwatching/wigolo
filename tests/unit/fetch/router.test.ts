@@ -47,6 +47,17 @@ function makeBrowserResult(url = 'https://example.com/page'): RawFetchResult {
   };
 }
 
+// A BrowserAcquirer stub that reports the engine is ready without touching the
+// installer/launcher. The main-block tests inject this so the render_js:'always'
+// path exercises the mocked browserPool.fetchWithBrowser rather than attempting
+// a real browser acquire — which on a browserless CI runner installs/launches
+// and times out.
+function readyAcquirer(): BrowserAcquirer {
+  const acquirer = new BrowserAcquirer();
+  vi.spyOn(acquirer, 'ensureBrowser').mockResolvedValue('ready');
+  return acquirer;
+}
+
 describe('SmartRouter', () => {
   let httpClient: HttpClient;
   let browserPool: BrowserPoolInterface;
@@ -69,7 +80,7 @@ describe('SmartRouter', () => {
     // Inject a non-PDF probe so the shared router never issues a real network
     // HEAD when the browser-bound path runs (dedicated PDF tests inject their
     // own probe). Keeps these unit tests hermetic.
-    router = new SmartRouter({ httpClient, browserPool, pdfProbe: async () => false });
+    router = new SmartRouter({ httpClient, browserPool, pdfProbe: async () => false, browserAcquirer: readyAcquirer() });
 
     vi.mocked(getAuthOptions).mockResolvedValue(null);
   });
