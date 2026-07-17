@@ -87,10 +87,11 @@ export async function main(): Promise<void> {
       break;
     }
 
-    case 'shell':
-      await runShell(args);
-      await exitCli(0);
+    case 'shell': {
+      const shellCode = await runShell(args);
+      await exitCli(shellCode);
       break;
+    }
 
     case 'plugin': {
       const pluginCode = await runPluginCommand(args);

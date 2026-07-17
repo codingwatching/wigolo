@@ -41,25 +41,27 @@ function runShellCommand(input: string, args: string[] = []): Promise<{ stdout: 
 // successful spawn, so a single retry suffices in practice. We use 3 for
 // headroom under CI contention.
 describe('REPL integration', () => {
+  // Shell chrome (help/goodbye/unknown-command notices) is human-facing text and
+  // now goes to stderr so stdout stays a clean NDJSON stream under --json.
   it('responds to help command', { retry: 3 }, async () => {
-    const { stdout } = await runShellCommand('help');
-    expect(stdout).toContain('Available commands');
-    expect(stdout).toContain('search');
-    expect(stdout).toContain('fetch');
-    expect(stdout).toContain('crawl');
-    expect(stdout).toContain('cache');
-    expect(stdout).toContain('extract');
+    const { stderr } = await runShellCommand('help');
+    expect(stderr).toContain('Available commands');
+    expect(stderr).toContain('search');
+    expect(stderr).toContain('fetch');
+    expect(stderr).toContain('crawl');
+    expect(stderr).toContain('cache');
+    expect(stderr).toContain('extract');
   }, 15_000);
 
   it('exits cleanly on exit command', { retry: 3 }, async () => {
-    const { stdout, exitCode } = await runShellCommand('exit');
-    expect(stdout).toContain('Goodbye');
+    const { stderr, exitCode } = await runShellCommand('exit');
+    expect(stderr).toContain('Goodbye');
     expect(exitCode).toBe(0);
   }, 10_000);
 
   it('handles unknown commands gracefully', { retry: 3 }, async () => {
-    const { stdout } = await runShellCommand('foobar');
-    expect(stdout).toContain('Unknown command');
+    const { stderr } = await runShellCommand('foobar');
+    expect(stderr).toContain('Unknown command');
   }, 10_000);
 
   it('returns JSON output with --json flag', { retry: 3 }, async () => {
@@ -92,9 +94,97 @@ describe('REPL integration', () => {
   }, 10_000);
 
   it('displays goodbye on exit', { retry: 3 }, async () => {
-    const { stdout } = await runShellCommand('exit');
-    expect(stdout).toContain('Goodbye');
+    const { stderr } = await runShellCommand('exit');
+    expect(stderr).toContain('Goodbye');
   }, 10_000);
+});
+
+// Pipe a full multi-line script into `shell` and capture stdout/stderr/exit.
+// The history path is redirected to a tmp file so we can assert a piped
+// session leaves ZERO history behind.
+function runShellScript(
+  lines: string[],
+  args: string[],
+  historyPath: string,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('node', [BIN_PATH, 'shell', ...args], {
+      env: {
+        ...process.env,
+        LOG_LEVEL: 'error',
+        WIGOLO_DATA_DIR: join(import.meta.dirname, '..', 'fixtures', 'repl-test-data'),
+        WIGOLO_SHELL_HISTORY_PATH: historyPath,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ stdout, stderr, exitCode: code ?? 1 }));
+    child.stdin.write(lines.join('\n') + '\n');
+    child.stdin.end();
+  });
+}
+
+describe('REPL NDJSON scripting', () => {
+  // CONTRACT (as implemented):
+  //  - Under `--json`, every TOOL command result is exactly ONE compact,
+  //    parseable JSON document on its own stdout line.
+  //  - An unknown command produces NO stdout doc (its message goes to stderr)
+  //    and counts as a failure.
+  //  - A session with >=1 failure exits 1; the preamble/goodbye are on stderr,
+  //    so stdout is a clean NDJSON stream.
+  //  - A piped session appends ZERO history lines.
+  it('emits one JSON doc per tool command, exits 1 on an invalid command, writes no history', { retry: 3 }, async () => {
+    const historyPath = join(
+      import.meta.dirname,
+      '..',
+      'fixtures',
+      'repl-test-data',
+      `piped-history-${process.pid}-${Date.now()}`,
+    );
+    const { stdout, exitCode } = await runShellScript(
+      ['cache stats', 'watch list', 'boguscmd', 'exit'],
+      ['--json'],
+      historyPath,
+    );
+
+    const stdoutLines = stdout.trim().split('\n').filter((l) => l.trim());
+    // Two TOOL commands → exactly two JSON docs. The unknown command adds none.
+    expect(stdoutLines).toHaveLength(2);
+    const docs = stdoutLines.map((l) => JSON.parse(l));
+    expect(docs[0].stats).toBeDefined();
+    expect(Array.isArray(docs[1].jobs)).toBe(true);
+    // The invalid command makes the whole piped session fail.
+    expect(exitCode).toBe(1);
+
+    // A piped (non-tty) session never touches the history file.
+    const { existsSync, readFileSync, rmSync } = await import('node:fs');
+    const empty = !existsSync(historyPath) || readFileSync(historyPath, 'utf-8').trim() === '';
+    expect(empty).toBe(true);
+    if (existsSync(historyPath)) rmSync(historyPath, { force: true });
+  }, 20_000);
+
+  it('a clean piped tool-only session exits 0', { retry: 3 }, async () => {
+    const historyPath = join(
+      import.meta.dirname,
+      '..',
+      'fixtures',
+      'repl-test-data',
+      `piped-clean-${process.pid}-${Date.now()}`,
+    );
+    const { stdout, exitCode } = await runShellScript(
+      ['cache stats', 'exit'],
+      ['--json'],
+      historyPath,
+    );
+    const stdoutLines = stdout.trim().split('\n').filter((l) => l.trim());
+    expect(stdoutLines).toHaveLength(1);
+    expect(JSON.parse(stdoutLines[0]).stats).toBeDefined();
+    expect(exitCode).toBe(0);
+  }, 20_000);
 });
 
 // One-shot CLI (`wigolo <tool> <args>`) — spawns `node dist/index.js <tool>`.

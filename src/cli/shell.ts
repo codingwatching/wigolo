@@ -18,9 +18,10 @@ import type { SearchEngine } from '../types.js';
 
 const log = createLogger('cli');
 
-export async function runShell(args: string[]): Promise<void> {
+export async function runShell(args: string[]): Promise<number> {
   const config = getConfig();
   const jsonMode = args.includes('--json');
+  const isTty = process.stdin.isTTY === true;
 
   mkdirSync(config.dataDir, { recursive: true });
   initDatabase(join(config.dataDir, 'wigolo.db'));
@@ -92,10 +93,13 @@ export async function runShell(args: string[]): Promise<void> {
   }
 
   try {
-    await startShell(
+    const { failures } = await startShell(
       { router, engines: searchEngines, backendStatus },
-      { jsonMode },
+      { jsonMode, isTty },
     );
+    // A scripted/piped session that hit any failure exits non-zero so callers
+    // can gate on it; an interactive clean quit is 0 (failures is 0).
+    return failures > 0 ? 1 : 0;
   } finally {
     if (searxngProcess) await searxngProcess.stop();
     await browserPool.shutdown();

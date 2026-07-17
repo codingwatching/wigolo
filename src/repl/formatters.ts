@@ -411,3 +411,12 @@ export function formatWatchResult(output: WatchJobOutput & { error?: string }): 
 export function formatJson(data: unknown): string {
   return JSON.stringify(data, null, 2);
 }
+
+/**
+ * Compact single-line JSON for NDJSON output: one command result per line so a
+ * piped shell session emits a newline-delimited JSON stream. `formatJson` stays
+ * the pretty one-shot form; this never inserts newlines within a document.
+ */
+export function formatJsonLine(data: unknown): string {
+  return JSON.stringify(data);
+}

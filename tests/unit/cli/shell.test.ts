@@ -39,8 +39,9 @@ vi.mock('../../../src/searxng/process.js', () => ({
 }));
 
 // startShell blocks on interactive stdin; short-circuit it so runShell returns.
+// It now resolves to a ShellResult ({ failures }) that runShell destructures.
 vi.mock('../../../src/repl/shell.js', () => ({
-  startShell: vi.fn().mockResolvedValue(undefined),
+  startShell: vi.fn().mockResolvedValue({ failures: 0 }),
 }));
 
 describe('runShell — sidecar gate (D1)', () => {
