@@ -10,7 +10,39 @@ import { sanitizedChildEnv } from '../util/child-env.js';
 import { isAntiBotStatus, hasBrowserChallengeBody, isChallengeShell } from './tls-tier.js';
 import { pollUntilCleared } from './challenge-completion.js';
 import { resolveStealthUA, stealthLaunchArgs, stealthContextOptions, STEALTH_INIT_SCRIPT } from './stealth.js';
+import { recordDomainClearance, clearDomainClearance } from '../cache/store.js';
+import { CLEARANCE_COOKIE_NAME, clearanceExpiresIso } from './clearance-reuse.js';
 import type { RawFetchResult, BrowserType, ActionResult, BrowserAction } from '../types.js';
+
+/**
+ * Host of a fetched URL, or null on a malformed URL. Used to key the anti-bot
+ * clearance store (RAW hostname, matching domain_routing).
+ */
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The UA a non-stealth (pooled/CDP) context actually advertises, read from the
+ * live page. Only needed when persisting a clearance minted off the stealth
+ * path (where the UA is already known). Returns null when the page can't be
+ * evaluated (unit-test stubs), so persistence is skipped rather than recording
+ * a UA that doesn't match what the tier presents.
+ */
+async function readAdvertisedUa(page: { evaluate?: unknown }): Promise<string | null> {
+  if (typeof page.evaluate !== 'function') return null;
+  try {
+    const ua = await (page as { evaluate: (fn: () => string) => Promise<string> })
+      .evaluate(() => navigator.userAgent);
+    return typeof ua === 'string' && ua.length > 0 ? ua : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Thrown when the browser tier lands on a hard bot-protection challenge page
@@ -52,6 +84,14 @@ export interface BrowserFetchOptions {
    * CDP path (an external browser owns its own fingerprint).
    */
   stealth?: boolean;
+  /**
+   * Anti-bot clearance cookies to seed into the context BEFORE navigation
+   * (S-A2 reuse). Each is applied via `context.addCookies(...)` scoped to its
+   * own host, so it is dropped on any cross-host redirect hop. The router
+   * populates this from a stored, unexpired, UA-matching clearance so a solved
+   * challenge is replayed instead of re-solved.
+   */
+  injectedCookies?: Array<{ name: string; value: string; domain: string; path?: string }>;
 }
 
 export interface BrowserPoolOptions {
@@ -354,6 +394,11 @@ export class MultiBrowserPool {
     let dedicated = false;
     let dedicatedBrowser: Browser | null = null;
     let stealthSlotHeld = false;
+    // The UA this context authoritatively advertises — recorded alongside a
+    // minted clearance so a later reuse can UA-match the consuming tier. Known
+    // on the stealth path (resolveStealthUA); the pooled/CDP default is read
+    // from the live page below when we actually mint a clearance.
+    let advertisedUa: string | null = null;
 
     // Stealth applies only to the launch path — the CDP path connects to an
     // external browser that owns its own fingerprint.
@@ -391,7 +436,8 @@ export class MultiBrowserPool {
         args: stealthLaunchArgs(resolvedType),
         env: sanitizedChildEnv(),
       });
-      ctx = await dedicatedBrowser.newContext(stealthContextOptions(resolveStealthUA()));
+      advertisedUa = resolveStealthUA();
+      ctx = await dedicatedBrowser.newContext(stealthContextOptions(advertisedUa));
       // Guard for context stubs without addInitScript (unit-test mocks).
       if (typeof (ctx as { addInitScript?: unknown }).addInitScript === 'function') {
         await ctx.addInitScript(STEALTH_INIT_SCRIPT);
@@ -400,6 +446,20 @@ export class MultiBrowserPool {
       resolvedType = this.resolveType(options.browserType, url);
       log.debug('fetching with browser', { url, type: resolvedType });
       ctx = await this.acquireForType(resolvedType);
+    }
+
+    // Seed reused anti-bot clearance cookies BEFORE navigation so a solved
+    // challenge is replayed instead of re-solved. Each cookie is host-scoped by
+    // the router, so the browser drops it on a cross-host redirect. Guarded for
+    // context stubs without addCookies (unit-test mocks).
+    if (
+      options.injectedCookies &&
+      options.injectedCookies.length > 0 &&
+      typeof (ctx as { addCookies?: unknown }).addCookies === 'function'
+    ) {
+      await (ctx as { addCookies: (c: NonNullable<BrowserFetchOptions['injectedCookies']>) => Promise<void> })
+        .addCookies(options.injectedCookies)
+        .catch(() => {});
     }
 
     const page = await ctx.newPage();
@@ -571,14 +631,39 @@ export class MultiBrowserPool {
             signal: options.signal,
           });
           if (!outcome.cleared) {
+            // Re-validation: if we SEEDED a reused clearance and it still landed
+            // on a challenge, the stored clearance is dead. Purge it so it isn't
+            // replayed next time, then fast-fail into the normal escalation
+            // ladder (never serve the shell as content).
+            if (options.injectedCookies && options.injectedCookies.length > 0) {
+              const host = hostOf(finalUrl) ?? hostOf(url);
+              if (host) {
+                try {
+                  clearDomainClearance(host);
+                } catch { /* best-effort — never block the fetch */ }
+              }
+            }
             log.warn('bot-protection challenge did not clear within completion window, fast-failing', { url, statusCode });
             throw new ChallengeBlockedError(url);
           }
-          // Auto-passed: the challenge navigated to a real page. Any clearance
-          // cookie is logged for now; S-A2 wires it into the domain-clearance
-          // store. Fall through so the normal post-goto hydration waits run and
-          // the final content read below captures the fully-rendered page.
+          // Auto-passed: the challenge navigated to a real page. Persist any
+          // minted clearance cookie against the exact UA this context advertised
+          // + tier:'browser' so a later visit can replay it. Fall through so the
+          // normal post-goto hydration waits run and the final content read
+          // below captures the fully-rendered page.
           if (outcome.cfClearance) {
+            const host = hostOf(finalUrl) ?? hostOf(url);
+            const ua = advertisedUa ?? (await readAdvertisedUa(page));
+            if (host && ua) {
+              try {
+                recordDomainClearance(host, {
+                  cookie: `${CLEARANCE_COOKIE_NAME}=${outcome.cfClearance.value}`,
+                  ua,
+                  tier: 'browser',
+                  expiresAt: clearanceExpiresIso(outcome.cfClearance.expires),
+                });
+              } catch { /* best-effort — never block the fetch */ }
+            }
             log.debug('challenge cleared with clearance cookie', { url, expires: outcome.cfClearance.expires });
           }
           log.info('bot-protection challenge auto-passed within completion window', { url });

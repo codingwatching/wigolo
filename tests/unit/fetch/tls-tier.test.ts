@@ -656,6 +656,58 @@ describe('tls-tier: redirect SSRF re-guard (manual hop loop)', () => {
       'https://public.example.org/final',
     ]);
   });
+
+  // A backend that records the request headers it saw per URL.
+  function headerRecordingBackend(
+    redirects: Record<string, string>,
+    seen: Record<string, Record<string, string> | undefined>,
+  ) {
+    _setTlsBackendForTests({
+      fetch: async (url, init) => {
+        seen[url] = init?.headers as Record<string, string> | undefined;
+        const loc = redirects[url];
+        if (loc) {
+          return {
+            status: 302,
+            url,
+            headers: { entries: function* () { yield ['location', loc]; } },
+            text: async () => '',
+          };
+        }
+        return {
+          status: 200,
+          url,
+          headers: { entries: function* () { yield ['content-type', 'text/html']; } },
+          text: async () => `<html><body>arrived at ${url}</body></html>`,
+        };
+      },
+    });
+  }
+
+  it('CROSS-DOMAIN: drops an injected Cookie header on a cross-host redirect hop', async () => {
+    const seen: Record<string, Record<string, string> | undefined> = {};
+    headerRecordingBackend(
+      { 'https://a.example.net/start': 'https://b.example.org/final' },
+      seen,
+    );
+    await tlsFetch('https://a.example.net/start', { headers: { Cookie: 'cf_clearance=SECRET' } });
+    // First (same-host) hop keeps the Cookie.
+    expect(seen['https://a.example.net/start']?.Cookie).toBe('cf_clearance=SECRET');
+    // Cross-host hop must NOT carry the Cookie.
+    const crossHeaders = seen['https://b.example.org/final'] ?? {};
+    expect(crossHeaders.Cookie).toBeUndefined();
+    expect(crossHeaders.cookie).toBeUndefined();
+  });
+
+  it('SAME-DOMAIN: keeps the Cookie header across a same-host redirect hop', async () => {
+    const seen: Record<string, Record<string, string> | undefined> = {};
+    headerRecordingBackend(
+      { 'https://a.example.net/start': 'https://a.example.net/next' },
+      seen,
+    );
+    await tlsFetch('https://a.example.net/start', { headers: { Cookie: 'cf_clearance=SECRET' } });
+    expect(seen['https://a.example.net/next']?.Cookie).toBe('cf_clearance=SECRET');
+  });
 });
 
 describe('tls-tier: MCP-stdio safety', () => {
