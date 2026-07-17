@@ -139,6 +139,28 @@ const MIGRATION_006_URL_CACHE_HTTP_STATUS = '';
 // DBs where the table was never created.
 const MIGRATION_007_DROP_LP_ROUTING = '';
 
+// Anti-bot clearance columns on domain_routing. The base table is created
+// inline in src/cache/db.ts; the CREATE here is the safety net for raw
+// callers. ALTERs live in the postStep (guarded by table_info) since SQLite
+// has no `ADD COLUMN IF NOT EXISTS` and an unguarded ALTER blows up on re-run.
+const MIGRATION_008_ANTIBOT_CLEARANCE = `
+CREATE TABLE IF NOT EXISTS domain_routing (
+  domain TEXT PRIMARY KEY,
+  prefer_playwright INTEGER DEFAULT 0,
+  http_failures INTEGER DEFAULT 0,
+  last_updated TEXT
+);
+`;
+
+const ANTIBOT_CLEARANCE_COLUMNS = [
+  'cf_clearance',
+  'clearance_ua',
+  'clearance_tier',
+  'clearance_expires_at',
+  'backoff_until',
+  'last_403_at',
+];
+
 export const MIGRATIONS: Migration[] = [
   { name: '001-sqlite-vec', sql: MIGRATION_001_SQLITE_VEC, requiresVec: true },
   { name: '002-feed-items', sql: MIGRATION_002_FEED_ITEMS },
@@ -191,6 +213,23 @@ export const MIGRATIONS: Migration[] = [
       ).all() as Array<{ name: string }>;
       if (tables.length > 0) {
         db.exec('DROP TABLE lightpanda_routing');
+      }
+    },
+  },
+  {
+    name: '008-antibot-clearance',
+    sql: MIGRATION_008_ANTIBOT_CLEARANCE,
+    /**
+     * Adds the anti-bot clearance columns to domain_routing, skipping any
+     * that already exist (idempotent) — mirrors the 005 postStep pattern.
+     */
+    postStep: (db) => {
+      const cols = db.pragma('table_info(domain_routing)') as Array<{ name: string }>;
+      const names = new Set(cols.map((c) => c.name));
+      for (const col of ANTIBOT_CLEARANCE_COLUMNS) {
+        if (!names.has(col)) {
+          db.exec(`ALTER TABLE domain_routing ADD COLUMN ${col} TEXT`);
+        }
       }
     },
   },

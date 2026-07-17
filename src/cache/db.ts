@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, statSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import Database from 'better-sqlite3';
 import * as sv from 'sqlite-vec';
@@ -60,6 +60,24 @@ function loadVecExtension(db: Database.Database, dbPath: string): void {
   db.loadExtension(realPath);
 }
 
+// The DB stores session-bearing anti-bot clearance tokens (cf_clearance), so
+// the file must be owner-only like config.json — not the default 0644.
+const DB_FILE_MODE = 0o600;
+
+// Restrict a DB path (or a lazily-created -wal/-shm sidecar) to owner-only,
+// tolerating ENOENT since sidecars may not exist yet on a fresh WAL DB.
+function restrictMode(path: string): void {
+  try {
+    chmodSync(path, DB_FILE_MODE);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    log.warn('failed to restrict DB file permissions', {
+      path,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 let instance: Database.Database | null = null;
 let vecLoaded = false;
 let exitHookRegistered = false;
@@ -91,6 +109,10 @@ export function initDatabase(dbPath: string): Database.Database {
   }
 
   const db = new Database(dbPath);
+
+  // Lock the DB file down before any write. In-memory DBs have no file.
+  const isFileBacked = dbPath !== ':memory:' && dbPath !== '';
+  if (isFileBacked) restrictMode(dbPath);
 
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
@@ -215,6 +237,14 @@ export function initDatabase(dbPath: string): Database.Database {
     log.error('migration runner failed — some schema may be missing', {
       error: err instanceof Error ? err.message : String(err),
     });
+  }
+
+  // The -wal/-shm sidecars are created lazily on first write (the inline
+  // schema + migrations above). Lock them down too — they can hold recently
+  // written clearance rows. ENOENT is tolerated (WAL may be checkpointed away).
+  if (isFileBacked) {
+    restrictMode(`${dbPath}-wal`);
+    restrictMode(`${dbPath}-shm`);
   }
 
   instance = db;
