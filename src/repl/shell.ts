@@ -59,7 +59,12 @@ export interface ShellResult {
 export function parseCommandLine(line: string): ParsedArgs {
   const tokens = tokenize(line);
   const cmd = tokens[0] ?? '';
-  return parseArgs(tokens, booleanFlagsFor(cmd));
+  // The global --json flag is valueless. The one-shot path strips it before
+  // parsing; the interactive path parses inline, so json must join the boolean
+  // set or `fetch --json <url>` swallows the URL as --json's value.
+  const booleans = booleanFlagsFor(cmd);
+  booleans.add('json');
+  return parseArgs(tokens, booleans);
 }
 
 function getHelpText(): string {

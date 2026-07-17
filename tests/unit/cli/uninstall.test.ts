@@ -193,6 +193,24 @@ describe('runUninstall --json', () => {
     expect(String(doc.error).toLowerCase()).toContain('--yes');
   });
 
+  it('--json --help prints help and does NOT uninstall', async () => {
+    // The help check must precede the --json early return: `--json --help` is a
+    // help request, not a destructive non-interactive uninstall. Without the
+    // ordering fix, the --json branch runs the sweep before help is ever seen.
+    const cap = captureOutput();
+    let code: number;
+    try {
+      code = await runUninstall(['--json', '--help']);
+    } finally {
+      cap.restore();
+    }
+    expect(code).toBe(0);
+    // No uninstall side effect: the skills sweep must NOT have run.
+    expect(removeAllSkillsMock).not.toHaveBeenCalled();
+    const out = cap.stdout.join('') + cap.stderr.join('');
+    expect(out).toContain('Usage: wigolo uninstall');
+  });
+
   it('--json --yes emits exactly one JSON plan+result doc on stdout', async () => {
     removeAllSkillsMock.mockReturnValue({
       written: [],

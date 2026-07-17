@@ -65,6 +65,23 @@ describe('parseCommandLine — interactive boolean wiring', () => {
     expect(parsed.flags.limit).toBe('5');
     expect(parsed.positional).toEqual(['hello']);
   });
+
+  it('treats a bare --json as a boolean so the URL stays positional', () => {
+    // WHY: the global --json flag is valueless. Unlike the one-shot path it is
+    // not stripped pre-parse, so without json in the boolean set the parser
+    // swallows the URL as its value (flags.json === url) and the positional is
+    // lost — json mode never engages and the command has no target.
+    const parsed = parseCommandLine('fetch --json https://example.invalid');
+    expect(parsed.command).toBe('fetch');
+    expect(parsed.positional).toEqual(['https://example.invalid']);
+    expect(parsed.flags.json).toBe('true');
+  });
+
+  it('still honours a trailing --json after the positional', () => {
+    const parsed = parseCommandLine('fetch https://example.invalid --json');
+    expect(parsed.positional).toEqual(['https://example.invalid']);
+    expect(parsed.flags.json).toBe('true');
+  });
 });
 
 describe('startShell — NDJSON mode', () => {
@@ -87,6 +104,27 @@ describe('startShell — NDJSON mode', () => {
     expect(err.text()).toContain('Goodbye');
     expect(out.text()).not.toContain('Goodbye');
     expect(failures).toBe(0);
+  });
+
+  it('an inline `fetch --json <url>` passes the URL positional and emits NDJSON', async () => {
+    const out = collector();
+    const err = collector();
+    await startShell(fakeDeps, {
+      jsonMode: false,
+      input: scriptedInput(['fetch --json https://example.invalid', 'exit']),
+      output: out.stream,
+      errorOutput: err.stream,
+      isTty: false,
+    });
+    // The mocked executor records the parsed args: URL must be positional, not
+    // captured as the value of --json.
+    const args = captured.fetchArgs as { positional: string[]; flags: Record<string, string> };
+    expect(args.positional).toEqual(['https://example.invalid']);
+    expect(args.flags.json).not.toBe('https://example.invalid');
+    // Inline --json engages NDJSON output: exactly one JSON doc on stdout.
+    const stdoutLines = out.text().split('\n').filter((l) => l.trim());
+    expect(stdoutLines).toHaveLength(1);
+    expect(() => JSON.parse(stdoutLines[0])).not.toThrow();
   });
 
   it('counts an unknown command as a failure and returns it', async () => {

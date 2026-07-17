@@ -48,20 +48,9 @@ export async function runUninstall(args: string[]): Promise<number> {
   const assumeYes = args.includes('--yes') || args.includes('-y');
   const dataDir = getConfig().dataDir;
 
-  // --json is machine-consumed and destructive; require explicit consent so a
-  // script cannot wipe integrations without opting in. Gate FIRST, before any
-  // side effect (including the skills sweep) runs.
-  if (useJson && !assumeYes) {
-    process.stdout.write(`${JSON.stringify({
-      error: 'refusing to uninstall non-interactively without --yes. Re-run with: wigolo uninstall --json --yes',
-    })}\n`);
-    return 1;
-  }
-
-  if (useJson) {
-    return runUninstallJson(dataDir);
-  }
-
+  // --help wins over every other flag: `--json --help` is a help request, not a
+  // destructive uninstall. Check it BEFORE the --json branches so no side effect
+  // (including the skills sweep) can run when the user only asked for help.
   if (help) {
     process.stderr.write([
       'Usage: wigolo uninstall',
@@ -81,6 +70,20 @@ export async function runUninstall(args: string[]): Promise<number> {
       '',
     ].join('\n'));
     return 0;
+  }
+
+  // --json is machine-consumed and destructive; require explicit consent so a
+  // script cannot wipe integrations without opting in. Gate before any side
+  // effect (including the skills sweep) runs.
+  if (useJson && !assumeYes) {
+    process.stdout.write(`${JSON.stringify({
+      error: 'refusing to uninstall non-interactively without --yes. Re-run with: wigolo uninstall --json --yes',
+    })}\n`);
+    return 1;
+  }
+
+  if (useJson) {
+    return runUninstallJson(dataDir);
   }
 
   // Skills sweep — runs INDEPENDENT of detected handlers and BEFORE the

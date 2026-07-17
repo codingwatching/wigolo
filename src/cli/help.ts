@@ -55,10 +55,13 @@ const CAPABILITY_SANITIZERS: ReadonlyArray<[RegExp, string]> = [
   [/\bonnx\b/gi, 'ML runtime'],
   [/readability(\.js)?/gi, 'content extractor'],
   [/defuddle/gi, 'content extractor'],
+  [/trafilatura/gi, 'content extractor'],
   [/turndown/gi, 'markdown converter'],
+  [/flashrank/gi, 'ML reranker'],
+  [/\bcdp\b/gi, 'browser control protocol'],
 ];
 
-function sanitizeCapabilityText(text: string): string {
+export function sanitizeCapabilityText(text: string): string {
   let out = text;
   for (const [pattern, replacement] of CAPABILITY_SANITIZERS) {
     out = out.replace(pattern, replacement);

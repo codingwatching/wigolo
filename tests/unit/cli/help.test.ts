@@ -5,6 +5,7 @@ import {
   printHelp,
   printVersion,
   printUnknownCommand,
+  sanitizeCapabilityText,
   TOOL_HELP,
   TOOL_COMMANDS,
   isToolCommand,
@@ -111,6 +112,37 @@ describe('TOOL_HELP', () => {
   it('watch help carries the resident-scheduler caveat', () => {
     expect(TOOL_HELP.watch).toContain('wigolo serve');
     expect(TOOL_HELP.watch).toContain('MCP session');
+  });
+});
+
+describe('sanitizeCapabilityText', () => {
+  it('swaps implementation names for capability language (defence in depth)', () => {
+    // WHY: schema descriptions are authored to capability language, but this
+    // render-time guard must catch any leaked library name. If a term is not
+    // mapped, it surfaces verbatim in user-facing help — a naming-rule breach.
+    const cases: Array<[string, string, string]> = [
+      ['Uses Playwright to render', 'playwright', 'browser engine'],
+      ['Powered by SearXNG aggregation', 'searxng', 'search engine'],
+      ['Readability.js parses the DOM', 'readability', 'content extractor'],
+      ['Extracted via Trafilatura', 'trafilatura', 'content extractor'],
+      ['Reranked with FlashRank', 'flashrank', 'ML reranker'],
+      ['Fetched over CDP', 'cdp', 'browser control protocol'],
+    ];
+    for (const [input, leaked, capability] of cases) {
+      const out = sanitizeCapabilityText(input);
+      expect(out.toLowerCase()).not.toContain(leaked);
+      expect(out).toContain(capability);
+    }
+  });
+
+  it('leaves capability-language descriptions untouched', () => {
+    const clean = 'Fetch a page as clean markdown with structured metadata.';
+    expect(sanitizeCapabilityText(clean)).toBe(clean);
+  });
+
+  it('does not maul unrelated words containing "cdp" as a substring', () => {
+    // The \bcdp\b guard is word-bounded: "cdp" inside another token stays put.
+    expect(sanitizeCapabilityText('run the abcdef helper')).toBe('run the abcdef helper');
   });
 });
 
