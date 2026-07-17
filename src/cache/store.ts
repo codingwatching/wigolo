@@ -725,6 +725,120 @@ export function recordTlsImpersonationSuccess(domain: string, threshold: number)
   }
 }
 
+export interface DomainClearance {
+  cookie: string;
+  ua: string;
+  tier: string;
+  expiresAt: string;
+}
+
+interface DomainClearanceRawRow {
+  cf_clearance: string | null;
+  clearance_ua: string | null;
+  clearance_tier: string | null;
+  clearance_expires_at: string | null;
+}
+
+/**
+ * Read the stored anti-bot clearance for a host. Keyed on the RAW hostname
+ * (the same key domain_routing uses) so `a.example.com` and `b.example.com`
+ * keep independent clearances. Returns null when no clearance cookie is
+ * recorded. Freshness is the caller's decision — an expired entry is still
+ * returned so callers can inspect `expiresAt`.
+ */
+export function getDomainClearance(host: string): DomainClearance | null {
+  try {
+    const db = getDatabase();
+    const row = db.prepare(
+      `SELECT cf_clearance, clearance_ua, clearance_tier, clearance_expires_at
+       FROM domain_routing WHERE domain = ? LIMIT 1`,
+    ).get(host) as DomainClearanceRawRow | undefined;
+    if (!row || row.cf_clearance == null) return null;
+    return {
+      cookie: row.cf_clearance,
+      ua: row.clearance_ua ?? '',
+      tier: row.clearance_tier ?? '',
+      expiresAt: row.clearance_expires_at ?? '',
+    };
+  } catch (err) {
+    log.warn('getDomainClearance failed', { host, error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+/** Store (or replace) the anti-bot clearance for a host. */
+export function recordDomainClearance(host: string, clearance: DomainClearance): void {
+  try {
+    const db = getDatabase();
+    db.prepare(`
+      INSERT INTO domain_routing (
+        domain, prefer_playwright, http_failures,
+        cf_clearance, clearance_ua, clearance_tier, clearance_expires_at, last_updated
+      )
+      VALUES (?, 0, 0, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(domain) DO UPDATE SET
+        cf_clearance = excluded.cf_clearance,
+        clearance_ua = excluded.clearance_ua,
+        clearance_tier = excluded.clearance_tier,
+        clearance_expires_at = excluded.clearance_expires_at,
+        last_updated = datetime('now')
+    `).run(host, clearance.cookie, clearance.ua, clearance.tier, clearance.expiresAt);
+  } catch (err) {
+    log.warn('recordDomainClearance failed', { host, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+/** Wipe the clearance fields for a host (routing row itself is retained). */
+export function clearDomainClearance(host: string): void {
+  try {
+    const db = getDatabase();
+    db.prepare(`
+      UPDATE domain_routing
+      SET cf_clearance = NULL, clearance_ua = NULL,
+          clearance_tier = NULL, clearance_expires_at = NULL,
+          last_updated = datetime('now')
+      WHERE domain = ?
+    `).run(host);
+  } catch (err) {
+    log.warn('clearDomainClearance failed', { host, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+/** Record a per-host cooldown (epoch ms) after repeated blocks. */
+export function recordBackoff(host: string, untilEpochMs: number): void {
+  try {
+    const db = getDatabase();
+    db.prepare(`
+      INSERT INTO domain_routing (
+        domain, prefer_playwright, http_failures, backoff_until, last_403_at, last_updated
+      )
+      VALUES (?, 0, 0, ?, datetime('now'), datetime('now'))
+      ON CONFLICT(domain) DO UPDATE SET
+        backoff_until = excluded.backoff_until,
+        last_403_at = datetime('now'),
+        last_updated = datetime('now')
+    `).run(host, String(untilEpochMs));
+  } catch (err) {
+    log.warn('recordBackoff failed', { host, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+/** Read the per-host cooldown (epoch ms), or null when none is set. */
+export function getBackoff(host: string): number | null {
+  try {
+    const db = getDatabase();
+    const row = db.prepare(
+      'SELECT backoff_until FROM domain_routing WHERE domain = ? LIMIT 1',
+    ).get(host) as { backoff_until: string | null } | undefined;
+    if (!row || row.backoff_until == null) return null;
+    const parsed = Number(row.backoff_until);
+    return Number.isFinite(parsed) ? parsed : null;
+  } catch (err) {
+    log.warn('getBackoff failed', { host, error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
 export function getAllEmbeddings(modelId?: string): StoredEmbedding[] {
   try {
     const db = getDatabase();
