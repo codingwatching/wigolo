@@ -142,7 +142,10 @@ async function runFullSetup(
 ): Promise<import('./warmup.js').WarmupResult | null> {
   const { runWarmup } = await import('./warmup.js');
   try {
-    return await runWarmup(['--all'], reporter);
+    // Skip warmup's own verify pass — init runs doctor cold checks afterwards,
+    // and the install phase already loads each component, so a second re-load
+    // (the "Checking …" probe) is redundant noise.
+    return await runWarmup(['--all', '--skip-verify'], reporter);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     // Exit 0 even here: log the failure with the retry path, let the caller

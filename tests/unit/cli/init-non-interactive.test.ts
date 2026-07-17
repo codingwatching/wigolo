@@ -376,7 +376,7 @@ describe('runInit --non-interactive', () => {
     const code = await runInit(['--non-interactive']);
     expect(code).toBe(0);
     expect(runWarmupMock).toHaveBeenCalledTimes(1);
-    expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all']);
+    expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all', '--skip-verify']);
   });
 
   it('--non-interactive with no agents but --provider still persists the provider', async () => {

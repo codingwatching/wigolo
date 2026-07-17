@@ -301,7 +301,7 @@ describe('runInit', () => {
     try {
       await runInit(['--non-interactive', '--agents=cursor']);
       expect(runWarmupMock).toHaveBeenCalledTimes(1);
-      expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all']);
+      expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all', '--skip-verify']);
       expect(runConfigMock).not.toHaveBeenCalled();
     } finally {
       cap.restore();
@@ -342,7 +342,7 @@ describe('runInit', () => {
     try {
       await runInit(['--non-interactive', '--agents=cursor', '--warmup']);
       expect(runWarmupMock).toHaveBeenCalledTimes(1);
-      expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all']);
+      expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all', '--skip-verify']);
     } finally {
       cap.restore();
     }
@@ -519,7 +519,7 @@ describe('runInit', () => {
       try {
         await runInit(['--non-interactive', '--agents=cursor']);
         expect(runWarmupMock).toHaveBeenCalledTimes(1);
-        expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all']);
+        expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all', '--skip-verify']);
       } finally {
         cap.restore();
       }
@@ -532,7 +532,7 @@ describe('runInit', () => {
       try {
         await runInit([]);
         expect(runWarmupMock).toHaveBeenCalledTimes(1);
-        expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all']);
+        expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all', '--skip-verify']);
       } finally {
         cap.restore();
       }
@@ -554,7 +554,7 @@ describe('runInit', () => {
       try {
         await runInit(['--wizard']);
         expect(runWarmupMock).toHaveBeenCalledTimes(1);
-        expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all']);
+        expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all', '--skip-verify']);
       } finally {
         cap.restore();
       }
@@ -780,7 +780,7 @@ describe('runInit', () => {
       try {
         await runInit([]);
         expect(runWarmupMock).toHaveBeenCalledTimes(1);
-        expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all']);
+        expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all', '--skip-verify']);
       } finally {
         cap.restore();
       }
@@ -957,7 +957,7 @@ describe('runInit', () => {
         // Full setup is the default on the wizard path too — warmup fires after
         // the Ink shell unmounts.
         expect(runWarmupMock).toHaveBeenCalledTimes(1);
-        expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all']);
+        expect(runWarmupMock.mock.calls[0]?.[0]).toEqual(['--all', '--skip-verify']);
       } finally {
         cap.restore();
       }

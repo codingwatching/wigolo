@@ -442,7 +442,10 @@ export async function runWarmup(
     : await resolveLocalModelTier({ localLlm, localLlmModel: config.localLlmModel ?? null });
   reporterImpl.note(formatLocalLlmWarmupLine({ localLlm, tier: localTier }));
 
-  if (flagSet.has('--verify') || flagSet.has('--all')) {
+  // `--all` implies a post-install verify, but a caller that runs its own
+  // checks afterwards (init does doctor cold checks) passes `--skip-verify` to
+  // avoid a redundant re-load of components the install phase already exercised.
+  if ((flagSet.has('--verify') || flagSet.has('--all')) && !flagSet.has('--skip-verify')) {
     await runVerify(config.dataDir, reporterImpl);
   }
 
