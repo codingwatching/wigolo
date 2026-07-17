@@ -438,20 +438,41 @@ export class MultiBrowserPool {
       // those flags never leak into the shared pooled browser (which stays on
       // its default launch). The dedicated context + browser are closed in the
       // finally.
-      const launcher = getLauncher(resolvedType);
-      const cfgProxy = getConfig();
-      const proxy = playwrightProxyOption(cfgProxy.proxyUrl, cfgProxy.useProxy);
-      dedicatedBrowser = await launcher.launch({
-        headless: true,
-        args: stealthLaunchArgs(resolvedType),
-        env: sanitizedChildEnv({ stripProxy: true }),
-        ...(proxy ? { proxy } : {}),
-      });
-      advertisedUa = resolveStealthUA();
-      ctx = await dedicatedBrowser.newContext(stealthContextOptions(advertisedUa));
-      // Guard for context stubs without addInitScript (unit-test mocks).
-      if (typeof (ctx as { addInitScript?: unknown }).addInitScript === 'function') {
-        await ctx.addInitScript(STEALTH_INIT_SCRIPT);
+      //
+      // This setup runs OUTSIDE the main try/finally below, so any throw here
+      // (launch/newContext/addInitScript/newPage — e.g. browser not installed,
+      // resource exhaustion, launch race) would otherwise leak the semaphore
+      // slot AND orphan a launched browser. Clean up locally + rethrow. On the
+      // success path the catch never runs, so the finally below stays the sole
+      // releaser — no double-release.
+      try {
+        const launcher = getLauncher(resolvedType);
+        const cfgProxy = getConfig();
+        const proxy = playwrightProxyOption(cfgProxy.proxyUrl, cfgProxy.useProxy);
+        dedicatedBrowser = await launcher.launch({
+          headless: true,
+          args: stealthLaunchArgs(resolvedType),
+          env: sanitizedChildEnv({ stripProxy: true }),
+          ...(proxy ? { proxy } : {}),
+        });
+        advertisedUa = resolveStealthUA();
+        ctx = await dedicatedBrowser.newContext(stealthContextOptions(advertisedUa));
+        // Guard for context stubs without addInitScript (unit-test mocks).
+        if (typeof (ctx as { addInitScript?: unknown }).addInitScript === 'function') {
+          await ctx.addInitScript(STEALTH_INIT_SCRIPT);
+        }
+      } catch (err) {
+        // Close the orphaned throwaway browser (if launch got that far) and
+        // free the concurrency slot before rethrowing — otherwise N such
+        // failures would exhaust the semaphore and hang all later stealth
+        // fetches.
+        await dedicatedBrowser?.close().catch(() => {});
+        dedicatedBrowser = null;
+        if (stealthSlotHeld) {
+          this.releaseStealthSlot();
+          stealthSlotHeld = false;
+        }
+        throw err;
       }
     } else {
       resolvedType = this.resolveType(options.browserType, url);
@@ -473,7 +494,26 @@ export class MultiBrowserPool {
         .catch(() => {});
     }
 
-    const page = await ctx.newPage();
+    let page: import('playwright').Page;
+    try {
+      page = await ctx.newPage();
+    } catch (err) {
+      // newPage runs before the main try/finally. On the dedicated stealth path
+      // a throw here would leak the semaphore slot + orphan the throwaway
+      // browser exactly like the setup above; clean those up and rethrow. The
+      // pooled/CDP paths keep their prior behavior (the context is not
+      // dedicated, so only the rethrow applies).
+      if (dedicated) {
+        await ctx.close().catch(() => {});
+        await dedicatedBrowser?.close().catch(() => {});
+        dedicatedBrowser = null;
+        if (stealthSlotHeld) {
+          this.releaseStealthSlot();
+          stealthSlotHeld = false;
+        }
+      }
+      throw err;
+    }
 
     // When the caller's signal fires, close THIS page (the private one we
     // just opened) so the in-flight navigation is cancelled and the slot is
