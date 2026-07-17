@@ -138,7 +138,7 @@ const FEATURES: Feature[] = [
     tab: "Smart Fetch",
     icon: <FetchIcon />,
     heading: "Routing on observable signals",
-    body: "The fetch ladder escalates to a real browser on what it sees — SPA markers, challenge bodies, thin content — not domain guesses. It learns per-domain, and unlearns when a site stops needing it.",
+    body: "The keyless fetch ladder escalates to a real browser on what it sees — SPA markers, challenge bodies, thin content — not domain guesses. It clears most challenge sites with no keys; the strictest managed-challenge and IP-reputation walls need an opt-in proxy, solver, or reader. It learns per-domain, and unlearns when a site stops needing it.",
     cta: "How it works",
     href: `${GH}#architecture`,
     visual: <FetchVisual />,
