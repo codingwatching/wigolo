@@ -300,6 +300,33 @@ describe('browser-pool anti-bot fast-fail (D6)', () => {
     await pool.shutdown();
   });
 
+  it('DataDome: challenge that "clears" to a near-empty stub is labeled blocked, NOT leaked as content', async () => {
+    // WHY: DataDome (G2 et al.) serves an "enable JS" interstitial at 403, then
+    // during the poll swaps it for a tiny stub — `<body>g2.com</body>` — that
+    // carries NO challenge marker. The marker-based clear-check reads the stub as
+    // a pass, so before this guard a 6-char stub leaked as content at HTTP 200.
+    // After full hydration a body that is still near-empty never truly cleared →
+    // it must fast-fail as ChallengeBlockedError, matching Upwork/Glassdoor.
+    vi.useFakeTimers();
+    process.env.WIGOLO_CHALLENGE_COMPLETION_MS = '5000';
+    resetConfig();
+    state.status = 403;
+    const DATADOME_INTERSTITIAL =
+      '<html lang="en"><head><title>g2.com</title>' +
+      '<style>#cmsg{animation: A 1.5s;}</style></head>' +
+      '<body style="margin:0"><p id="cmsg">Please enable JS and disable any ad blocker</p></body></html>';
+    const TINY_STUB = '<html><head><title>g2.com</title></head><body>g2.com</body></html>';
+    state.bodies = [DATADOME_INTERSTITIAL, TINY_STUB, TINY_STUB];
+
+    const pool = new MultiBrowserPool();
+    const p = pool.fetchWithBrowser('https://blocked.example/');
+    const assertion = expect(p).rejects.toBeInstanceOf(ChallengeBlockedError);
+    await vi.advanceTimersByTimeAsync(6000);
+    await assertion;
+    delete process.env.WIGOLO_CHALLENGE_COMPLETION_MS;
+    await pool.shutdown();
+  });
+
   it('CLEAR-CHECK still-blocked: modern-CF skeleton that never clears + no cf_clearance fast-fails with ChallengeBlockedError', async () => {
     vi.useFakeTimers();
     process.env.WIGOLO_CHALLENGE_COMPLETION_MS = '5000';

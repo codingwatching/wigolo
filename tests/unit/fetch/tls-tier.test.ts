@@ -286,6 +286,97 @@ describe('tls-tier: modern-CF challenge (header + guarded body marker)', () => {
     expect(isChallengeResponse(200, '<title>Just a moment...</title>', undefined)).toBe(true);
   });
 
+  it('isChallengeResponse: DataDome 403 (x-dd-b block flag, cmsg body, NO CF markers) → true', () => {
+    // G2-shaped DataDome interstitial: 403 + x-dd-b:1 + x-datadome:protected +
+    // a `<p id="cmsg">Please enable JS…` body. NONE of the CF signals
+    // (cf-mitigated / dd-loader / _dd_s / challenge-platform) are present, so
+    // only the DataDome block header can catch it.
+    const ddBody =
+      '<html lang="en"><head><title>g2.com</title>' +
+      '<style>#cmsg{animation: A 1.5s;}</style></head>' +
+      '<body style="margin:0"><p id="cmsg">Please enable JS and disable any ad blocker</p></body></html>';
+    expect(isChallengeResponse(403, ddBody, { 'x-dd-b': '1' })).toBe(true);
+    expect(isChallengeResponse(403, ddBody, { 'x-datadome': 'protected' })).toBe(true);
+    // Case-insensitive on the header KEY, and a `blocked` value also counts.
+    expect(isChallengeResponse(403, ddBody, { 'X-DataDome': 'BLOCKED' })).toBe(true);
+    // Header alone is sufficient even with a bare body.
+    expect(isChallengeResponse(429, '<html><body>x</body></html>', { 'x-dd-b': '1' })).toBe(true);
+  });
+
+  it('isChallengeResponse: PerimeterX "press & hold" interstitial served at 200 → true', () => {
+    // Walmart/PerimeterX serves its human-verification interstitial at HTTP 200
+    // (masking the block), title "Robot or human?" + "Activate and hold the
+    // button…". The px sensor (window._px) rides on EVERY real page so it can't
+    // be a marker — the interstitial-only title/body text is the safe signal.
+    const pxShell =
+      '<html><head><title>Robot or human?</title></head><body>' +
+      '<div id="px-captcha"></div>' +
+      '<p>Activate and hold the button to confirm that you’re human. Thank You!</p>' +
+      '</body></html>';
+    expect(isChallengeResponse(200, pxShell, undefined)).toBe(true);
+    expect(isChallengeResponse(403, pxShell, undefined)).toBe(true);
+  });
+
+  it('isChallengeResponse: Cloudflare "Attention Required!" WAF block leaked at 200 → true', () => {
+    // Crunchbase-shaped: CF WAF block page served at 200, title "Attention
+    // Required! | Cloudflare", thin "Sorry, you have been blocked" body, none of
+    // the JS-challenge markers. Must be labeled, not returned as content.
+    const cfBlock =
+      '<html><head><title>Attention Required! | Cloudflare</title></head><body>' +
+      '<h1>Sorry, you have been blocked</h1><p>You are unable to access this site. ' +
+      'Cloudflare Ray ID: 8xy.</p></body></html>';
+    expect(isChallengeResponse(200, cfBlock, undefined)).toBe(true);
+    expect(isChallengeResponse(403, cfBlock, undefined)).toBe(true);
+  });
+
+  it('MUST-NOT-FIRE: a real 200 page whose prose mentions "robot or human" → FALSE', () => {
+    const article =
+      '<html><head><title>AI ethics deep dive</title></head><body><article>' +
+      'The perennial question of robot or human judgment recurs across the field. ' +
+      'Here is a great deal of genuine article prose so the body is unmistakably real content. '.repeat(8) +
+      '</article></body></html>';
+    expect(isChallengeResponse(200, article, undefined)).toBe(false);
+  });
+
+  it('isChallengeResponse: DataDome cmsg interstitial as a browser-tier 200 shell → true', () => {
+    // The browser tier renders DataDome's "enable JS" interstitial and
+    // Playwright reports the nav as 200. NO anti-bot status and NO block header
+    // survive to this point — only the rendered body (id="cmsg", tiny skeleton)
+    // catches it, via the 2xx-shell path in isChallengeShell.
+    const shell200 =
+      '<html lang="en"><head><title>g2.com</title>' +
+      '<style>#cmsg{animation: A 1.5s;}</style></head>' +
+      '<body style="margin:0"><p id="cmsg">Please enable JS and disable any ad blocker</p></body></html>';
+    expect(isChallengeResponse(200, shell200, undefined)).toBe(true);
+    // And at the raw HTTP 403 too.
+    expect(isChallengeResponse(403, shell200, undefined)).toBe(true);
+  });
+
+  it('MUST-NOT-FIRE: a real 200 article that quotes "id=\\"cmsg\\"" in prose → FALSE', () => {
+    // A blog post ABOUT DataDome could mention the id; the 2xx path also demands
+    // a challenge-page skeleton (tiny visible text), so substantial prose is safe.
+    const article =
+      '<html><body><h1>How DataDome interstitials work</h1><p>' +
+      'DataDome renders a paragraph with id="cmsg" on its block page. ' +
+      'Here is a great deal of genuine article prose so the body is unmistakably real content. '.repeat(8) +
+      '</p></body></html>';
+    expect(isChallengeResponse(200, article, undefined)).toBe(false);
+  });
+
+  it('MUST-NOT-FIRE: DataDome tracking header on an ALLOWED 200 response → FALSE', () => {
+    // DataDome stamps x-datadome-cid (client id) on responses it processes,
+    // INCLUDING allowed ones. That is NOT a block: only x-dd-b / an explicit
+    // protected|blocked value on an anti-bot STATUS counts.
+    const article =
+      '<html><body><h1>Real page</h1><p>' +
+      'Genuine article prose that is unmistakably content. '.repeat(10) +
+      '</p></body></html>';
+    expect(isChallengeResponse(200, article, { 'x-datadome-cid': 'abc123' })).toBe(false);
+    expect(isChallengeResponse(200, article, { 'x-datadome': 'protected' })).toBe(false);
+    // An anti-bot status but only the benign CID (no block flag/value) → FALSE.
+    expect(isChallengeResponse(403, article, { 'x-datadome-cid': 'abc123' })).toBe(false);
+  });
+
   it('MUST-NOT-FIRE: a 200 article whose body contains /cdn-cgi/challenge-platform/ → FALSE', () => {
     // A blog post ABOUT Cloudflare, or a page that legitimately loads a CF
     // script, is a real 200 — the challenge-platform marker is STATUS-gated so

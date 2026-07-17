@@ -363,11 +363,31 @@ const ANTI_BOT_STATUS = new Set([403, 429, 503]);
 const CHALLENGE_MARKERS = [
   'cf-browser-verification',
   'Just a moment',
+  // Cloudflare's classic WAF block page ("Attention Required! | Cloudflare").
+  // It carries none of the JS-challenge markers, so a 200/403 block leaked its
+  // thin "Sorry, you have been blocked" body as content. Already an
+  // interstitial title (see CHALLENGE_TITLE_PATTERN); mirrored here so the body
+  // scan / isChallengeShell catches it too. Skeleton-gated at 2xx.
+  'Attention Required!',
   '_cfChlOpt',
   // DataDome inserts a `dd-loader` sensor and inline script that begins
   // `window._dd_s` — either is a strong "blocked" signal.
   'dd-loader',
   '_dd_s',
+  // DataDome's "enable JavaScript" interstitial (used by G2 and others) renders
+  // `<p id="cmsg">Please enable JS and disable any ad blocker</p>` and carries
+  // NONE of the sensor markers above. The `id="cmsg"` attribute is a DataDome
+  // template signature that never appears in article prose; at a 2xx status the
+  // isChallengeShell skeleton gate still applies, so a real article can't trip.
+  'id="cmsg"',
+  // PerimeterX / HUMAN "press & hold" interstitial (Walmart, StockX, …) — often
+  // served at HTTP 200 to MASK the block. The px SENSOR (`window._px`) rides on
+  // every real page and must NOT be a marker; these two strings appear only on
+  // the interstitial itself. The captcha widget id is vendor-standard; the
+  // "Robot or human?" title is the interstitial's own title. Skeleton-gated at
+  // 2xx, so a real article that merely mentions the phrase can't trip.
+  'id="px-captcha"',
+  'Robot or human?',
 ] as const;
 
 export function isAntiBotStatus(status: number): boolean {
@@ -398,6 +418,25 @@ export function hasChallengeHeader(headers: Record<string, string> | undefined):
 }
 
 /**
+ * DataDome block signal from response headers. DataDome (used by G2, Reddit,
+ * and others) does NOT send Cloudflare's `cf-mitigated`; on a block it sets
+ * `x-dd-b: 1` (its explicit block flag) and/or `x-datadome: protected|blocked`.
+ * The `x-datadome-cid` client-id header is stamped on ALLOWED responses too, so
+ * it is deliberately ignored here. Caller status-gates this (see
+ * isChallengeResponse) for defence in depth — a real 200 never trips it.
+ */
+export function hasDataDomeBlockHeader(headers: Record<string, string> | undefined): boolean {
+  if (!headers) return false;
+  for (const [key, value] of Object.entries(headers)) {
+    const k = key.toLowerCase();
+    const v = (value ?? '').toLowerCase().trim();
+    if (k === 'x-dd-b' && v !== '' && v !== '0') return true;
+    if (k === 'x-datadome' && (v === 'protected' || v === 'blocked')) return true;
+  }
+  return false;
+}
+
+/**
  * Combined challenge classifier that recognises BOTH legacy and modern
  * Cloudflare challenge shapes without widening the shared CHALLENGE_MARKERS
  * list (which drives isRateLimit / isChallengeShell — those must not shift).
@@ -421,6 +460,9 @@ export function isChallengeResponse(
   headers?: Record<string, string> | undefined,
 ): boolean {
   if (hasChallengeHeader(headers)) return true;
+  // DataDome block headers count only on an anti-bot status — its client-id
+  // header rides along on allowed 200s, so status-gating keeps zero over-fire.
+  if (isAntiBotStatus(statusCode) && hasDataDomeBlockHeader(headers)) return true;
   if (isChallengeShell(statusCode, html)) return true;
   if (isAntiBotStatus(statusCode) && html) {
     const slice = html.length > 32768 ? html.slice(0, 32768) : html;
@@ -490,6 +532,18 @@ function approxVisibleTextLength(html: string): number {
  * page that embeds a Turnstile widget has substantial content, no
  * challenge-platform script, and a normal title, so it is never a skeleton.
  */
+/**
+ * Is the rendered body near-empty (below the interstitial content floor)? A
+ * challenge poll uses this AFTER full hydration: a body that never filled with
+ * real content did not truly clear — some bot walls (DataDome) swap the
+ * interstitial for a tiny stub carrying no marker, which a marker-based
+ * clear-check misreads as a pass. Empty/absent HTML counts as near-empty.
+ */
+export function isNearEmptyBody(html: string | null | undefined): boolean {
+  if (!html) return true;
+  return approxVisibleTextLength(html) < CHALLENGE_SKELETON_MAX_TEXT;
+}
+
 export function isChallengeSkeleton(html: string | null | undefined): boolean {
   if (!html) return false;
   const slice = html.length > 32768 ? html.slice(0, 32768) : html;

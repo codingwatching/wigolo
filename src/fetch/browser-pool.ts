@@ -9,7 +9,7 @@ import { abortRejection } from '../util/abort.js';
 import { sanitizedChildEnv } from '../util/child-env.js';
 import { playwrightProxyOption } from './proxy-credentials.js';
 import { redactUrl } from '../util/redact-url.js';
-import { isAntiBotStatus, hasBrowserChallengeBody, isChallengeShell, isChallengeResponse, stillShowingChallenge, hasChallengeHeader } from './tls-tier.js';
+import { isAntiBotStatus, hasBrowserChallengeBody, isChallengeShell, isChallengeResponse, stillShowingChallenge, hasChallengeHeader, isNearEmptyBody } from './tls-tier.js';
 import { pollUntilCleared } from './challenge-completion.js';
 import { resolveStealthUA, stealthLaunchArgs, stealthContextOptions, STEALTH_INIT_SCRIPT } from './stealth.js';
 import { recordDomainClearance, clearDomainClearance } from '../cache/store.js';
@@ -539,6 +539,12 @@ export class MultiBrowserPool {
     let responseHeaders: Record<string, string> = {};
     let finalUrl = url;
     let gotoTimedOut = false;
+    // True once a fetch entered the challenge-completion poll. A poll that clears
+    // to a near-empty stub (DataDome swaps its interstitial for a tiny `g2.com`
+    // body carrying no marker) must NOT be served as content — after full
+    // hydration below, a still-empty body means the wall never really let us
+    // through, so it's a labeled block, not a pass.
+    let enteredChallengePoll = false;
 
     try {
       try {
@@ -672,6 +678,7 @@ export class MultiBrowserPool {
               ? Math.max(0, options.timeoutMs - (Date.now() - fetchStartMs))
               : completionTimeoutMs;
           const deadlineMs = Math.min(completionTimeoutMs, remainingBudgetMs);
+          enteredChallengePoll = true;
           log.warn('bot-protection challenge detected, polling to completion', { url, statusCode, deadlineMs });
           const outcome = await pollUntilCleared(page, {
             deadlineMs,
@@ -806,6 +813,17 @@ export class MultiBrowserPool {
       // transition Playwright throws "Execution context was destroyed".
       // Retry briefly so a hydration nav doesn't fail the whole fetch.
       const html = await readContentWithRetry(page, url);
+
+      // A challenge poll that "cleared" but whose fully-hydrated body is still
+      // near-empty never actually passed — the wall (DataDome) swapped its
+      // interstitial for a tiny stub with no marker, which the marker-based
+      // clear-check reads as a pass. Label it a block instead of leaking the
+      // stub. Runs AFTER networkidle + the hydration probe, so a genuinely
+      // cleared page (slow SPA included) has real content and is unaffected.
+      if (enteredChallengePoll && isNearEmptyBody(html)) {
+        log.warn('challenge auto-passed but hydrated body is near-empty — labeling blocked', { url });
+        throw new ChallengeBlockedError(url);
+      }
 
       let screenshotBase64: string | undefined;
       if (options.screenshot) {
