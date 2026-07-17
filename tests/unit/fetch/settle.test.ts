@@ -1,0 +1,163 @@
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import {
+  settlePage,
+  POST_GOTO_CAP_MS,
+  STABILITY_TICK_MS,
+} from '../../../src/fetch/settle.js';
+
+// Scripted fake page. `waitForFunction` resolves at `probeResolvesAtMs` (or
+// rejects with a TimeoutError at its own timeout when never). `evaluate`
+// returns the per-call metrics, last entry repeating. No content() — settle
+// never captures.
+function makeFakePage(script: {
+  probeResolvesAtMs?: number;
+  metrics: Array<{ textLen: number; nodes: number }>;
+  networkidleRejects?: boolean;
+}) {
+  let evalCalls = 0;
+  const page = {
+    evalCallCount: () => evalCalls,
+    waitForLoadState: vi.fn().mockImplementation(() => {
+      if (script.networkidleRejects) {
+        return Promise.reject(Object.assign(new Error('networkidle timeout'), { name: 'TimeoutError' }));
+      }
+      return Promise.resolve(undefined);
+    }),
+    waitForFunction: vi.fn().mockImplementation((_src: string, _arg: undefined, opts: { timeout: number }) => {
+      if (script.probeResolvesAtMs === undefined) {
+        return new Promise((_res, rej) =>
+          setTimeout(() => rej(Object.assign(new Error('Timeout'), { name: 'TimeoutError' })), opts.timeout));
+      }
+      return new Promise((res) => setTimeout(res, script.probeResolvesAtMs));
+    }),
+    evaluate: vi.fn().mockImplementation(() => {
+      const m = script.metrics[Math.min(evalCalls++, script.metrics.length - 1)];
+      return Promise.resolve(m);
+    }),
+  };
+  return page;
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('settlePage — hybrid probe + stability gate', () => {
+  it('probe resolves immediately → returns fast via the probe gate, no stability wait', async () => {
+    vi.useFakeTimers();
+    const page = makeFakePage({ probeResolvesAtMs: 0, metrics: [{ textLen: 1000, nodes: 20 }] });
+    const p = settlePage(page, {});
+    await vi.advanceTimersByTimeAsync(10);
+    const result = await p;
+    expect(result.settledBy).toBe('probe');
+    expect(result.stillGrowing).toBe(false);
+    // The probe won before any stability tick could sample metrics.
+    expect(page.evalCallCount()).toBe(0);
+  });
+
+  it('probe never resolves, metrics stop growing after 2 ticks → settledBy stability', async () => {
+    vi.useFakeTimers();
+    // Grows once, then flat: ticks read 1000, 1000, 1000 → two stable
+    // transitions after the first sample.
+    const page = makeFakePage({
+      metrics: [
+        { textLen: 1000, nodes: 20 },
+        { textLen: 1000, nodes: 20 },
+        { textLen: 1000, nodes: 20 },
+      ],
+    });
+    const p = settlePage(page, {});
+    await vi.advanceTimersByTimeAsync(POST_GOTO_CAP_MS);
+    const result = await p;
+    expect(result.settledBy).toBe('stability');
+    expect(result.lastMetrics?.textLen).toBe(1000);
+    expect(result.stillGrowing).toBe(false);
+  });
+
+  it('probe never resolves, metrics grow forever → returns at deadline via budget', async () => {
+    vi.useFakeTimers();
+    // Each evaluate returns a strictly larger textLen → never stable.
+    const grow = Array.from({ length: 50 }, (_v, i) => ({ textLen: 500 + i * 500, nodes: 10 + i }));
+    const page = makeFakePage({ metrics: grow });
+    const p = settlePage(page, {});
+    await vi.advanceTimersByTimeAsync(POST_GOTO_CAP_MS + 100);
+    const result = await p;
+    expect(result.settledBy).toBe('budget');
+    // Growth was active when the budget cut in.
+    expect(result.stillGrowing).toBe(true);
+  });
+
+  it('caller budget smaller than the cap sets the deadline to the caller budget', async () => {
+    vi.useFakeTimers();
+    const grow = Array.from({ length: 50 }, (_v, i) => ({ textLen: 500 + i * 500, nodes: 10 + i }));
+    const page = makeFakePage({ metrics: grow });
+    const start = Date.now();
+    const budgetMs = 1200;
+    const p = settlePage(page, { budgetMs });
+    // Advance to just past the caller budget but well under the cap.
+    await vi.advanceTimersByTimeAsync(budgetMs + 50);
+    const result = await p;
+    const elapsed = Date.now() - start;
+    expect(result.settledBy).toBe('budget');
+    // Total wall clock is bounded by the caller budget, not the 6s cap.
+    expect(elapsed).toBeLessThan(budgetMs + STABILITY_TICK_MS + 50);
+    expect(elapsed).toBeGreaterThanOrEqual(budgetMs);
+  });
+
+  it('abort during the wait rejects with the abort reason and never resolves', async () => {
+    vi.useFakeTimers();
+    const page = makeFakePage({
+      metrics: [{ textLen: 100, nodes: 2 }, { textLen: 200, nodes: 4 }, { textLen: 300, nodes: 6 }],
+    });
+    const controller = new AbortController();
+    const reason = new Error('caller budget exhausted');
+    const p = settlePage(page, { signal: controller.signal });
+    // Guard against a silent resolve masquerading as success.
+    const outcome = p.then(
+      (r) => ({ resolved: true as const, r }),
+      (e) => ({ resolved: false as const, e }),
+    );
+    await vi.advanceTimersByTimeAsync(STABILITY_TICK_MS + 10);
+    controller.abort(reason);
+    await vi.advanceTimersByTimeAsync(10);
+    const o = await outcome;
+    expect(o.resolved).toBe(false);
+    if (!o.resolved) expect(o.e).toBe(reason);
+  });
+
+  it('a networkidle rejection is swallowed (best-effort) and settle still completes', async () => {
+    vi.useFakeTimers();
+    const page = makeFakePage({
+      networkidleRejects: true,
+      probeResolvesAtMs: 0,
+      metrics: [{ textLen: 900, nodes: 15 }],
+    });
+    const p = settlePage(page, {});
+    await vi.advanceTimersByTimeAsync(10);
+    const result = await p;
+    expect(result.settledBy).toBe('probe');
+  });
+
+  it('epsilon: deltas < 2% AND < 40 chars are stable; a 5% growth tick resets stability', async () => {
+    vi.useFakeTimers();
+    // 1000 → 1010 (1%, 10 chars: stable) → 1015 (<1%, 5 chars: stable) would
+    // reach stability, so instead inject a 5% jump on the second transition to
+    // prove it RESETS, then two genuinely-stable ticks to finally settle.
+    const page = makeFakePage({
+      metrics: [
+        { textLen: 1000, nodes: 20 }, // baseline
+        { textLen: 1010, nodes: 20 }, // +10 chars, +1% → stable tick 1
+        { textLen: 1060, nodes: 21 }, // +50 chars, +5% → RESET (not stable)
+        { textLen: 1065, nodes: 21 }, // +5 chars, <1% → stable tick 1 again
+        { textLen: 1065, nodes: 21 }, // +0 → stable tick 2 → settle
+      ],
+    });
+    const p = settlePage(page, {});
+    await vi.advanceTimersByTimeAsync(POST_GOTO_CAP_MS);
+    const result = await p;
+    // If the 5% jump had NOT reset, stability would have fired one tick early
+    // at a smaller textLen. Settling only at 1065 proves the reset happened.
+    expect(result.settledBy).toBe('stability');
+    expect(result.lastMetrics?.textLen).toBe(1065);
+  });
+});

@@ -269,3 +269,20 @@ export const APP_SHELL_ONLY_SOURCE = `(() => {
   const SPA_APP_ROOT_SELECTORS = ${JSON.stringify(SPA_APP_ROOT_SELECTORS)};
   return document.querySelector(SPA_APP_ROOT_SELECTORS) !== null;
 })()`;
+
+// Content metrics snapshot for the stability poller: text length OUTSIDE nav
+// chrome + content node count. Cheap enough to run every poll tick.
+export const CONTENT_METRICS_SOURCE = `(() => {
+  const NAV_CHROME_SELECTORS = ${JSON.stringify(NAV_CHROME_SELECTORS)};
+  let textLen = 0;
+  let nodes = 0;
+  const els = document.querySelectorAll('p, pre, code, article, main, h1, h2, h3, li, td');
+  for (let i = 0; i < els.length; i++) {
+    const el = els[i];
+    if (typeof el.closest === 'function' && el.closest(NAV_CHROME_SELECTORS)) continue;
+    nodes += 1;
+  }
+  const body = document.body;
+  textLen = body ? ((body.innerText || '').trim().length) : 0;
+  return { textLen, nodes };
+})()`;
