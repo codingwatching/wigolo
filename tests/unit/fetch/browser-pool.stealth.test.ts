@@ -12,6 +12,12 @@ interface StealthState {
   browsersLaunched: number;
   browsersClosed: number;
   gotoHang: boolean;
+  // When set, launcher.launch throws AFTER incrementing browsersLaunched=false
+  // (no browser created) — simulates a launch failure during stealth setup.
+  launchThrows: boolean;
+  // When set, newContext throws after the browser is launched — simulates a
+  // setup failure with a live throwaway browser that must be closed.
+  newContextThrows: boolean;
   // Set by a test to be notified each time a context is created (so it can
   // sequence a second concurrent fetch precisely).
   onContextCreated?: () => void;
@@ -26,6 +32,8 @@ const state: StealthState = {
   browsersLaunched: 0,
   browsersClosed: 0,
   gotoHang: false,
+  launchThrows: false,
+  newContextThrows: false,
 };
 
 function makePage() {
@@ -71,7 +79,10 @@ function makeContext() {
 function makeBrowser() {
   state.browsersLaunched++;
   return {
-    newContext: vi.fn().mockImplementation(() => Promise.resolve(makeContext())),
+    newContext: vi.fn().mockImplementation(() => {
+      if (state.newContextThrows) return Promise.reject(new Error('newContext boom'));
+      return Promise.resolve(makeContext());
+    }),
     close: vi.fn().mockImplementation(() => {
       state.browsersClosed++;
       return Promise.resolve(undefined);
@@ -80,7 +91,10 @@ function makeBrowser() {
 }
 
 vi.mock('playwright', () => {
-  const launch = vi.fn().mockImplementation(() => Promise.resolve(makeBrowser()));
+  const launch = vi.fn().mockImplementation(() => {
+    if (state.launchThrows) return Promise.reject(new Error('launch boom'));
+    return Promise.resolve(makeBrowser());
+  });
   const stub = { launch };
   return { chromium: stub, firefox: stub, webkit: stub };
 });
@@ -96,6 +110,8 @@ function resetState() {
   state.browsersLaunched = 0;
   state.browsersClosed = 0;
   state.gotoHang = false;
+  state.launchThrows = false;
+  state.newContextThrows = false;
   state.onContextCreated = undefined;
 }
 
@@ -208,6 +224,74 @@ describe('browser-pool dedicated stealth context', () => {
     expect(stats[0].pooledCount).toBe(1);
 
     releaseSpy.mockRestore();
+    await pool.shutdown();
+  });
+
+  it('releases the stealth slot when launch throws during setup (no semaphore leak)', async () => {
+    process.env.MAX_BROWSERS = '1';
+    resetConfig();
+    state.launchThrows = true;
+
+    const pool = new MultiBrowserPool();
+    // A launch failure must reject...
+    await expect(
+      pool.fetchWithBrowser('https://blocked.example', { stealth: true }),
+    ).rejects.toThrow(/launch boom/);
+    // ...and the throwaway browser was never created (throw was at launch).
+    expect(state.browsersLaunched).toBe(0);
+
+    // Regression: with limit=1, a SECOND stealth fetch must NOT be blocked by a
+    // leaked slot. Let it succeed this time.
+    state.launchThrows = false;
+    const result = await pool.fetchWithBrowser('https://ok.example', { stealth: true });
+    expect(result.method).toBe('playwright');
+    expect(state.contextsCreated).toBe(1);
+
+    delete process.env.MAX_BROWSERS;
+    await pool.shutdown();
+  });
+
+  it('N failed stealth setups do not exhaust the semaphore (slot always freed)', async () => {
+    process.env.MAX_BROWSERS = '1';
+    resetConfig();
+    state.launchThrows = true;
+
+    const pool = new MultiBrowserPool();
+    // More failures than the slot count — a leaked slot would make the 2nd hang.
+    for (let i = 0; i < 5; i++) {
+      await expect(
+        pool.fetchWithBrowser('https://blocked.example', { stealth: true }),
+      ).rejects.toThrow(/launch boom/);
+    }
+
+    // The pool is still usable after N failures.
+    state.launchThrows = false;
+    const result = await pool.fetchWithBrowser('https://ok.example', { stealth: true });
+    expect(result.method).toBe('playwright');
+
+    delete process.env.MAX_BROWSERS;
+    await pool.shutdown();
+  });
+
+  it('closes the throwaway browser when newContext throws after launch', async () => {
+    process.env.MAX_BROWSERS = '1';
+    resetConfig();
+    state.newContextThrows = true;
+
+    const pool = new MultiBrowserPool();
+    await expect(
+      pool.fetchWithBrowser('https://blocked.example', { stealth: true }),
+    ).rejects.toThrow(/newContext boom/);
+    // The browser WAS launched, so it must have been closed on the error path.
+    expect(state.browsersLaunched).toBe(1);
+    expect(state.browsersClosed).toBe(1);
+
+    // Slot is free — a subsequent stealth fetch proceeds.
+    state.newContextThrows = false;
+    const result = await pool.fetchWithBrowser('https://ok.example', { stealth: true });
+    expect(result.method).toBe('playwright');
+
+    delete process.env.MAX_BROWSERS;
     await pool.shutdown();
   });
 });
