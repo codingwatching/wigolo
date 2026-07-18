@@ -67,6 +67,14 @@ export async function settlePage(
 
   if (remaining() > 0) {
     let stopStability = false;
+    // The in-flight tick timer + its resolver, so teardown can clear the timer
+    // AND unblock a poller currently awaiting a tick (leaves no pending timer).
+    // Held in a ref object so the closure write is visible to the finally block
+    // without TS control-flow narrowing the outer `let` to `never`.
+    const tick: { timer: ReturnType<typeof setTimeout> | null; wake: (() => void) | null } = {
+      timer: null,
+      wake: null,
+    };
 
     // Exit 1: hydration probe (fires instantly on recognized article content).
     // Attach .catch upfront so its post-race rejection never surfaces unhandled.
@@ -82,7 +90,9 @@ export async function settlePage(
       while (!stopStability && remaining() > 0) {
         const tickMs = Math.min(STABILITY_TICK_MS, remaining());
         await new Promise<void>((r) => {
+          tick.wake = r;
           const t = setTimeout(r, tickMs);
+          tick.timer = t;
           if (typeof (t as { unref?: () => void }).unref === 'function') (t as { unref: () => void }).unref();
         });
         if (stopStability) return null;
@@ -110,11 +120,20 @@ export async function settlePage(
       }
     });
 
-    const winner = await Promise.race([probeWait, stabilityWait, budgetWait, abortRejection(opts.signal)]);
-
-    // Tear down the losing racers so nothing leaks past this call.
-    stopStability = true;
-    if (budgetTimer) clearTimeout(budgetTimer);
+    // finally (not post-await) so an abort rejection still tears down the
+    // losing racers — otherwise the stability poller keeps ticking
+    // page.evaluate against a page the aborting caller is closing.
+    let winner: 'probe' | 'stability' | null;
+    try {
+      winner = await Promise.race([probeWait, stabilityWait, budgetWait, abortRejection(opts.signal)]);
+    } finally {
+      stopStability = true;
+      if (budgetTimer) clearTimeout(budgetTimer);
+      if (tick.timer) clearTimeout(tick.timer);
+      // Unblock a poller mid-tick so it re-checks stopStability and exits now,
+      // rather than resolving on a stale timer we just cleared.
+      if (tick.wake) tick.wake();
+    }
 
     if (winner === 'probe' || winner === 'stability') {
       settledBy = winner;

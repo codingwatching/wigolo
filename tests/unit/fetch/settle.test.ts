@@ -125,6 +125,37 @@ describe('settlePage — hybrid probe + stability gate', () => {
     if (!o.resolved) expect(o.e).toBe(reason);
   });
 
+  it('abort tears down the stability poller: no further evaluate calls after the rejection', async () => {
+    vi.useFakeTimers();
+    // Growing metrics so no gate ever fires — the stability poller is the only
+    // thing sampling, and it must stop the instant abort wins the race.
+    const grow = Array.from({ length: 50 }, (_v, i) => ({ textLen: 100 + i * 100, nodes: 2 + i }));
+    const page = makeFakePage({ metrics: grow });
+    const controller = new AbortController();
+    const p = settlePage(page, { signal: controller.signal });
+    const outcome = p.then(
+      () => ({ resolved: true as const }),
+      (e) => ({ resolved: false as const, e }),
+    );
+    // Let a couple of ticks sample metrics, then abort.
+    await vi.advanceTimersByTimeAsync(STABILITY_TICK_MS * 2 + 10);
+    const callsAtAbort = page.evaluate.mock.calls.length;
+    // While active, settle owns two timers (budget + the in-flight tick) on top
+    // of the probe wait's own timer (which Playwright, not settle, cancels on
+    // page close). Capture the live count so we can prove settle clears ITS two.
+    const timersWhileActive = vi.getTimerCount();
+    controller.abort(new Error('aborted'));
+    const o = await outcome;
+    expect(o.resolved).toBe(false);
+    // Advance well past several more tick intervals: if teardown were skipped,
+    // the poller would keep calling evaluate every STABILITY_TICK_MS.
+    await vi.advanceTimersByTimeAsync(STABILITY_TICK_MS * 5);
+    // The load-bearing proof: the poller stopped sampling the moment abort won.
+    expect(page.evaluate.mock.calls.length).toBe(callsAtAbort);
+    // And settle tore down the two timers it owns (budget + tick).
+    expect(vi.getTimerCount()).toBe(timersWhileActive - 2);
+  });
+
   it('a networkidle rejection is swallowed (best-effort) and settle still completes', async () => {
     vi.useFakeTimers();
     const page = makeFakePage({
