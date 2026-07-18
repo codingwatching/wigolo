@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { createLogger } from '../logger.js';
 import { abortRejection } from '../util/abort.js';
 import { settlePage, POST_GOTO_CAP_MS } from './settle.js';
+import type { ContentCompleteness } from '../types.js';
 
 const log = createLogger('playwright-tier');
 
@@ -62,7 +63,7 @@ export async function closeDaemonBrowser(): Promise<void> {
   if (_browser) { await _browser.close(); _browser = null; }
 }
 
-export async function fetchWithPlaywright(url: string, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<{ html: string; text: string }> {
+export async function fetchWithPlaywright(url: string, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<{ html: string; text: string; completeness: ContentCompleteness }> {
   // Bail out immediately if the caller's budget is already exhausted.
   if (opts.signal?.aborted) throw opts.signal.reason;
 
@@ -86,11 +87,11 @@ export async function fetchWithPlaywright(url: string, opts: { timeoutMs?: numbe
     // bail before entering the post-goto waits so a never-idling SPA can't
     // hold the slot past the budget.
     if (opts.signal?.aborted) throw opts.signal.reason;
-    await settlePage(page, { budgetMs: Math.min(overall, POST_GOTO_CAP_MS), signal: opts.signal, url });
+    const settle = await settlePage(page, { budgetMs: Math.min(overall, POST_GOTO_CAP_MS), signal: opts.signal, url });
     if (opts.signal?.aborted) throw opts.signal.reason;
     const html = await page.content();
     const text = await page.evaluate(() => document.body?.innerText ?? '');
-    return { html, text };
+    return { html, text, completeness: settle.completeness };
   } finally {
     opts.signal?.removeEventListener('abort', onAbort);
     // Close the page; tolerate already-closed (double-close is safe).

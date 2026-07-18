@@ -1,21 +1,28 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   settlePage,
+  toCompleteness,
   POST_GOTO_CAP_MS,
   STABILITY_TICK_MS,
 } from '../../../src/fetch/settle.js';
+import { CONTENT_METRICS_SOURCE, DOM_VERDICT_SOURCE, type DomVerdict } from '../../../src/fetch/hydration-probe.js';
 
 // Scripted fake page. `waitForFunction` resolves at `probeResolvesAtMs` (or
 // rejects with a TimeoutError at its own timeout when never). `evaluate`
-// returns the per-call metrics, last entry repeating. No content() — settle
-// never captures.
+// branches on the injected source: CONTENT_METRICS_SOURCE returns per-call
+// metrics (last entry repeating) for the stability poller; DOM_VERDICT_SOURCE
+// returns the final verdict settle reads after the gate exits. No content() —
+// settle never captures.
 function makeFakePage(script: {
   probeResolvesAtMs?: number;
   metrics: Array<{ textLen: number; nodes: number }>;
   networkidleRejects?: boolean;
+  verdict?: DomVerdict;
 }) {
   let evalCalls = 0;
   const page = {
+    // Count only the metrics (stability-poller) evaluate calls — the single
+    // final DOM_VERDICT_SOURCE read must not inflate the poller-sample count.
     evalCallCount: () => evalCalls,
     waitForLoadState: vi.fn().mockImplementation(() => {
       if (script.networkidleRejects) {
@@ -30,11 +37,19 @@ function makeFakePage(script: {
       }
       return new Promise((res) => setTimeout(res, script.probeResolvesAtMs));
     }),
-    evaluate: vi.fn().mockImplementation(() => {
+    evaluate: vi.fn().mockImplementation((src: string) => {
+      if (src === DOM_VERDICT_SOURCE) {
+        return Promise.resolve(
+          script.verdict ?? { hasContent: true, hasSpaRoot: false, nearEmpty: false },
+        );
+      }
+      // CONTENT_METRICS_SOURCE (stability poller).
       const m = script.metrics[Math.min(evalCalls++, script.metrics.length - 1)];
       return Promise.resolve(m);
     }),
   };
+  // Ensure the constant is referenced so the branch is meaningful under lint.
+  void CONTENT_METRICS_SOURCE;
   return page;
 }
 
@@ -206,5 +221,156 @@ describe('settlePage — hybrid probe + stability gate', () => {
     await vi.advanceTimersByTimeAsync(POST_GOTO_CAP_MS + 100);
     const result = await p;
     expect(result.settledBy).toBe('budget');
+  });
+
+  it('reads the DOM verdict after the gate and returns a completeness label', async () => {
+    vi.useFakeTimers();
+    // Probe fires immediately (content_verified path) and the final verdict
+    // reports real content → full/content_verified.
+    const page = makeFakePage({
+      probeResolvesAtMs: 0,
+      metrics: [{ textLen: 1000, nodes: 20 }],
+      verdict: { hasContent: true, hasSpaRoot: false, nearEmpty: false },
+    });
+    const p = settlePage(page, {});
+    await vi.advanceTimersByTimeAsync(10);
+    const result = await p;
+    expect(result.settledBy).toBe('probe');
+    expect(result.completeness).toEqual({
+      level: 'full',
+      reason: 'content_verified',
+      settled_by: 'probe',
+    });
+  });
+
+  it('growing-forever SPA shell → budget exit → partial/never_settled completeness', async () => {
+    vi.useFakeTimers();
+    // Content grows every tick so stability never fires; the probe never
+    // resolves; budget wins with stillGrowing=true. Final verdict has an SPA
+    // root but no article yet → never_settled (partial), the "cut off
+    // mid-mount" label — NOT app_shell, because growth was still active.
+    const grow = Array.from({ length: 50 }, (_v, i) => ({ textLen: 200 + i * 300, nodes: 1 }));
+    const page = makeFakePage({
+      metrics: grow,
+      verdict: { hasContent: false, hasSpaRoot: true, nearEmpty: false },
+    });
+    const p = settlePage(page, {});
+    await vi.advanceTimersByTimeAsync(POST_GOTO_CAP_MS + 100);
+    const result = await p;
+    expect(result.settledBy).toBe('budget');
+    expect(result.stillGrowing).toBe(true);
+    expect(result.completeness).toEqual({
+      level: 'partial',
+      reason: 'never_settled',
+      settled_by: 'budget',
+    });
+  });
+
+  it('abort DURING the networkidle slice rejects with the reason, before the gate', async () => {
+    // Deferred Task-3 coverage: the networkidle wait (before the gate phase)
+    // must honor abort. The fake networkidle never resolves; abort fires during
+    // it → settlePage rejects with the reason and never enters the gate.
+    vi.useFakeTimers();
+    let gateEntered = false;
+    const controller = new AbortController();
+    const reason = new Error('caller budget exhausted mid-networkidle');
+    const page = {
+      waitForLoadState: vi.fn().mockImplementation(() => new Promise(() => {})), // never resolves
+      waitForFunction: vi.fn().mockImplementation(() => {
+        gateEntered = true;
+        return new Promise(() => {});
+      }),
+      evaluate: vi.fn().mockImplementation((src: string) => {
+        if (src === DOM_VERDICT_SOURCE) return Promise.resolve({ hasContent: false, hasSpaRoot: false, nearEmpty: true });
+        gateEntered = true;
+        return Promise.resolve({ textLen: 0, nodes: 0 });
+      }),
+    };
+    const p = settlePage(page, { signal: controller.signal });
+    const outcome = p.then(
+      (r) => ({ resolved: true as const, r }),
+      (e) => ({ resolved: false as const, e }),
+    );
+    await vi.advanceTimersByTimeAsync(5);
+    controller.abort(reason);
+    await vi.advanceTimersByTimeAsync(5);
+    const o = await outcome;
+    expect(o.resolved).toBe(false);
+    if (!o.resolved) expect(o.e).toBe(reason);
+    // The abort during networkidle short-circuited before any gate work.
+    expect(gateEntered).toBe(false);
+  });
+});
+
+describe('toCompleteness — closed 6-reason mapping (challenge_shell is browser-pool only)', () => {
+  const V = (o: Partial<DomVerdict>): DomVerdict => ({
+    hasContent: false,
+    hasSpaRoot: false,
+    nearEmpty: false,
+    ...o,
+  });
+
+  it('nearEmpty beats everything → shell/empty (even at budget-with-growth)', () => {
+    expect(toCompleteness('budget', V({ nearEmpty: true, hasContent: true }), true)).toEqual({
+      level: 'shell',
+      reason: 'empty',
+      settled_by: 'budget',
+    });
+  });
+
+  it('content + probe → full/content_verified', () => {
+    expect(toCompleteness('probe', V({ hasContent: true }), false)).toEqual({
+      level: 'full',
+      reason: 'content_verified',
+      settled_by: 'probe',
+    });
+  });
+
+  it('content + stability → full/stable_content', () => {
+    expect(toCompleteness('stability', V({ hasContent: true }), false)).toEqual({
+      level: 'full',
+      reason: 'stable_content',
+      settled_by: 'stability',
+    });
+  });
+
+  it('content + budget-with-growth → partial/never_settled (growth cut off mid-mount)', () => {
+    expect(toCompleteness('budget', V({ hasContent: true }), true)).toEqual({
+      level: 'partial',
+      reason: 'never_settled',
+      settled_by: 'budget',
+    });
+  });
+
+  it('content + budget-without-growth → full/stable_content', () => {
+    expect(toCompleteness('budget', V({ hasContent: true }), false)).toEqual({
+      level: 'full',
+      reason: 'stable_content',
+      settled_by: 'budget',
+    });
+  });
+
+  it('no content + budget-with-growth → partial/never_settled', () => {
+    expect(toCompleteness('budget', V({ hasContent: false }), true)).toEqual({
+      level: 'partial',
+      reason: 'never_settled',
+      settled_by: 'budget',
+    });
+  });
+
+  it('no content + SPA root → shell/app_shell', () => {
+    expect(toCompleteness('budget', V({ hasSpaRoot: true }), false)).toEqual({
+      level: 'shell',
+      reason: 'app_shell',
+      settled_by: 'budget',
+    });
+  });
+
+  it('no content + no SPA root → shell/nav_shell', () => {
+    expect(toCompleteness('stability', V({ hasSpaRoot: false }), false)).toEqual({
+      level: 'shell',
+      reason: 'nav_shell',
+      settled_by: 'stability',
+    });
   });
 });

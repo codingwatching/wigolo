@@ -121,27 +121,23 @@ function measureContentOutsideChrome(
   return { textLen, pCount, codeCount };
 }
 
+// A hydrated landmark needs substantial text AND enough genuine content
+// blocks. Data-table articles (pricing grids, API tables) carry their body in
+// <tr> rows with few <p>s, so rows count toward the block threshold alongside
+// prose <p> and code <pre>/<code> — a nav shell uses <a>/<li>, never <tr>, so
+// this can't make a nav-only shell read as hydrated.
+function hasContentBlocks(el: ProbeElement | null): boolean {
+  if (measure(el) <= 500) return false;
+  const pCount = countBlocks(el, 'p');
+  const codeCount = countBlocks(el, 'pre, code');
+  const rowCount = countBlocks(el, 'tr');
+  return pCount >= 3 || codeCount >= 2 || rowCount >= 3 || pCount + codeCount + rowCount >= 4;
+}
+
 export function isHydrated(doc: ProbeDocument): boolean {
-  const article = doc.querySelector('article');
-  if (measure(article) > 500) {
-    const pCount = countBlocks(article, 'p');
-    const codeCount = countBlocks(article, 'pre, code');
-    if (pCount >= 3 || codeCount >= 2 || pCount + codeCount >= 4) return true;
-  }
-
-  const main = doc.querySelector('main');
-  if (measure(main) > 500) {
-    const pCount = countBlocks(main, 'p');
-    const codeCount = countBlocks(main, 'pre, code');
-    if (pCount >= 3 || codeCount >= 2 || pCount + codeCount >= 4) return true;
-  }
-
-  const contentEl = doc.querySelector(SPA_CONTENT_SELECTORS);
-  if (measure(contentEl) > 500) {
-    const pCount = countBlocks(contentEl, 'p');
-    const codeCount = countBlocks(contentEl, 'pre, code');
-    if (pCount >= 3 || codeCount >= 2 || pCount + codeCount >= 4) return true;
-  }
+  if (hasContentBlocks(doc.querySelector('article'))) return true;
+  if (hasContentBlocks(doc.querySelector('main'))) return true;
+  if (hasContentBlocks(doc.querySelector(SPA_CONTENT_SELECTORS))) return true;
 
   // App-root catch-all: an SPA root wraps nav + sidebar + article + footer, so
   // measuring its whole innerText counts chrome. Require genuine article
@@ -178,6 +174,35 @@ export function isAppShellOnly(doc: ProbeDocument): boolean {
   return doc.querySelector(SPA_APP_ROOT_SELECTORS) !== null;
 }
 
+// Body innerText below this many characters is a near-empty page — a blank
+// SPA root, an error stub, or a challenge interstitial that never mounted a
+// body. Distinct from nav_shell/app_shell (which have chrome text but no
+// article) so the completeness taxonomy can report `empty` for a page with
+// essentially nothing rendered at all.
+const NEAR_EMPTY_BODY_CHARS = 80;
+
+// The three primitives the completeness taxonomy is derived from, read once
+// after the settle gate exits. `hasContent` is the same predicate the render
+// gate waits on (isHydrated), so a page that settled via the probe is
+// hasContent=true by construction; `hasSpaRoot` distinguishes an app-shell
+// (client app that never mounted) from a plain nav shell; `nearEmpty` flags a
+// page with essentially no rendered body.
+export interface DomVerdict {
+  hasContent: boolean;
+  hasSpaRoot: boolean;
+  nearEmpty: boolean;
+}
+
+export function classifyDom(doc: ProbeDocument): DomVerdict {
+  const body = doc.querySelector('body');
+  const bodyLen = body ? (body.innerText ?? '').trim().length : 0;
+  return {
+    hasContent: isHydrated(doc),
+    hasSpaRoot: doc.querySelector(SPA_APP_ROOT_SELECTORS) !== null,
+    nearEmpty: bodyLen < NEAR_EMPTY_BODY_CHARS,
+  };
+}
+
 // Shared browser-side predicate body. Returns true when the article body is
 // present. Inlined as a string so the browser context needs no module graph;
 // kept in lockstep with isHydrated() above. Both injectable sources below wrap
@@ -210,26 +235,16 @@ const HYDRATED_PREDICATE_BODY = `
     return { textLen, pCount, codeCount };
   };
 
-  const article = document.querySelector('article');
-  if (measure(article) > 500) {
-    const p = countBlocks(article, 'p');
-    const c = countBlocks(article, 'pre, code');
-    if (p >= 3 || c >= 2 || p + c >= 4) return true;
-  }
-
-  const main = document.querySelector('main');
-  if (measure(main) > 500) {
-    const p = countBlocks(main, 'p');
-    const c = countBlocks(main, 'pre, code');
-    if (p >= 3 || c >= 2 || p + c >= 4) return true;
-  }
-
-  const contentEl = document.querySelector(SPA_CONTENT_SELECTORS);
-  if (measure(contentEl) > 500) {
-    const p = countBlocks(contentEl, 'p');
-    const c = countBlocks(contentEl, 'pre, code');
-    if (p >= 3 || c >= 2 || p + c >= 4) return true;
-  }
+  const hasBlocks = (el) => {
+    if (measure(el) <= 500) return false;
+    const p = countBlocks(el, 'p');
+    const c = countBlocks(el, 'pre, code');
+    const r = countBlocks(el, 'tr');
+    return p >= 3 || c >= 2 || r >= 3 || p + c + r >= 4;
+  };
+  if (hasBlocks(document.querySelector('article'))) return true;
+  if (hasBlocks(document.querySelector('main'))) return true;
+  if (hasBlocks(document.querySelector(SPA_CONTENT_SELECTORS))) return true;
 
   const appRoot = document.querySelector(SPA_APP_ROOT_SELECTORS);
   if (appRoot) {
@@ -261,6 +276,19 @@ export const APP_SHELL_ONLY_SOURCE = `(() => {
   if (hydrated) return false;
   const SPA_APP_ROOT_SELECTORS = ${JSON.stringify(SPA_APP_ROOT_SELECTORS)};
   return document.querySelector(SPA_APP_ROOT_SELECTORS) !== null;
+})()`;
+
+// Browser-side companion to classifyDom(): returns the {hasContent, hasSpaRoot,
+// nearEmpty} verdict in one page.evaluate after the settle gate exits. Reuses
+// HYDRATED_PREDICATE_BODY for hasContent so the verdict and the render gate can
+// never disagree on "is the body present?".
+export const DOM_VERDICT_SOURCE = `(() => {
+  const hasContent = (() => {${HYDRATED_PREDICATE_BODY}})();
+  const SPA_APP_ROOT_SELECTORS = ${JSON.stringify(SPA_APP_ROOT_SELECTORS)};
+  const hasSpaRoot = document.querySelector(SPA_APP_ROOT_SELECTORS) !== null;
+  const bodyLen = (document.body && document.body.innerText ? document.body.innerText : '').trim().length;
+  const nearEmpty = bodyLen < ${NEAR_EMPTY_BODY_CHARS};
+  return { hasContent, hasSpaRoot, nearEmpty };
 })()`;
 
 // Content metrics snapshot for the stability poller: text length + node count

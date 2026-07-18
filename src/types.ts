@@ -123,6 +123,26 @@ export interface FetchOutput {
   fetch_failed?: string;
 }
 
+/**
+ * Post-settle assessment of how completely a browser-tier capture rendered.
+ * `level` is the coarse verdict; `reason` names the specific class (closed
+ * 7-value taxonomy); `settled_by` records which settle gate ended the wait.
+ * Only produced by the browser tiers (playwright / stealth) — HTTP/TLS captures
+ * leave `contentCompleteness` absent.
+ */
+export interface ContentCompleteness {
+  level: 'full' | 'partial' | 'shell';
+  reason:
+    | 'content_verified'
+    | 'stable_content'
+    | 'nav_shell'
+    | 'app_shell'
+    | 'challenge_shell'
+    | 'never_settled'
+    | 'empty';
+  settled_by: 'probe' | 'stability' | 'budget';
+}
+
 export interface RawFetchResult {
   url: string;
   finalUrl: string;
@@ -143,6 +163,13 @@ export interface RawFetchResult {
   jsRequired?: boolean;
   escalated?: boolean;
   warning?: string;
+  /**
+   * How completely a browser-tier capture rendered — set by the playwright /
+   * stealth paths from the shared settle. Absent on HTTP/TLS captures and cache
+   * rows that predate the field. Downstream (cache staleness, research source
+   * filtering) branches on `level`/`reason` to avoid trusting shell captures.
+   */
+  contentCompleteness?: ContentCompleteness;
 }
 
 export interface ExtractionResult {

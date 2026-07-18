@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseHTML } from 'linkedom';
-import { isHydrated, isAppShellOnly, HYDRATION_PROBE_SOURCE, APP_SHELL_ONLY_SOURCE } from '../../../src/fetch/hydration-probe.js';
+import { isHydrated, isAppShellOnly, classifyDom, HYDRATION_PROBE_SOURCE, APP_SHELL_ONLY_SOURCE, DOM_VERDICT_SOURCE } from '../../../src/fetch/hydration-probe.js';
 
 // linkedom doesn't implement innerText, so we patch HTMLElement.prototype
 // before running predicates that depend on text length.
@@ -194,5 +194,95 @@ describe('HYDRATION_PROBE_SOURCE', () => {
     }
     // role="main" appears either with escaped or unescaped quotes — accept both.
     expect(HYDRATION_PROBE_SOURCE).toMatch(/\[role=(?:\\?")main(?:\\?")\]/);
+  });
+});
+
+describe('classifyDom — completeness verdict primitives', () => {
+  it('full hydrated article → hasContent true, nearEmpty false', () => {
+    const para = '<p>' + 'word '.repeat(40) + '</p>';
+    withInnerText(`<html><body><article>${para}${para}${para}</article></body></html>`, (doc) => {
+      const v = classifyDom(doc as never);
+      expect(v.hasContent).toBe(true);
+      expect(v.nearEmpty).toBe(false);
+    });
+  });
+
+  it('nav-only shell with NO SPA root → hasContent false, hasSpaRoot false', () => {
+    const nav = '<nav>' + '<a>section link description text</a>'.repeat(30) + '</nav>';
+    withInnerText(`<html><body>${nav}</body></html>`, (doc) => {
+      const v = classifyDom(doc as never);
+      expect(v.hasContent).toBe(false);
+      expect(v.hasSpaRoot).toBe(false);
+    });
+  });
+
+  it('nav-only shell WITH #root → hasSpaRoot true, hasContent false', () => {
+    const nav = '<nav>' + '<a>section link description text</a>'.repeat(30) + '</nav>';
+    withInnerText(`<html><body><div id="root">${nav}</div></body></html>`, (doc) => {
+      const v = classifyDom(doc as never);
+      expect(v.hasSpaRoot).toBe(true);
+      expect(v.hasContent).toBe(false);
+    });
+  });
+
+  it('near-empty body (< 80 chars) → nearEmpty true', () => {
+    withInnerText('<html><body><div id="root"></div></body></html>', (doc) => {
+      const v = classifyDom(doc as never);
+      expect(v.nearEmpty).toBe(true);
+    });
+  });
+
+  it('substantial body → nearEmpty false', () => {
+    withInnerText(`<html><body><p>${'x'.repeat(200)}</p></body></html>`, (doc) => {
+      expect(classifyDom(doc as never).nearEmpty).toBe(false);
+    });
+  });
+
+  // NEGATIVE / MUST-NOT-FIRE: real content pages must classify hasContent=true.
+  // These are the shapes most likely to be mis-flagged as shells.
+  it('code-heavy docs (few <p>, many <pre>/<code>) → hasContent true (NOT a shell)', () => {
+    const intro = '<p>' + 'words about the API '.repeat(20) + '</p>';
+    const code = '<pre><code>' + 'const x = 1;\n'.repeat(40) + '</code></pre>';
+    withInnerText(`<html><body><main>${intro}${code}${code}${code}</main></body></html>`, (doc) => {
+      expect(classifyDom(doc as never).hasContent).toBe(true);
+    });
+  });
+
+  it('long single-<p> blog → hasContent true (NOT a shell)', () => {
+    const longP = '<p>' + 'sentence of prose content here. '.repeat(60) + '</p>';
+    withInnerText(`<html><body>${longP}</body></html>`, (doc) => {
+      expect(classifyDom(doc as never).hasContent).toBe(true);
+    });
+  });
+
+  it('<td>-table-dominant page → hasContent true (NOT a shell)', () => {
+    const rows = Array.from({ length: 20 }, () =>
+      '<tr><td>' + 'cell value data '.repeat(6) + '</td><td>' + 'more cell data '.repeat(6) + '</td></tr>').join('');
+    const p = '<p>' + 'intro paragraph text for the table. '.repeat(10) + '</p>';
+    withInnerText(`<html><body><main>${p}<table>${rows}</table></main></body></html>`, (doc) => {
+      expect(classifyDom(doc as never).hasContent).toBe(true);
+    });
+  });
+
+  it('.prose container page → hasContent true (NOT a shell)', () => {
+    const para = '<p>' + 'meaningful article prose word '.repeat(20) + '</p>';
+    withInnerText(`<html><body><div class="prose">${para}${para}${para}</div></body></html>`, (doc) => {
+      expect(classifyDom(doc as never).hasContent).toBe(true);
+    });
+  });
+});
+
+describe('DOM_VERDICT_SOURCE', () => {
+  it('is a self-contained expression with no module references', () => {
+    expect(DOM_VERDICT_SOURCE.startsWith('(() => {')).toBe(true);
+    expect(DOM_VERDICT_SOURCE.endsWith('})()')).toBe(true);
+    expect(DOM_VERDICT_SOURCE).not.toMatch(/import\s/);
+    expect(DOM_VERDICT_SOURCE).not.toMatch(/require\(/);
+  });
+
+  it('returns the three verdict keys', () => {
+    for (const key of ['hasContent', 'hasSpaRoot', 'nearEmpty']) {
+      expect(DOM_VERDICT_SOURCE).toContain(key);
+    }
   });
 });

@@ -3,8 +3,9 @@
 // stability poller (content growth stopped) = universal fallback. Never throws
 // on timeout — only on abort. Callers capture html/text AFTER this returns.
 import { createLogger } from '../logger.js';
-import { HYDRATION_PROBE_SOURCE, CONTENT_METRICS_SOURCE } from './hydration-probe.js';
+import { HYDRATION_PROBE_SOURCE, CONTENT_METRICS_SOURCE, DOM_VERDICT_SOURCE, type DomVerdict } from './hydration-probe.js';
 import { abortRejection } from '../util/abort.js';
+import type { ContentCompleteness } from '../types.js';
 
 const log = createLogger('fetch');
 
@@ -26,6 +27,32 @@ export interface SettleResult {
   settledBy: SettledBy;
   lastMetrics: ContentMetrics | null;
   stillGrowing: boolean; // true when the budget exit interrupted active growth
+  completeness: ContentCompleteness;
+}
+
+// Map the settle outcome + final DOM verdict onto the closed completeness
+// taxonomy. Precedence:
+//   1. nearEmpty → shell/empty (a page with essentially nothing rendered beats
+//      any growth/content signal — even a probe/budget with content flags).
+//   2. hasContent → full (content_verified via probe, else stable_content),
+//      unless a budget exit cut off active growth → partial/never_settled.
+//   3. no content → partial/never_settled when a budget exit cut off growth,
+//      else shell (app_shell when an SPA root exists, else nav_shell).
+// challenge_shell is NOT produced here — it is a browser-pool override keyed on
+// the challenge classifiers over the final captured html.
+export function toCompleteness(
+  settledBy: SettledBy,
+  v: DomVerdict,
+  stillGrowing: boolean,
+): ContentCompleteness {
+  if (v.nearEmpty) return { level: 'shell', reason: 'empty', settled_by: settledBy };
+  if (v.hasContent) {
+    if (settledBy === 'probe') return { level: 'full', reason: 'content_verified', settled_by: settledBy };
+    if (settledBy === 'budget' && stillGrowing) return { level: 'partial', reason: 'never_settled', settled_by: settledBy };
+    return { level: 'full', reason: 'stable_content', settled_by: settledBy };
+  }
+  if (settledBy === 'budget' && stillGrowing) return { level: 'partial', reason: 'never_settled', settled_by: settledBy };
+  return { level: 'shell', reason: v.hasSpaRoot ? 'app_shell' : 'nav_shell', settled_by: settledBy };
 }
 
 interface SettlePageHandle {
@@ -141,6 +168,14 @@ export async function settlePage(
     }
   }
 
-  log.debug('settle complete', { url, settledBy, textLen: metricsRef.last?.textLen ?? -1 });
-  return { settledBy, lastMetrics: metricsRef.last, stillGrowing };
+  // Final DOM verdict, read ONCE after the gate exits — the basis for the
+  // completeness label. A read failure (page closing, execution context gone)
+  // falls back to the most conservative verdict: nothing rendered.
+  const verdict = (await page.evaluate(DOM_VERDICT_SOURCE).catch(
+    () => ({ hasContent: false, hasSpaRoot: false, nearEmpty: true }),
+  )) as DomVerdict;
+  const completeness = toCompleteness(settledBy, verdict, stillGrowing);
+
+  log.debug('settle complete', { url, settledBy, textLen: metricsRef.last?.textLen ?? -1, completeness: completeness.reason });
+  return { settledBy, lastMetrics: metricsRef.last, stillGrowing, completeness };
 }
