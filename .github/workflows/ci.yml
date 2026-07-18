@@ -77,6 +77,9 @@ jobs:
   clean-machine-smoke:
     name: clean-machine smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Bound the job: a stuck browser/model download on a bad runner should fail
+    # in minutes, not ride the 6h default.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -132,4 +135,4 @@ jobs:
         shell: bash
         run: |
           wigolo search 'what is the capital of France' --format answer --json > ans.json
-          node -e "const r=JSON.parse(require('fs').readFileSync('ans.json','utf8')); const a=r.answer||r.text||r.synthesis||''; if (!a || String(a).length < 5){ console.error('LLM synthesis produced no answer'); process.exit(1) } console.log('LLM synthesis OK:', String(a).slice(0,60))"
+          node -e "const r=JSON.parse(require('fs').readFileSync('ans.json','utf8')); const a=r.answer; if (typeof a !== 'string' || a.length < 5){ console.error('LLM synthesis produced no answer field. Response head:', JSON.stringify(r).slice(0,400)); process.exit(1) } console.log('LLM synthesis OK:', a.slice(0,60))"
