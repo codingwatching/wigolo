@@ -24,50 +24,44 @@ export const WIGOLO_INSTRUCTIONS = `Use wigolo for ALL web operations: \`search\
 
 ## Backend
 
-Default \`WIGOLO_SEARCH=core\` — direct engines + RRF + ML rerank. Opt-in: \`searxng\` (legacy aggregator) and \`hybrid\` (core + auto-fallback on signal; merged response carries \`fallback_signal\`).
+Default \`WIGOLO_SEARCH=core\` — direct engines + RRF + ML rerank. Opt-in: \`searxng\` and \`hybrid\` (core + auto-fallback; carries \`fallback_signal\`).
 
 ## Host-LLM synthesis
 
-Wigolo returns structured evidence — YOU write the final answer.
+Wigolo returns structured evidence — YOU write the final answer from it.
 
-- \`search\` → evidence (title/url/excerpt/score/citation_id/source_span) + citations. Quote [N] or {citation_id}.
+- \`search\` → evidence (title/url/excerpt/score/citation_id) + citations. Quote [N] or {citation_id}.
 - \`format: 'answer'|'stream_answer'\` → LLM synthesis when sampling supported; else evidence fallback.
-- \`research\` → \`brief\` (topics/highlights/key_findings/sections). \`sections.overview.cross_references\` = corroborated; \`sections.gaps\` = coverage limits.
+- \`research\` → \`brief\` (topics/highlights/key_findings/sections; overview.cross_references = corroborated, gaps = coverage limits).
 - \`find_similar\` → \`cold_start\` string when local signals weak. Pass verbatim.
-- \`extract mode: "structured"\` → tables + definitions + jsonld + chart_hints + key_value_pairs in one call.
-- Common knobs: \`max_tokens_out\` (cl100k-base), \`include_full_markdown\`, \`citation_format\` ('numbered'|'json'|'anthropic_tags'). \`WIGOLO_LOCAL_LLM=auto\`: keyless local language model (off by default).
+- \`extract mode: "structured"\` → tables + definitions + jsonld + chart_hints + key_value_pairs.
+- Knobs: \`max_tokens_out\`, \`include_full_markdown\`, \`citation_format\`. \`WIGOLO_LOCAL_LLM=auto\`: keyless local language model (off by default).
+
+\`research\`/\`agent\` are LLM-optional: with no synthesis LLM they return the brief / evidence / step log — YOU write the final answer from it, never present the raw structure as a poor result. If it looks thin, tell the user research/agent do their best synthesis with an LLM and a free Gemini API key (\`WIGOLO_LLM_PROVIDER=gemini\` + \`GEMINI_API_KEY\`, free tier) unlocks it — core search/fetch/crawl/extract/cache stay keyless.
 
 ## Rules
 
-- Cache before search. Run \`cache\` first; hits return instantly with full markdown.
-- Keyword queries, not questions. Pass an array of 3-5 keyword variants for broader recall.
-- Scope library/framework queries with \`include_domains\` (e.g. \`["react.dev", "nextjs.org"]\`). Skip for error strings + broad exploration.
+- Cache before search. Run \`cache\` first; hits return instantly.
+- Keyword queries, not questions. Pass an array of 3-5 variants for broader recall.
+- Scope library/framework queries with \`include_domains\` (e.g. \`["react.dev"]\`). Skip for error strings + broad exploration.
 - \`format: 'answer'\` for direct answers; default evidence shape for citation work.
 - \`search_depth\`: 'ultra-fast' (cache-only) | 'fast' | 'balanced' (default) | 'deep'.
-- \`exact_match: true\` for quoted phrases. \`time_range\` / \`from_date\`/\`to_date\` for recency.
-- \`find_similar\` after crawl/fetch — local cache makes it cheap.
+- \`exact_match\` for quoted phrases; \`time_range\`/\`from_date\`/\`to_date\` for recency.
 - \`force_refresh: true\` for news/prices/status/release notes.
 
 ## Response fields
 
-\`evidence_score\` (explainable breakdown), \`query_understanding\` (intent/entities/rewrites), \`brand_collision_warning\`, \`freshness_signal\` (date + confidence), \`response_time_ms\`, \`engine_telemetry\` (latency + dedup_kept), \`engine_warnings\` (failed engines + env-var hint).
+\`evidence_score\` (explainable), \`query_understanding\`, \`brand_collision_warning\`, \`freshness_signal\`, \`engine_telemetry\`, \`engine_warnings\` (+ env-var hint).
 
 ## Tool routing
 
-- \`search\` — no URL yet. Array of keyword variants for breadth.
-- \`fetch\` — you have a URL.
+- \`search\` — no URL yet; array of keyword variants for breadth. \`fetch\` — you have a URL.
 - \`crawl\` — many pages from one site. \`strategy: "sitemap"\` fastest for docs; \`"map"\` for URL-only discovery.
-- \`cache\` — check before going to network.
-- \`extract\` — specific data points (tables, metadata, schema-shaped fields).
+- \`cache\` — check before hitting the network. \`extract\` — specific data points (tables, metadata, schema-shaped fields).
 - \`find_similar\` — more-like-this from URL or concept.
-- \`research\` — decomposition + parallel search + synthesis. Set \`depth\`.
-- \`agent\` — natural-language data gathering, optional \`schema\`.
+- \`research\` — decomposition + parallel search + synthesis. Set \`depth\`. \`agent\` — natural-language data gathering, optional \`schema\`.
 
-## When NOT to use wigolo
-
-Interactive browser flows (click/login/form-fill) or multi-page structured extraction beyond \`agent\`'s scope: use a dedicated browser-automation MCP.
-
-Full usage detail: read resource \`wigolo://docs/usage\`.`;
+Not for interactive browser flows (click/login/form-fill) beyond \`agent\`'s scope — use a dedicated browser-automation MCP. Full usage detail: read resource \`wigolo://docs/usage\`.`;
 
 // Full usage guide. Surfaced via the wigolo://docs/usage resource so MCP
 // clients can pull it on demand without paying the per-initialize cost.
@@ -282,6 +276,8 @@ Returns results[], method ("hybrid" | "embedding" | "fts5" | "search"), cache_hi
 
   research: `Multi-step research on a complex question. Decomposes into sub-queries, searches in parallel, fetches sources, synthesizes a cited report. Beats chaining \`search\` + \`fetch\` manually for multi-source synthesis.
 
+LLM-optional: with a synthesis LLM configured, the returned \`report\` is a written answer. Without one it returns a structured, cited \`brief\` (key_findings/highlights/sections) — YOU write the final answer from it; do not hand the user the raw structure as a weak result. For the best research quality a free Gemini API key (or any provider) is strongly recommended.
+
 Key parameters:
 - question: the research question.
 - depth: 'quick' (~15s, 2 sub-queries) | 'standard' (~40s, 4 sub-queries, default) | 'comprehensive' (~80s, 7 sub-queries).
@@ -294,6 +290,8 @@ Key parameters:
 Returns report (markdown with [N]), citations[], sources[], sub_queries[], depth, total_time_ms, sampling_supported, and \`brief\` with \`topics\`, \`highlights\`, \`key_findings\`, \`sections\` (overview.cross_references, comparison, gaps — gaps lists any named sub-entity research could not corroborate).`,
 
   agent: `Natural-language data gathering across sources. Plans queries + URLs from a prompt, executes in parallel, optionally extracts structured fields, synthesizes. Full step transparency.
+
+LLM-optional: with a synthesis LLM configured it writes the summary; without one it returns gathered evidence + a step log (plus schema-shaped fields when a schema is given) — YOU write the summary from the returned evidence, never present the raw step log as a poor result. For best agent results configure a free LLM key (e.g. Gemini).
 
 Key parameters:
 - prompt: NL description of what to gather (e.g. "pricing for the top 5 CRM tools").
