@@ -119,6 +119,35 @@ describe('hostedReaderFetch — SSRF guards + redirects', () => {
     expect(out).toBeNull();
   });
 
+  it('refuses when the reader 302-redirects to a hostname that RESOLVES to metadata', async () => {
+    // The literal-only guard passes a redirect to `http://rebind.example/`
+    // (an ordinary public-looking name). The fetch-time resolved re-check is
+    // what catches it: `rebind.example` resolves to 169.254.169.254, so the
+    // hop is refused before we connect — the static-record DNS SSRF bypass on
+    // a redirect Location. (This is the resolved counterpart of the literal
+    // 302→metadata case above.)
+    const cfg = { ...baseCfg, hostedReaderUrl: 'https://reader.example.com' };
+    const fetchImpl = vi.fn(async () =>
+      res('', { status: 302, headers: { location: 'http://rebind.example/' } }),
+    );
+    // Host-aware lookup: only the redirect target resolves to metadata; hop 0
+    // (the reader) and the original target stay public so they aren't the ones
+    // being blocked.
+    const lookup = (
+      host: string,
+      _o: unknown,
+      cb: (e: null, a: { address: string; family: number }[]) => void,
+    ) =>
+      host === 'rebind.example'
+        ? cb(null, [{ address: '169.254.169.254', family: 4 }])
+        : cb(null, [{ address: '93.184.216.34', family: 4 }]);
+    const out = await hostedReaderFetch('https://target.example.com', cfg, { fetchImpl, lookup });
+    expect(out).toBeNull();
+    // Hop 0 (the reader) was fetched and returned the 302; the redirect hop was
+    // refused by the resolved re-check BEFORE a second fetch fired.
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
   it('refuses when the reader 302-redirects to a 10.x and allowPrivate is false', async () => {
     const cfg = { ...baseCfg, hostedReaderUrl: 'https://reader.example.com' };
     const fetchImpl = vi.fn(async () =>
