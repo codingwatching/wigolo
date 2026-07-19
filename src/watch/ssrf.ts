@@ -18,6 +18,8 @@
  * the v0.3.0 surface the input-side guard is the documented contract.
  */
 
+import { lookup as nodeLookup } from 'node:dns';
+
 const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 
 const PRIVATE_HOSTNAMES = new Set([
@@ -347,4 +349,62 @@ export function guardFetchUrl(
   }
 
   return { ok: true, url: parsed };
+}
+
+/** DNS lookup shape used by {@link guardResolvedHost}; the Node default is injected in prod. */
+export type LookupAll = (
+  hostname: string,
+  options: { all: true },
+  callback: (err: NodeJS.ErrnoException | null, addresses: { address: string; family: number }[]) => void,
+) => void;
+
+export type ResolveGuardResult = { ok: true } | SsrfRejection;
+
+/**
+ * Fetch-time SSRF re-check. `guardFetchUrl` validates only the LITERAL hostname,
+ * so a public hostname whose DNS record points at a blocked address (cloud
+ * metadata / RFC-1918 / loopback in serve mode) passes the input guard and is
+ * only caught once we resolve. This resolves the host and runs EVERY resolved
+ * address back through `guardFetchUrl` (an `http://<ip>/` literal), so the
+ * resolved-IP policy is identical to the literal-IP policy — no drift.
+ *
+ * Call this right before the actual fetch (and on each redirect hop) for any
+ * non-IP-literal host. For full rebinding (TOCTOU) safety the connection should
+ * additionally be pinned to the validated address — a `lookup` hook / custom
+ * dispatcher — which callers can layer on; this guard closes the static-record
+ * bypass (the metadata-credential-theft case) on its own.
+ */
+export async function guardResolvedHost(
+  hostname: string,
+  fieldLabel: string,
+  opts: { allowPrivate?: boolean; lookup?: LookupAll } = {},
+): Promise<ResolveGuardResult> {
+  const lookupFn = opts.lookup ?? (nodeLookup as unknown as LookupAll);
+  let addresses: { address: string; family: number }[] | null;
+  try {
+    addresses = await new Promise((resolve, reject) => {
+      lookupFn(hostname, { all: true }, (err, addrs) => (err ? reject(err) : resolve(addrs)));
+    });
+  } catch {
+    addresses = null;
+  }
+  if (!addresses || addresses.length === 0) {
+    return {
+      ok: false,
+      code: SSRF_CODES.INVALID_URL,
+      reason: `${fieldLabel} hostname (${hostname}) did not resolve to any address`,
+      hint: 'The host could not be resolved to an IP address.',
+    };
+  }
+  for (const { address, family } of addresses) {
+    const ipUrl = family === 6 ? `http://[${address}]/` : `http://${address}/`;
+    const res = guardFetchUrl(ipUrl, fieldLabel, { allowPrivate: opts.allowPrivate });
+    if (!res.ok) {
+      return {
+        ...res,
+        reason: `${fieldLabel} hostname (${hostname}) resolves to a blocked address (${address}) — ${res.reason}`,
+      };
+    }
+  }
+  return { ok: true };
 }
