@@ -64,7 +64,13 @@ describe('solverFetch — happy path', () => {
     const fetchImpl = vi.fn(async () =>
       res(JSON.stringify({ solution: { response: '<html>ok</html>', status: 200 } })),
     );
-    const out = await solverFetch('https://target.example.com', cfg, { fetchImpl });
+    // `localhost` commonly resolves to BOTH 127.0.0.1 and ::1 on a dual-stack
+    // host; pin the resolved-check lookup to the IPv4 record so this test
+    // exercises "loopback solver via hostname" deterministically rather than
+    // depending on the local resolver's IPv6 behavior.
+    const lookup = (_h: string, _o: unknown, cb: (e: null, a: { address: string; family: number }[]) => void) =>
+      cb(null, [{ address: '127.0.0.1', family: 4 }]);
+    const out = await solverFetch('https://target.example.com', cfg, { fetchImpl, lookup });
     expect(out).not.toBeNull();
   });
 });

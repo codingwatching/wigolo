@@ -171,7 +171,7 @@ async function fetchWithRedirects(
       const isIpLiteral = /^\d{1,3}(\.\d{1,3}){3}$/.test(rhost) || rhost.includes(':');
       if (!isIpLiteral) {
         const resolved = await guardResolvedHost(rhost, 'target url', {
-          allowPrivate: getConfig().fetchAllowPrivate,
+          allowPrivate,
         });
         if (!resolved.ok) {
           throw new HttpFetchError(resolved.reason, false);

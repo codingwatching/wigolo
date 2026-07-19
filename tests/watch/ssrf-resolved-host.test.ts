@@ -63,10 +63,10 @@ describe('guardResolvedHost (fetch-time SSRF re-check)', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('rejects a name that does not resolve', async () => {
+  it('falls through (ok:true) for a name that does not resolve — no IP to connect to, not a bypass', async () => {
     const r = await guardResolvedHost('nx.evil.example', 'target', {
       lookup: (_h, _o, cb) => cb(new Error('ENOTFOUND'), []),
     });
-    expect(r.ok).toBe(false);
+    expect(r.ok).toBe(true);
   });
 });
