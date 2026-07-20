@@ -33,7 +33,13 @@ async function fetchStargazers() {
       },
     });
     if (!res.ok) {
-      process.stderr.write(`star-chart: GitHub API ${res.status} ${res.statusText} on page ${page}\n`);
+      const body = (await res.text()).replace(/\s+/g, ' ').slice(0, 300);
+      const remaining = res.headers.get('x-ratelimit-remaining');
+      const limit = res.headers.get('x-ratelimit-limit');
+      process.stderr.write(
+        `star-chart: GitHub API ${res.status} ${res.statusText} on page ${page} ` +
+          `(ratelimit ${remaining}/${limit}): ${body}\n`,
+      );
       process.exit(1);
     }
     const batch = await res.json();
